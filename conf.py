@@ -144,6 +144,7 @@ NAVIGATION_LINKS = {
         ("/categories/", "Tags"),
         ("/about.html", "About"),
         ("/talks.html", "Talks"),
+        ("/reading-log.html", "Reading Log"),
         ("/rss.xml", "RSS feed"),
     ),
 }
