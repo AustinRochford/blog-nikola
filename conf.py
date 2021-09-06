@@ -145,7 +145,9 @@ NAVIGATION_LINKS = {
         ("/about.html", "About"),
         ("/talks.html", "Talks"),
         ("/reading-log.html", "Reading Log"),
-        ("/rss.xml", "RSS feed"),
+        ("//github.com/AustinRochford", '<i class="fa fa-github fa-lg fa-fw"></i>'),
+        ("//twitter.com/AustinRochford", '<i class="fa fa-twitter fa-lg fa-fw"></i>'),
+        ("/rss.xml", '<i class="fa fa-rss fa-lg fa-fw"></i>'),
     ),
 }
 
