@@ -669,11 +669,12 @@ REDIRECTIONS = []
 # in a `nikola deploy` command as you like.
 DEPLOY_COMMANDS = {
     'default': [
-        "aws --profile blog s3 sync --dryrun --size-only output/ s3://austinrochford.com",
+        'aws --profile blog s3 sync --dryrun --size-only output/ s3://austinrochford.com',
         ],
     'prod': [
-        "aws --profile blog s3 sync --size-only output/ s3://austinrochford.com",
-    ]
+        'aws --profile blog s3 sync --size-only output/ s3://austinrochford.com',
+        'aws --profile blog cloudfront create-invalidation --distribution-id E3TKR0UZQ59DPP --paths "/*"',
+    ],
 }
 
 # github_deploy configuration
