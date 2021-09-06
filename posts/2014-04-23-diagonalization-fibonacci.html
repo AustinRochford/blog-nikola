@@ -1,0 +1,277 @@
+<meta name="title" content="Matrix Diagonalization and the Fibonacci Numbers" />
+<meta name="tags" content="Linear Algebra, Fibonacci Numbers" />
+<meta name="date" content="2014-04-23" />
+<meta name="has_math" content="true" /><p>The <a href="http://en.wikipedia.org/wiki/Fibonacci_number">Fibonacci numbers</a> are the well-known sequence defined by the recursion relation <span class="math inline">\(F_{n + 1} = F_n + F_{n - 1}\)</span> for <span class="math inline">\(n \geq 2\)</span> with <span class="math inline">\(F_0 = 0\)</span> and <span class="math inline">\(F_1 = 1\)</span>. This recursion relation has the beautiful closed form solution</p>
+<p><span class="math display">\[F_n = \frac{1}{\sqrt{5}} \left(\left(\frac{1 + \sqrt{5}}{2}\right)^n - \left(\frac{1 - \sqrt{5}}{2}\right)^n\right).\]</span></p>
+<p>In a previous <a href="/posts/2013-11-01-generating-functions-and-fibonacci-numbers.html">post</a> I showed how to derive this solution using <a href="http://en.wikipedia.org/wiki/Generating_function">generating functions</a>. One aspect of this solution that fascinates me is the many ways in which it can be derived, using tools from a variety of fields of mathematics. This post will derive this solution using <a href="http://en.wikipedia.org/wiki/Generating_function">matrix diagonalization</a>.</p>
+<p>The first step in this derivation is to express the Fibonacci recurrence as a matrix product. For <span class="math inline">\(n \geq 1\)</span>,</p>
+<p><span class="math display">\[
+\begin{pmatrix}
+F_{n + 1}   \\
+F_n
+\end{pmatrix}
+=
+\begin{pmatrix}
+1   &amp; 1 \\
+1   &amp; 0
+\end{pmatrix}
+\begin{pmatrix}
+F_n \\
+F_{n - 1}
+\end{pmatrix}.
+\]</span></p>
+<p>For conveience, let <span class="math inline">\(X = \begin{pmatrix} 1 &amp; 1 \\ 1 &amp; 0 \end{pmatrix}\)</span> be the coefficient matrix of the recurrence. We see that</p>
+<p><span class="math display">\[
+\begin{pmatrix}
+F_2 \\
+F_1
+\end{pmatrix}
+=
+X
+\begin{pmatrix}
+1   \\
+0
+\end{pmatrix},
+\]</span></p>
+<p>so</p>
+<p><span class="math display">\[
+\begin{pmatrix}
+F_3 \\
+F_2
+\end{pmatrix}
+=
+X
+\begin{pmatrix}
+F_2 \\
+F_1
+\end{pmatrix}
+=
+X^2
+\begin{pmatrix}
+1   \\
+0
+\end{pmatrix}.
+\]</span></p>
+<p>Similarly,</p>
+<p><span class="math display">\[
+\begin{pmatrix}
+F_4 \\
+F_3
+\end{pmatrix}
+=
+X
+\begin{pmatrix}
+F_3 \\
+F_2
+\end{pmatrix}
+=
+X^3
+\begin{pmatrix}
+1   \\
+0
+\end{pmatrix}.
+\]</span></p>
+<p>We have uncovered the fact that</p>
+<p><span class="math display">\[
+\begin{pmatrix}
+F_{n + 1}   \\
+F_n
+\end{pmatrix}
+=
+X^n
+\begin{pmatrix}
+1   \\
+0
+\end{pmatrix},
+\]</span></p>
+<p>and therefore</p>
+<p><span class="math display">\[
+F_n
+=
+\begin{pmatrix}
+0   &amp; 1
+\end{pmatrix}
+X^n
+\begin{pmatrix}
+1   \\
+0
+\end{pmatrix}.
+\]</span></p>
+<p>This formula for <span class="math inline">\(F_n\)</span>, involving powers of <span class="math inline">\(X\)</span>, provides the first <a href="http://en.wikipedia.org/wiki/Matrix_multiplication#Powers_of_matrices">clue</a> that we should diagonalize <span class="math inline">\(X\)</span>. To diagonalize <span class="math inline">\(X\)</span> is to write it as <span class="math inline">\(X = P D P^{-1}\)</span>, where <span class="math inline">\(D\)</span> is a diagonal matrix. In this situation,</p>
+<p><span class="math display">\[
+X^2 = P D P^{-1} P D P^{-1}
+= P D D P^{-1}
+= P D^2 P^{-1}.
+\]</span></p>
+<p>Similarly, for any natural number <span class="math inline">\(n\)</span>, <span class="math inline">\(X^n = P D^n P^{-1}\)</span>. It is simple to compute the matrix <span class="math inline">\(D^n\)</span>, since the <span class="math inline">\(n\)</span>-th power of a diagonal matrix just involves raising the diagonal entries to the <span class="math inline">\(n\)</span>-th power.</p>
+<p>To diagonalize <span class="math inline">\(X\)</span>, we first calculate its <a href="http://en.wikipedia.org/wiki/Matrix_multiplication#Powers_of_matrices">eigenvalues</a>, as these will be the diagonal entries of <span class="math inline">\(D\)</span>. To do so, we find the roots of the <a href="http://en.wikipedia.org/wiki/Characteristic_polynomial">characteristic polynomial</a>, <span class="math inline">\(\operatorname{det}(X - \lambda I)\)</span>, of <span class="math inline">\(X\)</span>. The characteristic polynomial of <span class="math inline">\(X\)</span> is</p>
+<p><span class="math display">\[
+\operatorname{det}(X - \lambda I)
+= \operatorname{det}
+\begin{pmatrix}
+1 - \lambda &amp; 1 \\
+1           &amp; - \lambda
+\end{pmatrix}
+= (1 - \lambda) (-\lambda) - 1
+= \lambda^2 - \lambda - 1.
+\]</span></p>
+<p>Using the quadratic formula, the roots of this equation are</p>
+<p><span class="math display">\[\varphi = \frac{1 + \sqrt{5}}{2}\]</span></p>
+<p>and</p>
+<p><span class="math display">\[\psi = \frac{1 - \sqrt{5}}{2}.\]</span></p>
+<p>The matrix <span class="math inline">\(D\)</span> is therefore</p>
+<p><span class="math display">\[
+D = 
+\begin{pmatrix}
+\varphi    &amp; 0 \\
+0       &amp; \psi
+\end{pmatrix}.
+\]</span></p>
+<p>These roots both appear in the closed form expression for <span class="math inline">\(F_n\)</span> we are trying to derive, which is a good sign that we are on the right track. In fact, the expression can be written succinctly as <span class="math inline">\(F_n = \frac{1}{\sqrt{5}} (\varphi^n - \psi^n)\)</span>.</p>
+<p>Before going any further, it will be helpful to note two relations between <span class="math inline">\(\phi\)</span> and <span class="math inline">\(\psi\)</span>, both of which are easy to derive. First, <span class="math inline">\(\varphi + \psi = 1\)</span>. Second, <span class="math inline">\(\varphi \psi = -1\)</span>. We will make liberal use of these relations and their direct consequences without mention throughout the remainder of the post.</p>
+<p>Now that we have determined <span class="math inline">\(D\)</span>, it remains to determine <span class="math inline">\(P\)</span>. The columns of <span class="math inline">\(P\)</span> are the eigenvectors corresponding to the eigenvalues that form the diagonal entries of <span class="math inline">\(D\)</span>. To find the eigenvector corresponding to an eigenvalue <span class="math inline">\(\lambda\)</span>, we calculate a basis for the <a href="http://en.wikipedia.org/wiki/Kernel_(linear_algebra)">null space</a> of <span class="math inline">\(X - \lambda I\)</span>.</p>
+<p>For the eigevnalue <span class="math inline">\(\varphi\)</span>,</p>
+<p><span class="math display">\[
+X - \varphi I
+=
+\begin{pmatrix}
+\psi    &amp; 1 \\
+1       &amp; -\varphi
+\end{pmatrix}
+\sim
+\begin{pmatrix}
+1   &amp; -\varphi \\
+1   &amp; -\varphi
+\end{pmatrix}
+\sim
+\begin{pmatrix}
+1   &amp; -\varphi \\
+0   &amp; 0
+\end{pmatrix}.
+\]</span></p>
+<p>Here <span class="math inline">\(\sim\)</span> stands for <a href="http://en.wikipedia.org/wiki/Row_equivalence">row equivalence</a>. The null space of <span class="math inline">\(X - \varphi I\)</span> is seen to be spanned by the vector <span class="math inline">\(\begin{pmatrix}\varphi \\ 1\end{pmatrix}\)</span>. In order to simplify the calculation of <span class="math inline">\(P^{-1}\)</span>, it will be beneifical to normalize this vector to have length one. The length of this vector is</p>
+<p><span class="math display">\[
+\sqrt{\varphi^2 + 1^2}
+= \sqrt{\frac{1 + 2 \sqrt{5} + 5}{4} + 1}
+= \sqrt{\frac{5 + \sqrt{5}}{2}}
+= \sqrt[4]{5} \sqrt{\varphi}.
+\]</span></p>
+<p>The normalized eigenvector correpsonding to <span class="math inline">\(\varphi\)</span> is therefore</p>
+<p><span class="math display">\[
+\vec{v}_\varphi
+= \frac{1}{\sqrt[4]{5} \sqrt{\varphi}}
+\begin{pmatrix}
+\varphi    \\
+1
+\end{pmatrix}
+= \frac{1}{\sqrt[4]{5}}
+\begin{pmatrix}
+\sqrt{\varphi}  \\
+\sqrt{-\psi}
+\end{pmatrix}.
+\]</span></p>
+<p>At first, the entry <span class="math inline">\(\sqrt{-\psi}\)</span> of this vector may seem a bit odd, but since <span class="math inline">\(\psi &lt; 0\)</span>, it is perfectly reasonable.</p>
+<p>Similar calculations show that the null space of <span class="math inline">\(X - \psi I\)</span> is spanned by the vector <span class="math inline">\(\begin{pmatrix}\psi \\ 1\end{pmatrix}\)</span> and that the normalized eigenvector corresponding to <span class="math inline">\(\psi\)</span> is</p>
+<p><span class="math display">\[
+\vec{v}_\psi
+= \frac{1}{\sqrt[4]{5}}
+\begin{pmatrix}
+- \sqrt{-\psi}  \\
+\sqrt{\varphi}
+\end{pmatrix}.
+\]</span></p>
+<p>The matrix <span class="math inline">\(P\)</span> in the diagonalization of <span class="math inline">\(X\)</span> is therefore</p>
+<p><span class="math display">\[
+P =
+\begin{pmatrix}
+\vec{v}_\varphi &amp; \vec{v}_\psi
+\end{pmatrix}
+=
+\frac{1}{\sqrt[4]{5}}
+\begin{pmatrix}
+\sqrt{\varphi}  &amp; -\sqrt{-\psi} \\
+\sqrt{-\psi}    &amp; \sqrt{\varphi}
+\end{pmatrix}.
+\]</span></p>
+<p>The advantage of normalizing the eigenvectors is that <span class="math inline">\(P\)</span> is now an <a href="http://en.wikipedia.org/wiki/Orthogonal_matrix">orthogonal matrix</a>, so</p>
+<p><span class="math display">\[
+P^{-1} = P^\top
+=
+\frac{1}{\sqrt[4]{5}}
+\begin{pmatrix}
+\sqrt{\varphi}  &amp; \sqrt{-\psi} \\
+-\sqrt{-\psi}    &amp; \sqrt{\varphi}
+\end{pmatrix}.
+\]</span></p>
+<p>Finally, we are ready to derive the closed form expression for <span class="math inline">\(F_n\)</span>. We have that</p>
+<p><span class="math display">\[
+\begin{align*}
+F_n
+    &amp; =
+        \begin{pmatrix}
+            0   &amp; 1
+        \end{pmatrix}
+        X^n
+        \begin{pmatrix}
+        1   \\
+        0
+        \end{pmatrix}   \\
+    &amp; =
+        \begin{pmatrix}
+            0   &amp; 1
+        \end{pmatrix}
+        P D^n P^{-1}
+        \begin{pmatrix}
+        1   \\
+        0
+        \end{pmatrix}   \\
+    &amp; =
+        \frac{1}{\sqrt{5}}
+        \begin{pmatrix}
+            0   &amp; 1
+        \end{pmatrix}
+        \begin{pmatrix}
+        \sqrt{\varphi}  &amp; -\sqrt{-\psi} \\
+        \sqrt{-\psi}    &amp; \sqrt{\varphi}
+        \end{pmatrix}
+        \begin{pmatrix}
+        \varphi^n   &amp; 0 \\
+        0           &amp; \psi^n
+        \end{pmatrix}
+        \begin{pmatrix}
+        \sqrt{\varphi}  &amp; \sqrt{-\psi} \\
+        -\sqrt{-\psi}    &amp; \sqrt{\varphi}
+        \end{pmatrix}
+        \begin{pmatrix}
+        1   \\
+        0
+        \end{pmatrix}   \\
+    &amp; =
+        \frac{1}{\sqrt{5}}
+        \begin{pmatrix}
+        \sqrt{-\psi}    &amp; \sqrt{\varphi}
+        \end{pmatrix}
+        \begin{pmatrix}
+        \varphi^n   &amp; 0 \\
+        0           &amp; \psi^n
+        \end{pmatrix}
+        \begin{pmatrix}
+        \sqrt{\varphi}  \\
+        -\sqrt{-\psi}
+        \end{pmatrix}   \\
+    &amp; = 
+        \frac{1}{\sqrt{5}}
+        \begin{pmatrix}
+        \sqrt{-\psi}    &amp; \sqrt{\varphi}
+        \end{pmatrix}
+        \begin{pmatrix}
+        \sqrt{\varphi}\ \varphi^n    \\
+        -\sqrt{-\psi}\ \psi^n
+        \end{pmatrix}   \\
+    &amp; = 
+        \frac{1}{\sqrt{5}}
+        \left(\sqrt{-\psi \varphi} \varphi^n - \sqrt{-\varphi \psi} \psi^n\right)   \\
+    &amp; = \frac{1}{\sqrt{5}}
+        \left(\phi^n - \psi^n\right).
+\end{align*}
+\]</span></p>

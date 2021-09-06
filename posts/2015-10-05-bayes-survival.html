@@ -1,0 +1,414 @@
+<meta name="title" content="Bayesian Survival Analysis in Python with pymc3" />
+<meta name="tags" content="Bayesian Statistics, PyMC3" />
+<meta name="date" content="2015-10-05" />
+<meta name="has_math" content="true" /><style>
+.dataframe * {border-color: #c0c0c0 !important;}
+.dataframe th{background: #eee;}
+.dataframe td{
+    background: #fff;
+    text-align: right; 
+    min-width:5em;
+}
+
+/* Format summary rows */
+.dataframe-summary-row tr:last-child,
+.dataframe-summary-col td:last-child{
+background: #eee;
+    font-weight: 500;
+}
+</style>
+<p><a href="https://en.wikipedia.org/wiki/Survival_analysis">Survival analysis</a> studies the distribution of the time to an event. Its applications span many fields across medicine, biology, engineering, and social science. This post shows how to fit and analyze a Bayesian survival model in Python using <a href="https://pymc-devs.github.io/pymc3/getting_started/"><code>pymc3</code></a>.</p>
+<p>We illustrate these concepts by analyzing a <a href="https://vincentarelbundock.github.io/Rdatasets/doc/HSAUR/mastectomy.html">mastectomy data set</a> from <code>R</code>’s <a href="https://cran.r-project.org/web/packages/HSAUR/index.html"><code>HSAUR</code></a> package.</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="op">%</span>matplotlib inline</span></code></pre></div>
+<div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> matplotlib <span class="im">import</span> pyplot <span class="im">as</span> plt</span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> numpy <span class="im">as</span> np</span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> pymc3 <span class="im">as</span> pm</span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> pymc3.distributions.timeseries <span class="im">import</span> GaussianRandomWalk</span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> seaborn <span class="im">as</span> sns</span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> statsmodels <span class="im">import</span> datasets</span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> theano <span class="im">import</span> tensor <span class="im">as</span> T</span></code></pre></div>
+<pre><code>Couldn&#39;t import dot_parser, loading of dot files will not be possible.</code></pre>
+<p>Fortunately, <a href="http://statsmodels.sourceforge.net/0.6.0/datasets/index.html"><code>statsmodels.datasets</code></a> makes it quite easy to load a number of data sets from <code>R</code>.</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>df <span class="op">=</span> datasets.get_rdataset(<span class="st">&#39;mastectomy&#39;</span>, <span class="st">&#39;HSAUR&#39;</span>, cache<span class="op">=</span><span class="va">True</span>).data</span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>df.event <span class="op">=</span> df.event.astype(np.int64)</span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>df.metastized <span class="op">=</span> (df.metastized <span class="op">==</span> <span class="st">&#39;yes&#39;</span>).astype(np.int64)</span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>n_patients <span class="op">=</span> df.shape[<span class="dv">0</span>]</span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>patients <span class="op">=</span> np.arange(n_patients)</span></code></pre></div>
+<div class="sourceCode" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>df.head()</span></code></pre></div>
+<center>
+<div>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th>
+</th>
+<th>
+time
+</th>
+<th>
+event
+</th>
+<th>
+metastized
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>
+0
+</th>
+<td>
+23
+</td>
+<td>
+1
+</td>
+<td>
+0
+</td>
+</tr>
+<tr>
+<th>
+1
+</th>
+<td>
+47
+</td>
+<td>
+1
+</td>
+<td>
+0
+</td>
+</tr>
+<tr>
+<th>
+2
+</th>
+<td>
+69
+</td>
+<td>
+1
+</td>
+<td>
+0
+</td>
+</tr>
+<tr>
+<th>
+3
+</th>
+<td>
+70
+</td>
+<td>
+0
+</td>
+<td>
+0
+</td>
+</tr>
+<tr>
+<th>
+4
+</th>
+<td>
+100
+</td>
+<td>
+0
+</td>
+<td>
+0
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center>
+<p><br></p>
+<div class="sourceCode" id="cb6"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>n_patients</span></code></pre></div>
+<pre><code>44</code></pre>
+<p>Each row represents observations from a woman diagnosed with breast cancer that underwent a mastectomy. The column <code>time</code> represents the time (in months) post-surgery that the woman was observed. The column <code>event</code> indicates whether or not the woman died during the observation period. The column <code>metastized</code> represents whether the cancer had <a href="https://en.wikipedia.org/wiki/Metastatic_breast_cancer">metastized</a> prior to surgery.</p>
+<p>This post analyzes the relationship between survival time post-mastectomy and whether or not the cancer had metastized.</p>
+<h4 id="a-crash-course-in-survival-analysis">A crash course in survival analysis</h4>
+<p>First we introduce a (very little) bit of theory. If the random variable <span class="math inline">\(T\)</span> is the time to the event we are studying, survival analysis is primarily concerned with the survival function</p>
+<p><span class="math display">\[S(t) = P(T &gt; t) = 1 - F(t),\]</span></p>
+<p>where <span class="math inline">\(F\)</span> is the <a href="https://en.wikipedia.org/wiki/Cumulative_distribution_function">CDF</a> of <span class="math inline">\(T\)</span>. It is mathematically convenient to express the survival function in terms of the <a href="https://en.wikipedia.org/wiki/Survival_analysis#Hazard_function_and_cumulative_hazard_function">hazard rate</a>, <span class="math inline">\(\lambda(t)\)</span>. The hazard rate is the instantaneous probability that the event occurs at time <span class="math inline">\(t\)</span> given that it has not yet occured. That is,</p>
+<p><span class="math display">\[\begin{align*}
+\lambda(t)
+    &amp; = \lim_{\Delta t \to 0} \frac{P(t &lt; T &lt; t + \Delta t\ |\ T &gt; t)}{\Delta t} \\
+    &amp; = \lim_{\Delta t \to 0} \frac{P(t &lt; T &lt; t + \Delta t)}{\Delta t \cdot P(T &gt; t)} \\
+    &amp; = \frac{1}{S(t)} \cdot \lim_{\Delta t \to 0} \frac{S(t + \Delta t) - S(t)}{\Delta t}
+      = -\frac{S&#39;(t)}{S(t)}.
+\end{align*}\]</span></p>
+<p>Solving this differential equation for the survival function shows that</p>
+<p><span class="math display">\[S(t) = \exp\left(-\int_0^s \lambda(s)\ ds\right).\]</span></p>
+<p>This representation of the survival function shows that the cumulative hazard function</p>
+<p><span class="math display">\[\Lambda(t) = \int_0^t \lambda(s)\ ds\]</span></p>
+<p>is an important quantity in survival analysis, since we may consicesly write <span class="math inline">\(S(t) = \exp(-\Lambda(t)).\)</span></p>
+<p>An important, but subtle, point in survival analysis is <a href="https://en.wikipedia.org/wiki/Survival_analysis#Censoring">censoring</a>. Even though the quantity we are interested in estimating is the time between surgery and death, we do not observe the death of every subject. At the point in time that we perform our analysis, some of our subjects will thankfully still be alive. In the case of our mastectomy study, <code>df.event</code> is one if the subject’s death was observed (the observation is not censored) and is zero if the death was not observed (the observation is censored).</p>
+<div class="sourceCode" id="cb8"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>df.event.mean()</span></code></pre></div>
+<pre><code>0.59090909090909094</code></pre>
+<p>Just over 40% of our observations are censored. We visualize the observed durations and indicate which observations are censored below.</p>
+<div class="sourceCode" id="cb10"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plt.subplots(figsize<span class="op">=</span>(<span class="dv">8</span>, <span class="dv">6</span>))</span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a>blue, _, red <span class="op">=</span> sns.color_palette()[:<span class="dv">3</span>]</span>
+<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a>ax.hlines(patients[df.event.values <span class="op">==</span> <span class="dv">0</span>], <span class="dv">0</span>, df[df.event.values <span class="op">==</span> <span class="dv">0</span>].time,</span>
+<span id="cb10-6"><a href="#cb10-6" aria-hidden="true" tabindex="-1"></a>          color<span class="op">=</span>blue, label<span class="op">=</span><span class="st">&#39;Censored&#39;</span>)<span class="op">;</span></span>
+<span id="cb10-7"><a href="#cb10-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb10-8"><a href="#cb10-8" aria-hidden="true" tabindex="-1"></a>ax.hlines(patients[df.event.values <span class="op">==</span> <span class="dv">1</span>], <span class="dv">0</span>, df[df.event.values <span class="op">==</span> <span class="dv">1</span>].time,</span>
+<span id="cb10-9"><a href="#cb10-9" aria-hidden="true" tabindex="-1"></a>          color<span class="op">=</span>red, label<span class="op">=</span><span class="st">&#39;Uncensored&#39;</span>)<span class="op">;</span></span>
+<span id="cb10-10"><a href="#cb10-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb10-11"><a href="#cb10-11" aria-hidden="true" tabindex="-1"></a>ax.scatter(df[df.metastized.values <span class="op">==</span> <span class="dv">1</span>].time, patients[df.metastized.values <span class="op">==</span> <span class="dv">1</span>],</span>
+<span id="cb10-12"><a href="#cb10-12" aria-hidden="true" tabindex="-1"></a>           color<span class="op">=</span><span class="st">&#39;k&#39;</span>, zorder<span class="op">=</span><span class="dv">10</span>, label<span class="op">=</span><span class="st">&#39;Metastized&#39;</span>)<span class="op">;</span></span>
+<span id="cb10-13"><a href="#cb10-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb10-14"><a href="#cb10-14" aria-hidden="true" tabindex="-1"></a>ax.set_xlim(left<span class="op">=</span><span class="dv">0</span>)<span class="op">;</span></span>
+<span id="cb10-15"><a href="#cb10-15" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="st">&#39;Months since mastectomy&#39;</span>)<span class="op">;</span></span>
+<span id="cb10-16"><a href="#cb10-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb10-17"><a href="#cb10-17" aria-hidden="true" tabindex="-1"></a>ax.set_ylim(<span class="op">-</span><span class="fl">0.25</span>, n_patients <span class="op">+</span> <span class="fl">0.25</span>)<span class="op">;</span></span>
+<span id="cb10-18"><a href="#cb10-18" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb10-19"><a href="#cb10-19" aria-hidden="true" tabindex="-1"></a>ax.legend(loc<span class="op">=</span><span class="st">&#39;center right&#39;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/bayes-survival/2015-10-05-bayes-survival_12_0.png" title="fig:" alt="png" />
+</center>
+<p>When an observation is censored (<code>df.event</code> is zero), <code>df.time</code> is not the subject’s survival time. All we can conclude from such a censored obsevation is that the subject’s true survival time exceeds <code>df.time</code>.</p>
+<p>This is enough basic surival analysis theory for the purposes of this post; for a more extensive introduction, consult Aalen et al.<a href="#fn1" class="footnote-ref" id="fnref1" role="doc-noteref"><sup>1</sup></a></p>
+<h4 id="bayesian-proportional-hazards-model">Bayesian proportional hazards model</h4>
+<p>The two most basic estimators in survial analysis are the <a href="https://en.wikipedia.org/wiki/Kaplan%E2%80%93Meier_estimator">Kaplan-Meier estimator</a> of the survival function and the <a href="https://en.wikipedia.org/wiki/Nelson%E2%80%93Aalen_estimator">Nelson-Aalen estimator</a> of the cumulative hazard function. However, since we want to understand the impact of metastization on survival time, a risk regression model is more appropriate. Perhaps the most commonly used risk regression model is <a href="https://en.wikipedia.org/wiki/Proportional_hazards_model">Cox’s proportional hazards model</a>. In this model, if we have covariates <span class="math inline">\(\mathbf{x}\)</span> and regression coefficients <span class="math inline">\(\beta\)</span>, the hazard rate is modeled as</p>
+<p><span class="math display">\[\lambda(t) = \lambda_0(t) \exp(\mathbf{x} \beta).\]</span></p>
+<p>Here <span class="math inline">\(\lambda_0(t)\)</span> is the baseline hazard, which is independent of the covariates <span class="math inline">\(\mathbf{x}\)</span>. In this example, the covariates are the one-dimensonal vector <code>df.metastized</code>.</p>
+<p>Unlike in many regression situations, <span class="math inline">\(\mathbf{x}\)</span> should not include a constant term corresponding to an intercept. If <span class="math inline">\(\mathbf{x}\)</span> includes a constant term corresponding to an intercept, the model becomes <a href="https://en.wikipedia.org/wiki/Identifiability">unidentifiable</a>. To illustrate this unidentifiability, suppose that</p>
+<p><span class="math display">\[\lambda(t) = \lambda_0(t) \exp(\beta_0 + \mathbf{x} \beta) = \lambda_0(t) \exp(\beta_0) \exp(\mathbf{x} \beta).\]</span></p>
+<p>If <span class="math inline">\(\tilde{\beta}_0 = \beta_0 + \delta\)</span> and <span class="math inline">\(\tilde{\lambda}_0(t) = \lambda_0(t) \exp(-\delta)\)</span>, then <span class="math inline">\(\lambda(t) = \tilde{\lambda}_0(t) \exp(\tilde{\beta}_0 + \mathbf{x} \beta)\)</span> as well, making the model with <span class="math inline">\(\beta_0\)</span> unidentifiable.</p>
+<p>In order to perform Bayesian inference with the Cox model, we must specify priors on <span class="math inline">\(\beta\)</span> and <span class="math inline">\(\lambda_0(t)\)</span>. We place a normal prior on <span class="math inline">\(\beta\)</span>, <span class="math inline">\(\beta \sim N(\mu_{\beta}, \sigma_{\beta}^2),\)</span> where <span class="math inline">\(\mu_{\beta} \sim N(0, 10^2)\)</span> and <span class="math inline">\(\sigma_{\beta} \sim U(0, 10)\)</span>.</p>
+<p>A suitable prior on <span class="math inline">\(\lambda_0(t)\)</span> is less obvious. We choose a semiparametric prior, where <span class="math inline">\(\lambda_0(t)\)</span> is a piecewise constant function. This prior requires us to partition the time range in question into intervals with endpoints <span class="math inline">\(0 \leq s_1 &lt; s_2 &lt; \cdots &lt; s_N\)</span>. With this partition, <span class="math inline">\(\lambda_0 (t) = \lambda_j\)</span> if <span class="math inline">\(s_j \leq t &lt; s_{j + 1}\)</span>. With <span class="math inline">\(\lambda_0(t)\)</span> constrained to have this form, all we need to do is choose priors for the <span class="math inline">\(N - 1\)</span> values <span class="math inline">\(\lambda_j\)</span>. We use independent vague priors <span class="math inline">\(\lambda_j \sim \operatorname{Gamma}(10^{-2}, 10^{-2}).\)</span> For our mastectomy example, we make each interval three months long.</p>
+<div class="sourceCode" id="cb11"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a>interval_length <span class="op">=</span> <span class="dv">3</span></span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a>interval_bounds <span class="op">=</span> np.arange(<span class="dv">0</span>, df.time.<span class="bu">max</span>() <span class="op">+</span> interval_length <span class="op">+</span> <span class="dv">1</span>, interval_length)</span>
+<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a>n_intervals <span class="op">=</span> interval_bounds.size <span class="op">-</span> <span class="dv">1</span></span>
+<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a>intervals <span class="op">=</span> np.arange(n_intervals)</span></code></pre></div>
+<p>We see how deaths and censored observations are distributed in these intervals.</p>
+<div class="sourceCode" id="cb12"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plt.subplots(figsize<span class="op">=</span>(<span class="dv">8</span>, <span class="dv">6</span>))</span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a>ax.hist(df[df.event <span class="op">==</span> <span class="dv">1</span>].time.values, bins<span class="op">=</span>interval_bounds,</span>
+<span id="cb12-4"><a href="#cb12-4" aria-hidden="true" tabindex="-1"></a>        color<span class="op">=</span>red, alpha<span class="op">=</span><span class="fl">0.5</span>, lw<span class="op">=</span><span class="dv">0</span>,</span>
+<span id="cb12-5"><a href="#cb12-5" aria-hidden="true" tabindex="-1"></a>        label<span class="op">=</span><span class="st">&#39;Uncensored&#39;</span>)<span class="op">;</span></span>
+<span id="cb12-6"><a href="#cb12-6" aria-hidden="true" tabindex="-1"></a>ax.hist(df[df.event <span class="op">==</span> <span class="dv">0</span>].time.values, bins<span class="op">=</span>interval_bounds,</span>
+<span id="cb12-7"><a href="#cb12-7" aria-hidden="true" tabindex="-1"></a>        color<span class="op">=</span>blue, alpha<span class="op">=</span><span class="fl">0.5</span>, lw<span class="op">=</span><span class="dv">0</span>,</span>
+<span id="cb12-8"><a href="#cb12-8" aria-hidden="true" tabindex="-1"></a>        label<span class="op">=</span><span class="st">&#39;Censored&#39;</span>)<span class="op">;</span></span>
+<span id="cb12-9"><a href="#cb12-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb12-10"><a href="#cb12-10" aria-hidden="true" tabindex="-1"></a>ax.set_xlim(<span class="dv">0</span>, interval_bounds[<span class="op">-</span><span class="dv">1</span>])<span class="op">;</span></span>
+<span id="cb12-11"><a href="#cb12-11" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="st">&#39;Months since mastectomy&#39;</span>)<span class="op">;</span></span>
+<span id="cb12-12"><a href="#cb12-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb12-13"><a href="#cb12-13" aria-hidden="true" tabindex="-1"></a>ax.set_yticks([<span class="dv">0</span>, <span class="dv">1</span>, <span class="dv">2</span>, <span class="dv">3</span>])<span class="op">;</span></span>
+<span id="cb12-14"><a href="#cb12-14" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="st">&#39;Number of observations&#39;</span>)<span class="op">;</span></span>
+<span id="cb12-15"><a href="#cb12-15" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb12-16"><a href="#cb12-16" aria-hidden="true" tabindex="-1"></a>ax.legend()<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/bayes-survival/2015-10-05-bayes-survival_17_0.png" title="fig:" alt="png" />
+</center>
+<p>With the prior distributions on <span class="math inline">\(\beta\)</span> and <span class="math inline">\(\lambda_0(t)\)</span> chosen, we now show how the model may be fit using MCMC simulation with <code>pymc3</code>. The key observation is that the piecewise-constant proportional hazard model is <a href="http://data.princeton.edu/wws509/notes/c7s4.html">closely related</a> to a Poisson regression model. (The models are not identical, but their likelihoods differ by a factor that depends only on the observed data and not the parameters <span class="math inline">\(\beta\)</span> and <span class="math inline">\(\lambda_j\)</span>. For details, see Germán Rodríguez’s WWS 509 <a href="http://data.princeton.edu/wws509/notes/c7s4.html">course notes</a>.)</p>
+<p>We define indicator variables based on whether or the <span class="math inline">\(i\)</span>-th suject died in the <span class="math inline">\(j\)</span>-th interval,</p>
+<p><span class="math display">\[d_{i, j} = \begin{cases}
+    1 &amp; \textrm{if subject } i \textrm{ died in interval } j \\
+    0 &amp; \textrm{otherwise}
+\end{cases}.\]</span></p>
+<div class="sourceCode" id="cb13"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a>last_period <span class="op">=</span> np.floor((df.time <span class="op">-</span> <span class="fl">0.01</span>) <span class="op">/</span> interval_length)</span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a>death <span class="op">=</span> np.zeros((n_patients, n_intervals))</span>
+<span id="cb13-4"><a href="#cb13-4" aria-hidden="true" tabindex="-1"></a>death[patients, last_period] <span class="op">=</span> df.event</span></code></pre></div>
+<p>We also define <span class="math inline">\(t_{i, j}\)</span> to be the amount of time the <span class="math inline">\(i\)</span>-th subject was at risk in the <span class="math inline">\(j\)</span>-th interval.</p>
+<div class="sourceCode" id="cb14"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a>exposure <span class="op">=</span> np.greater_equal.outer(df.time, interval_bounds[:<span class="op">-</span><span class="dv">1</span>]) <span class="op">*</span> interval_length</span>
+<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a>exposure[patients, last_period] <span class="op">=</span> df.time <span class="op">-</span> interval_bounds[last_period]</span></code></pre></div>
+<p>Finally, denote the risk incurred by the <span class="math inline">\(i\)</span>-th subject in the <span class="math inline">\(j\)</span>-th interval as <span class="math inline">\(\lambda_{i, j} = \lambda_j \exp(\mathbf{x}_i \beta)\)</span>.</p>
+<p>We may approximate <span class="math inline">\(d_{i, j}\)</span> with a Possion random variable with mean <span class="math inline">\(t_{i, j}\ \lambda_{i, j}\)</span>. This approximation leads to the following <code>pymc3</code> model.</p>
+<div class="sourceCode" id="cb15"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a>SEED <span class="op">=</span> <span class="dv">5078864</span> <span class="co"># from random.org</span></span></code></pre></div>
+<div class="sourceCode" id="cb16"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> pm.Model() <span class="im">as</span> model:</span>
+<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a>    lambda0 <span class="op">=</span> pm.Gamma(<span class="st">&#39;lambda0&#39;</span>, <span class="fl">0.01</span>, <span class="fl">0.01</span>, shape<span class="op">=</span>n_intervals)</span>
+<span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb16-4"><a href="#cb16-4" aria-hidden="true" tabindex="-1"></a>    sigma <span class="op">=</span> pm.Uniform(<span class="st">&#39;sigma&#39;</span>, <span class="fl">0.</span>, <span class="fl">10.</span>)</span>
+<span id="cb16-5"><a href="#cb16-5" aria-hidden="true" tabindex="-1"></a>    tau <span class="op">=</span> pm.Deterministic(<span class="st">&#39;tau&#39;</span>, sigma<span class="op">**-</span><span class="dv">2</span>)</span>
+<span id="cb16-6"><a href="#cb16-6" aria-hidden="true" tabindex="-1"></a>    mu_beta <span class="op">=</span> pm.Normal(<span class="st">&#39;mu_beta&#39;</span>, <span class="fl">0.</span>, <span class="dv">10</span><span class="op">**-</span><span class="dv">2</span>)</span>
+<span id="cb16-7"><a href="#cb16-7" aria-hidden="true" tabindex="-1"></a>    beta <span class="op">=</span> pm.Normal(<span class="st">&#39;beta&#39;</span>, mu_beta, tau)</span>
+<span id="cb16-8"><a href="#cb16-8" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb16-9"><a href="#cb16-9" aria-hidden="true" tabindex="-1"></a>    lambda_ <span class="op">=</span> pm.Deterministic(<span class="st">&#39;lambda_&#39;</span>, T.outer(T.exp(beta <span class="op">*</span> df.metastized), lambda0))</span>
+<span id="cb16-10"><a href="#cb16-10" aria-hidden="true" tabindex="-1"></a>    mu <span class="op">=</span> pm.Deterministic(<span class="st">&#39;mu&#39;</span>, exposure <span class="op">*</span> lambda_)</span>
+<span id="cb16-11"><a href="#cb16-11" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb16-12"><a href="#cb16-12" aria-hidden="true" tabindex="-1"></a>    obs <span class="op">=</span> pm.Poisson(<span class="st">&#39;obs&#39;</span>, mu, observed<span class="op">=</span>death)</span></code></pre></div>
+<p>We now sample from the model.</p>
+<div class="sourceCode" id="cb17"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a>n_samples <span class="op">=</span> <span class="dv">40000</span></span>
+<span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a>burn <span class="op">=</span> <span class="dv">20000</span></span>
+<span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a>thin <span class="op">=</span> <span class="dv">20</span></span></code></pre></div>
+<div class="sourceCode" id="cb18"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> model:</span>
+<span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a>    step <span class="op">=</span> pm.Metropolis()</span>
+<span id="cb18-3"><a href="#cb18-3" aria-hidden="true" tabindex="-1"></a>    trace_ <span class="op">=</span> pm.sample(n_samples, step, random_seed<span class="op">=</span>SEED)</span></code></pre></div>
+<pre><code> [-----------------100%-----------------] 40000 of 40000 complete in 39.0 sec</code></pre>
+<div class="sourceCode" id="cb20"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a>trace <span class="op">=</span> trace_[burn::thin]</span></code></pre></div>
+<p>We see that the hazard rate for subjects whose cancer has metastized is about one and a half times the rate of those whose cancer has not metastized.</p>
+<div class="sourceCode" id="cb21"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a>np.exp(trace[<span class="st">&#39;beta&#39;</span>].mean())</span></code></pre></div>
+<pre><code>1.645592148084472</code></pre>
+<div class="sourceCode" id="cb23"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb23-1"><a href="#cb23-1" aria-hidden="true" tabindex="-1"></a>pm.traceplot(trace, <span class="bu">vars</span><span class="op">=</span>[<span class="st">&#39;beta&#39;</span>])<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/bayes-survival/2015-10-05-bayes-survival_31_0.png" title="fig:" alt="png" />
+</center>
+<div class="sourceCode" id="cb24"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a>pm.autocorrplot(trace, <span class="bu">vars</span><span class="op">=</span>[<span class="st">&#39;beta&#39;</span>])<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/bayes-survival/2015-10-05-bayes-survival_32_0.png" title="fig:" alt="png" />
+</center>
+<p>We now examine the effect of metastization on both the cumulative hazard and on the survival function.</p>
+<div class="sourceCode" id="cb25"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb25-1"><a href="#cb25-1" aria-hidden="true" tabindex="-1"></a>base_hazard <span class="op">=</span> trace[<span class="st">&#39;lambda0&#39;</span>]</span>
+<span id="cb25-2"><a href="#cb25-2" aria-hidden="true" tabindex="-1"></a>met_hazard <span class="op">=</span> trace[<span class="st">&#39;lambda0&#39;</span>] <span class="op">*</span> np.exp(np.atleast_2d(trace[<span class="st">&#39;beta&#39;</span>]).T)</span></code></pre></div>
+<div class="sourceCode" id="cb26"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb26-1"><a href="#cb26-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> cum_hazard(hazard):</span>
+<span id="cb26-2"><a href="#cb26-2" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> (interval_length <span class="op">*</span> hazard).cumsum(axis<span class="op">=-</span><span class="dv">1</span>)</span>
+<span id="cb26-3"><a href="#cb26-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb26-4"><a href="#cb26-4" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> survival(hazard):</span>
+<span id="cb26-5"><a href="#cb26-5" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> np.exp(<span class="op">-</span>cum_hazard(hazard))</span></code></pre></div>
+<div class="sourceCode" id="cb27"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> plot_with_hpd(x, hazard, f, ax, color<span class="op">=</span><span class="va">None</span>, label<span class="op">=</span><span class="va">None</span>, alpha<span class="op">=</span><span class="fl">0.05</span>):</span>
+<span id="cb27-2"><a href="#cb27-2" aria-hidden="true" tabindex="-1"></a>    mean <span class="op">=</span> f(hazard.mean(axis<span class="op">=</span><span class="dv">0</span>))</span>
+<span id="cb27-3"><a href="#cb27-3" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb27-4"><a href="#cb27-4" aria-hidden="true" tabindex="-1"></a>    percentiles <span class="op">=</span> <span class="dv">100</span> <span class="op">*</span> np.array([alpha <span class="op">/</span> <span class="fl">2.</span>, <span class="fl">1.</span> <span class="op">-</span> alpha <span class="op">/</span> <span class="fl">2.</span>])</span>
+<span id="cb27-5"><a href="#cb27-5" aria-hidden="true" tabindex="-1"></a>    hpd <span class="op">=</span> np.percentile(f(hazard), percentiles, axis<span class="op">=</span><span class="dv">0</span>)</span>
+<span id="cb27-6"><a href="#cb27-6" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb27-7"><a href="#cb27-7" aria-hidden="true" tabindex="-1"></a>    ax.fill_between(x, hpd[<span class="dv">0</span>], hpd[<span class="dv">1</span>], color<span class="op">=</span>color, alpha<span class="op">=</span><span class="fl">0.25</span>)</span>
+<span id="cb27-8"><a href="#cb27-8" aria-hidden="true" tabindex="-1"></a>    ax.step(x, mean, color<span class="op">=</span>color, label<span class="op">=</span>label)<span class="op">;</span></span></code></pre></div>
+<div class="sourceCode" id="cb28"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a>fig, (hazard_ax, surv_ax) <span class="op">=</span> plt.subplots(ncols<span class="op">=</span><span class="dv">2</span>, sharex<span class="op">=</span><span class="va">True</span>, sharey<span class="op">=</span><span class="va">False</span>, figsize<span class="op">=</span>(<span class="dv">16</span>, <span class="dv">6</span>))</span>
+<span id="cb28-2"><a href="#cb28-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb28-3"><a href="#cb28-3" aria-hidden="true" tabindex="-1"></a>plot_with_hpd(interval_bounds[:<span class="op">-</span><span class="dv">1</span>], base_hazard, cum_hazard,</span>
+<span id="cb28-4"><a href="#cb28-4" aria-hidden="true" tabindex="-1"></a>              hazard_ax, color<span class="op">=</span>blue, label<span class="op">=</span><span class="st">&#39;Had not metastized&#39;</span>)</span>
+<span id="cb28-5"><a href="#cb28-5" aria-hidden="true" tabindex="-1"></a>plot_with_hpd(interval_bounds[:<span class="op">-</span><span class="dv">1</span>], met_hazard, cum_hazard,</span>
+<span id="cb28-6"><a href="#cb28-6" aria-hidden="true" tabindex="-1"></a>              hazard_ax, color<span class="op">=</span>red, label<span class="op">=</span><span class="st">&#39;Metastized&#39;</span>)</span>
+<span id="cb28-7"><a href="#cb28-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb28-8"><a href="#cb28-8" aria-hidden="true" tabindex="-1"></a>hazard_ax.set_xlim(<span class="dv">0</span>, df.time.<span class="bu">max</span>())<span class="op">;</span></span>
+<span id="cb28-9"><a href="#cb28-9" aria-hidden="true" tabindex="-1"></a>hazard_ax.set_xlabel(<span class="st">&#39;Months since mastectomy&#39;</span>)<span class="op">;</span></span>
+<span id="cb28-10"><a href="#cb28-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb28-11"><a href="#cb28-11" aria-hidden="true" tabindex="-1"></a>hazard_ax.set_ylabel(<span class="vs">r&#39;Cumulative hazard $\Lambda(t)$&#39;</span>)<span class="op">;</span></span>
+<span id="cb28-12"><a href="#cb28-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb28-13"><a href="#cb28-13" aria-hidden="true" tabindex="-1"></a>hazard_ax.legend(loc<span class="op">=</span><span class="dv">2</span>)<span class="op">;</span></span>
+<span id="cb28-14"><a href="#cb28-14" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb28-15"><a href="#cb28-15" aria-hidden="true" tabindex="-1"></a>plot_with_hpd(interval_bounds[:<span class="op">-</span><span class="dv">1</span>], base_hazard, survival,</span>
+<span id="cb28-16"><a href="#cb28-16" aria-hidden="true" tabindex="-1"></a>              surv_ax, color<span class="op">=</span>blue)</span>
+<span id="cb28-17"><a href="#cb28-17" aria-hidden="true" tabindex="-1"></a>plot_with_hpd(interval_bounds[:<span class="op">-</span><span class="dv">1</span>], met_hazard, survival,</span>
+<span id="cb28-18"><a href="#cb28-18" aria-hidden="true" tabindex="-1"></a>              surv_ax, color<span class="op">=</span>red)</span>
+<span id="cb28-19"><a href="#cb28-19" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb28-20"><a href="#cb28-20" aria-hidden="true" tabindex="-1"></a>surv_ax.set_xlim(<span class="dv">0</span>, df.time.<span class="bu">max</span>())<span class="op">;</span></span>
+<span id="cb28-21"><a href="#cb28-21" aria-hidden="true" tabindex="-1"></a>surv_ax.set_xlabel(<span class="st">&#39;Months since mastectomy&#39;</span>)<span class="op">;</span></span>
+<span id="cb28-22"><a href="#cb28-22" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb28-23"><a href="#cb28-23" aria-hidden="true" tabindex="-1"></a>surv_ax.set_ylabel(<span class="st">&#39;Survival function $S(t)$&#39;</span>)<span class="op">;</span></span>
+<span id="cb28-24"><a href="#cb28-24" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb28-25"><a href="#cb28-25" aria-hidden="true" tabindex="-1"></a>fig.suptitle(<span class="st">&#39;Bayesian survival model&#39;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/bayes-survival/2015-10-05-bayes-survival_37_0.png" title="fig:" alt="png" />
+</center>
+<p>We see that the cumulative hazard for metastized subjects increases more rapidly initially (through about seventy months), after which it increases roughly in parallel with the baseline cumulative hazard.</p>
+<p>These plots also show the pointwise 95% high posterior density interval for each function. One of the distinct advantages of the Bayesian model fit with <code>pymc3</code> is the inherent quantification of uncertainty in our estimates.</p>
+<h5 id="time-varying-effects">Time varying effects</h5>
+<p>Another of the advantages of the model we have built is its flexibility. From the plots above, we may reasonable believe that the additional hazard due to metastization varies over time; it seems plausible that cancer that has metastized increases the hazard rate immediately after the mastectomy, but that the risk due to metastization decreases over time. We can accomodate this mechanism in our model by allowing the regression coefficients to vary over time. In the time-varying coefficent model, if <span class="math inline">\(s_j \leq t &lt; s_{j + 1}\)</span>, we let <span class="math inline">\(\lambda(t) = \lambda_j \exp(\mathbf{x} \beta_j).\)</span> The sequence of regression coefficients <span class="math inline">\(\beta_1, \beta_2, \ldots, \beta_{N - 1}\)</span> form a normal random walk with <span class="math inline">\(\beta_1 \sim N(0, 1)\)</span>, <span class="math inline">\(\beta_j\ |\ \beta_{j - 1} \sim N(\beta_{j - 1}, 1)\)</span>.</p>
+<p>We implement this model in <code>pymc3</code> as follows.</p>
+<div class="sourceCode" id="cb29"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb29-1"><a href="#cb29-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> pm.Model() <span class="im">as</span> time_varying_model:</span>
+<span id="cb29-2"><a href="#cb29-2" aria-hidden="true" tabindex="-1"></a>    lambda0 <span class="op">=</span> pm.Gamma(<span class="st">&#39;lambda0&#39;</span>, <span class="fl">0.01</span>, <span class="fl">0.01</span>, shape<span class="op">=</span>n_intervals)</span>
+<span id="cb29-3"><a href="#cb29-3" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb29-4"><a href="#cb29-4" aria-hidden="true" tabindex="-1"></a>    beta <span class="op">=</span> GaussianRandomWalk(<span class="st">&#39;beta&#39;</span>, tau<span class="op">=</span><span class="fl">1.</span>, shape<span class="op">=</span>n_intervals)</span>
+<span id="cb29-5"><a href="#cb29-5" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb29-6"><a href="#cb29-6" aria-hidden="true" tabindex="-1"></a>    lambda_ <span class="op">=</span> pm.Deterministic(<span class="st">&#39;h&#39;</span>, lambda0 <span class="op">*</span> T.exp(T.outer(T.constant(df.metastized), beta)))</span>
+<span id="cb29-7"><a href="#cb29-7" aria-hidden="true" tabindex="-1"></a>    mu <span class="op">=</span> pm.Deterministic(<span class="st">&#39;mu&#39;</span>, exposure <span class="op">*</span> lambda_)</span>
+<span id="cb29-8"><a href="#cb29-8" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb29-9"><a href="#cb29-9" aria-hidden="true" tabindex="-1"></a>    obs <span class="op">=</span> pm.Poisson(<span class="st">&#39;obs&#39;</span>, mu, observed<span class="op">=</span>death)</span></code></pre></div>
+<p>We proceed to sample from this model.</p>
+<div class="sourceCode" id="cb30"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb30-1"><a href="#cb30-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> time_varying_model:</span>
+<span id="cb30-2"><a href="#cb30-2" aria-hidden="true" tabindex="-1"></a>    step <span class="op">=</span> pm.Metropolis()</span>
+<span id="cb30-3"><a href="#cb30-3" aria-hidden="true" tabindex="-1"></a>    time_varying_trace_ <span class="op">=</span> pm.sample(n_samples, step, random_seed<span class="op">=</span>SEED)</span></code></pre></div>
+<pre><code> [-----------------100%-----------------] 40000 of 40000 complete in 56.7 sec</code></pre>
+<div class="sourceCode" id="cb32"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb32-1"><a href="#cb32-1" aria-hidden="true" tabindex="-1"></a>time_varying_trace <span class="op">=</span> time_varying_trace_[burn::thin]</span></code></pre></div>
+<p>We see from the plot of <span class="math inline">\(\beta_j\)</span> over time below that initially <span class="math inline">\(\beta_j &gt; 0\)</span>, indicating an elevated hazard rate due to metastization, but that this risk declines as <span class="math inline">\(\beta_j &lt; 0\)</span> eventually.</p>
+<div class="sourceCode" id="cb33"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb33-1"><a href="#cb33-1" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plt.subplots(figsize<span class="op">=</span>(<span class="dv">8</span>, <span class="dv">6</span>))</span>
+<span id="cb33-2"><a href="#cb33-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb33-3"><a href="#cb33-3" aria-hidden="true" tabindex="-1"></a>beta_hpd <span class="op">=</span> np.percentile(time_varying_trace[<span class="st">&#39;beta&#39;</span>], [<span class="fl">2.5</span>, <span class="fl">97.5</span>], axis<span class="op">=</span><span class="dv">0</span>)</span>
+<span id="cb33-4"><a href="#cb33-4" aria-hidden="true" tabindex="-1"></a>beta_low <span class="op">=</span> beta_hpd[<span class="dv">0</span>]</span>
+<span id="cb33-5"><a href="#cb33-5" aria-hidden="true" tabindex="-1"></a>beta_high <span class="op">=</span> beta_hpd[<span class="dv">1</span>]</span>
+<span id="cb33-6"><a href="#cb33-6" aria-hidden="true" tabindex="-1"></a>ax.fill_between(interval_bounds[:<span class="op">-</span><span class="dv">1</span>], beta_low, beta_high,</span>
+<span id="cb33-7"><a href="#cb33-7" aria-hidden="true" tabindex="-1"></a>                color<span class="op">=</span>blue, alpha<span class="op">=</span><span class="fl">0.25</span>)<span class="op">;</span></span>
+<span id="cb33-8"><a href="#cb33-8" aria-hidden="true" tabindex="-1"></a>beta_hat <span class="op">=</span> time_varying_trace[<span class="st">&#39;beta&#39;</span>].mean(axis<span class="op">=</span><span class="dv">0</span>)</span>
+<span id="cb33-9"><a href="#cb33-9" aria-hidden="true" tabindex="-1"></a>ax.step(interval_bounds[:<span class="op">-</span><span class="dv">1</span>], beta_hat, color<span class="op">=</span>blue)<span class="op">;</span></span>
+<span id="cb33-10"><a href="#cb33-10" aria-hidden="true" tabindex="-1"></a>ax.scatter(interval_bounds[last_period[(df.event.values <span class="op">==</span> <span class="dv">1</span>) <span class="op">&amp;</span> (df.metastized <span class="op">==</span> <span class="dv">1</span>)]],</span>
+<span id="cb33-11"><a href="#cb33-11" aria-hidden="true" tabindex="-1"></a>           beta_hat[last_period[(df.event.values <span class="op">==</span> <span class="dv">1</span>) <span class="op">&amp;</span> (df.metastized <span class="op">==</span> <span class="dv">1</span>)]],</span>
+<span id="cb33-12"><a href="#cb33-12" aria-hidden="true" tabindex="-1"></a>           c<span class="op">=</span>red, zorder<span class="op">=</span><span class="dv">10</span>, label<span class="op">=</span><span class="st">&#39;Died, cancer metastized&#39;</span>)<span class="op">;</span></span>
+<span id="cb33-13"><a href="#cb33-13" aria-hidden="true" tabindex="-1"></a>ax.scatter(interval_bounds[last_period[(df.event.values <span class="op">==</span> <span class="dv">0</span>) <span class="op">&amp;</span> (df.metastized <span class="op">==</span> <span class="dv">1</span>)]],</span>
+<span id="cb33-14"><a href="#cb33-14" aria-hidden="true" tabindex="-1"></a>           beta_hat[last_period[(df.event.values <span class="op">==</span> <span class="dv">0</span>) <span class="op">&amp;</span> (df.metastized <span class="op">==</span> <span class="dv">1</span>)]],</span>
+<span id="cb33-15"><a href="#cb33-15" aria-hidden="true" tabindex="-1"></a>           c<span class="op">=</span>blue, zorder<span class="op">=</span><span class="dv">10</span>, label<span class="op">=</span><span class="st">&#39;Censored, cancer metastized&#39;</span>)<span class="op">;</span></span>
+<span id="cb33-16"><a href="#cb33-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb33-17"><a href="#cb33-17" aria-hidden="true" tabindex="-1"></a>ax.set_xlim(<span class="dv">0</span>, df.time.<span class="bu">max</span>())<span class="op">;</span></span>
+<span id="cb33-18"><a href="#cb33-18" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="st">&#39;Months since mastectomy&#39;</span>)<span class="op">;</span></span>
+<span id="cb33-19"><a href="#cb33-19" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb33-20"><a href="#cb33-20" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="vs">r&#39;$\beta_j$&#39;</span>)<span class="op">;</span></span>
+<span id="cb33-21"><a href="#cb33-21" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb33-22"><a href="#cb33-22" aria-hidden="true" tabindex="-1"></a>ax.legend()<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/bayes-survival/2015-10-05-bayes-survival_45_0.png" title="fig:" alt="png" />
+</center>
+<p>The coefficients <span class="math inline">\(\beta_j\)</span> begin declining rapidly around one hundred months post-mastectomy, which seems reasonable, given that only three of twelve subjects whose cancer had metastized lived past this point died during the study.</p>
+<p>The change in our estimate of the cumulative hazard and survival functions due to time-varying effects is also quite apparent in the following plots.</p>
+<div class="sourceCode" id="cb34"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb34-1"><a href="#cb34-1" aria-hidden="true" tabindex="-1"></a>tv_base_hazard <span class="op">=</span> time_varying_trace[<span class="st">&#39;lambda0&#39;</span>]</span>
+<span id="cb34-2"><a href="#cb34-2" aria-hidden="true" tabindex="-1"></a>tv_met_hazard <span class="op">=</span> time_varying_trace[<span class="st">&#39;lambda0&#39;</span>] <span class="op">*</span> np.exp(np.atleast_2d(time_varying_trace[<span class="st">&#39;beta&#39;</span>]))</span></code></pre></div>
+<div class="sourceCode" id="cb35"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb35-1"><a href="#cb35-1" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plt.subplots(figsize<span class="op">=</span>(<span class="dv">8</span>, <span class="dv">6</span>))</span>
+<span id="cb35-2"><a href="#cb35-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb35-3"><a href="#cb35-3" aria-hidden="true" tabindex="-1"></a>ax.step(interval_bounds[:<span class="op">-</span><span class="dv">1</span>], cum_hazard(base_hazard.mean(axis<span class="op">=</span><span class="dv">0</span>)),</span>
+<span id="cb35-4"><a href="#cb35-4" aria-hidden="true" tabindex="-1"></a>        color<span class="op">=</span>blue, label<span class="op">=</span><span class="st">&#39;Had not metastized&#39;</span>)<span class="op">;</span></span>
+<span id="cb35-5"><a href="#cb35-5" aria-hidden="true" tabindex="-1"></a>ax.step(interval_bounds[:<span class="op">-</span><span class="dv">1</span>], cum_hazard(met_hazard.mean(axis<span class="op">=</span><span class="dv">0</span>)),</span>
+<span id="cb35-6"><a href="#cb35-6" aria-hidden="true" tabindex="-1"></a>        color<span class="op">=</span>red, label<span class="op">=</span><span class="st">&#39;Metastized&#39;</span>)<span class="op">;</span></span>
+<span id="cb35-7"><a href="#cb35-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb35-8"><a href="#cb35-8" aria-hidden="true" tabindex="-1"></a>ax.step(interval_bounds[:<span class="op">-</span><span class="dv">1</span>], cum_hazard(tv_base_hazard.mean(axis<span class="op">=</span><span class="dv">0</span>)),</span>
+<span id="cb35-9"><a href="#cb35-9" aria-hidden="true" tabindex="-1"></a>        color<span class="op">=</span>blue, linestyle<span class="op">=</span><span class="st">&#39;--&#39;</span>, label<span class="op">=</span><span class="st">&#39;Had not metastized (time varying effect)&#39;</span>)<span class="op">;</span></span>
+<span id="cb35-10"><a href="#cb35-10" aria-hidden="true" tabindex="-1"></a>ax.step(interval_bounds[:<span class="op">-</span><span class="dv">1</span>], cum_hazard(tv_met_hazard.mean(axis<span class="op">=</span><span class="dv">0</span>)),</span>
+<span id="cb35-11"><a href="#cb35-11" aria-hidden="true" tabindex="-1"></a>        color<span class="op">=</span>red, linestyle<span class="op">=</span><span class="st">&#39;--&#39;</span>, label<span class="op">=</span><span class="st">&#39;Metastized (time varying effect)&#39;</span>)<span class="op">;</span></span>
+<span id="cb35-12"><a href="#cb35-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb35-13"><a href="#cb35-13" aria-hidden="true" tabindex="-1"></a>ax.set_xlim(<span class="dv">0</span>, df.time.<span class="bu">max</span>() <span class="op">-</span> <span class="dv">4</span>)<span class="op">;</span></span>
+<span id="cb35-14"><a href="#cb35-14" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="st">&#39;Months since mastectomy&#39;</span>)<span class="op">;</span></span>
+<span id="cb35-15"><a href="#cb35-15" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb35-16"><a href="#cb35-16" aria-hidden="true" tabindex="-1"></a>ax.set_ylim(<span class="dv">0</span>, <span class="dv">2</span>)<span class="op">;</span></span>
+<span id="cb35-17"><a href="#cb35-17" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="vs">r&#39;Cumulative hazard $\Lambda(t)$&#39;</span>)<span class="op">;</span></span>
+<span id="cb35-18"><a href="#cb35-18" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb35-19"><a href="#cb35-19" aria-hidden="true" tabindex="-1"></a>ax.legend(loc<span class="op">=</span><span class="dv">2</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/bayes-survival/2015-10-05-bayes-survival_48_0.png" title="fig:" alt="png" />
+</center>
+<div class="sourceCode" id="cb36"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb36-1"><a href="#cb36-1" aria-hidden="true" tabindex="-1"></a>fig, (hazard_ax, surv_ax) <span class="op">=</span> plt.subplots(ncols<span class="op">=</span><span class="dv">2</span>, sharex<span class="op">=</span><span class="va">True</span>, sharey<span class="op">=</span><span class="va">False</span>, figsize<span class="op">=</span>(<span class="dv">16</span>, <span class="dv">6</span>))</span>
+<span id="cb36-2"><a href="#cb36-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb36-3"><a href="#cb36-3" aria-hidden="true" tabindex="-1"></a>plot_with_hpd(interval_bounds[:<span class="op">-</span><span class="dv">1</span>], tv_base_hazard, cum_hazard,</span>
+<span id="cb36-4"><a href="#cb36-4" aria-hidden="true" tabindex="-1"></a>              hazard_ax, color<span class="op">=</span>blue, label<span class="op">=</span><span class="st">&#39;Had not metastized&#39;</span>)</span>
+<span id="cb36-5"><a href="#cb36-5" aria-hidden="true" tabindex="-1"></a>plot_with_hpd(interval_bounds[:<span class="op">-</span><span class="dv">1</span>], tv_met_hazard, cum_hazard,</span>
+<span id="cb36-6"><a href="#cb36-6" aria-hidden="true" tabindex="-1"></a>              hazard_ax, color<span class="op">=</span>red, label<span class="op">=</span><span class="st">&#39;Metastized&#39;</span>)</span>
+<span id="cb36-7"><a href="#cb36-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb36-8"><a href="#cb36-8" aria-hidden="true" tabindex="-1"></a>hazard_ax.set_xlim(<span class="dv">0</span>, df.time.<span class="bu">max</span>())<span class="op">;</span></span>
+<span id="cb36-9"><a href="#cb36-9" aria-hidden="true" tabindex="-1"></a>hazard_ax.set_xlabel(<span class="st">&#39;Months since mastectomy&#39;</span>)<span class="op">;</span></span>
+<span id="cb36-10"><a href="#cb36-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb36-11"><a href="#cb36-11" aria-hidden="true" tabindex="-1"></a>hazard_ax.set_ylim(<span class="dv">0</span>, <span class="dv">2</span>)<span class="op">;</span></span>
+<span id="cb36-12"><a href="#cb36-12" aria-hidden="true" tabindex="-1"></a>hazard_ax.set_ylabel(<span class="vs">r&#39;Cumulative hazard $\Lambda(t)$&#39;</span>)<span class="op">;</span></span>
+<span id="cb36-13"><a href="#cb36-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb36-14"><a href="#cb36-14" aria-hidden="true" tabindex="-1"></a>hazard_ax.legend(loc<span class="op">=</span><span class="dv">2</span>)<span class="op">;</span></span>
+<span id="cb36-15"><a href="#cb36-15" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb36-16"><a href="#cb36-16" aria-hidden="true" tabindex="-1"></a>plot_with_hpd(interval_bounds[:<span class="op">-</span><span class="dv">1</span>], tv_base_hazard, survival,</span>
+<span id="cb36-17"><a href="#cb36-17" aria-hidden="true" tabindex="-1"></a>              surv_ax, color<span class="op">=</span>blue)</span>
+<span id="cb36-18"><a href="#cb36-18" aria-hidden="true" tabindex="-1"></a>plot_with_hpd(interval_bounds[:<span class="op">-</span><span class="dv">1</span>], tv_met_hazard, survival,</span>
+<span id="cb36-19"><a href="#cb36-19" aria-hidden="true" tabindex="-1"></a>              surv_ax, color<span class="op">=</span>red)</span>
+<span id="cb36-20"><a href="#cb36-20" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb36-21"><a href="#cb36-21" aria-hidden="true" tabindex="-1"></a>surv_ax.set_xlim(<span class="dv">0</span>, df.time.<span class="bu">max</span>())<span class="op">;</span></span>
+<span id="cb36-22"><a href="#cb36-22" aria-hidden="true" tabindex="-1"></a>surv_ax.set_xlabel(<span class="st">&#39;Months since mastectomy&#39;</span>)<span class="op">;</span></span>
+<span id="cb36-23"><a href="#cb36-23" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb36-24"><a href="#cb36-24" aria-hidden="true" tabindex="-1"></a>surv_ax.set_ylabel(<span class="st">&#39;Survival function $S(t)$&#39;</span>)<span class="op">;</span></span>
+<span id="cb36-25"><a href="#cb36-25" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb36-26"><a href="#cb36-26" aria-hidden="true" tabindex="-1"></a>fig.suptitle(<span class="st">&#39;Bayesian survival model with time varying effects&#39;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/bayes-survival/2015-10-05-bayes-survival_49_0.png" title="fig:" alt="png" />
+</center>
+<p>We have really only scratched the surface of both survival analysis and the Bayesian approach to survival analysis. More information on Bayesian survival analysis is available in Ibrahim et al.<a href="#fn2" class="footnote-ref" id="fnref2" role="doc-noteref"><sup>2</sup></a> (For example, we may want to account for individual frailty in either or original or time-varying models.)</p>
+<p>This post is available as an <a href="http://ipython.org/">IPython</a> notebook <a href="https://gist.github.com/AustinRochford/afe6862e622c31494b2f">here</a>.</p>
+<section class="footnotes" role="doc-endnotes">
+<hr />
+<ol>
+<li id="fn1" role="doc-endnote"><p>Aalen, Odd, Ornulf Borgan, and Hakon Gjessing. Survival and event history analysis: a process point of view. Springer Science &amp; Business Media, 2008.<a href="#fnref1" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+<li id="fn2" role="doc-endnote"><p>Ibrahim, Joseph G., Ming‐Hui Chen, and Debajyoti Sinha. Bayesian survival analysis. John Wiley &amp; Sons, Ltd, 2005.<a href="#fnref2" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+</ol>
+</section>

@@ -1,0 +1,126 @@
+<meta name="title" content="Polynomial Regression and the Importance of Cross-Validation" />
+<meta name="tags" content="Examples, Cross-Validation, Machine Learning" />
+<meta name="date" content="2013-12-12" />
+<meta name="has_math" content="true" /><p>Pardon the ugly imports.</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> matplotlib <span class="im">import</span> pyplot <span class="im">as</span> plt</span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> numpy <span class="im">as</span> np</span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> scipy <span class="im">import</span> stats</span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> sklearn.base <span class="im">import</span> BaseEstimator</span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> sklearn.grid_search <span class="im">import</span> GridSearchCV</span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> sklearn.linear_model <span class="im">import</span> LinearRegression</span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> sklearn.metrics <span class="im">import</span> mean_squared_error</span></code></pre></div>
+<p>As someone initially trained in pure mathematics and then in mathematical statistics, <a href="http://en.wikipedia.org/wiki/Cross-validation_%28statistics%29">cross-validation</a> was the first machine learning concept that was a revelation to me. My experience teaching college calculus has taught me the power of counterexamples for illustrating the necessity of the hypothesis of a theorem. (One of my favorite math books is <a href="http://www.amazon.com/Counterexamples-Analysis-Dover-Books-%20Mathematics/dp/0486428753"><em>Counterexamples in Analysis</em></a>.) While cross-validation is not a theorem, per se, this post explores an example that I have found quite persuasive.</p>
+<p>In this example, we consider the problem of <a href="http://en.wikipedia.org/wiki/Polynomial_regression">polynomial regression</a>. We will attempt to recover the polynomial <span class="math inline">\(p(x) = x^3 - 3 x^2 + 2 x + 1\)</span> from noisy observations.</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> p(x):</span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> x<span class="op">**</span><span class="dv">3</span> <span class="op">-</span> <span class="dv">3</span> <span class="op">*</span> x<span class="op">**</span><span class="dv">2</span> <span class="op">+</span> <span class="dv">2</span> <span class="op">*</span> x <span class="op">+</span> <span class="dv">1</span></span></code></pre></div>
+<p>We assume that our data is generated from a polynomial of unknown degree, <span class="math inline">\(p(x)\)</span> via the model <span class="math inline">\(Y = p(X) + \varepsilon\)</span> where <span class="math inline">\(\varepsilon \sim N(0, \sigma^2)\)</span>. First, we generate <span class="math inline">\(N = 12\)</span> samples from the true model, where <span class="math inline">\(X\)</span> is uniformly distributed on the interval <span class="math inline">\([0, 3]\)</span> and <span class="math inline">\(\sigma^2 = 0.1\)</span>.</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>np.random.seed(<span class="dv">145837</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>N <span class="op">=</span> <span class="dv">12</span></span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>var <span class="op">=</span> <span class="dv">10</span><span class="op">**-</span><span class="dv">1</span></span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>left <span class="op">=</span> <span class="dv">0</span></span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>right <span class="op">=</span> <span class="dv">3</span></span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a>xs <span class="op">=</span> stats.uniform.rvs(left, right, size<span class="op">=</span>N)</span>
+<span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a>eps <span class="op">=</span> stats.norm.rvs(<span class="dv">0</span>, np.sqrt(var), size<span class="op">=</span>N)</span>
+<span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a>ys <span class="op">=</span> p(xs) <span class="op">+</span> eps</span></code></pre></div>
+<p>Next we implement a class for polynomial regression. In order to use our class with <a href="http://scikit-learn.org/stable/"><code>scikit-learn</code></a>’s <a href="http://scikit-learn.org/stable/model_selection.html#model-selection">cross-validation framework</a>, we derive from <code>sklearn.base.BaseEstimator</code>. While we don’t wish to belabor the mathematical formulation of polynomial regression (fascinating though it is), we will explain the basic idea, so that our implementation seems at least plausible. In its simplest formulation, polynomial regression uses finds the least squares relationship between the observed responses and the <a href="http://en.wikipedia.org/wiki/Vandermonde_matrix">Vandermonde matrix</a> (in our case, computed using <a href="http://docs.scipy.org/doc/numpy/reference/generated/numpy%20.vander.html"><code>numpy.vander</code></a>) of the observed predictors.</p>
+<div class="sourceCode" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> PolynomialRegression(BaseEstimator):</span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>    <span class="kw">def</span> <span class="fu">__init__</span>(<span class="va">self</span>, deg<span class="op">=</span><span class="va">None</span>):</span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>        <span class="va">self</span>.deg <span class="op">=</span> deg</span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a>    <span class="kw">def</span> fit(<span class="va">self</span>, X, y, deg<span class="op">=</span><span class="va">None</span>):</span>
+<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a>        <span class="va">self</span>.model <span class="op">=</span> LinearRegression(fit_intercept<span class="op">=</span><span class="va">False</span>)</span>
+<span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a>        <span class="va">self</span>.model.fit(np.vander(X, N<span class="op">=</span><span class="va">self</span>.deg <span class="op">+</span> <span class="dv">1</span>), y)</span>
+<span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb5-9"><a href="#cb5-9" aria-hidden="true" tabindex="-1"></a>    <span class="kw">def</span> predict(<span class="va">self</span>, x):</span>
+<span id="cb5-10"><a href="#cb5-10" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> <span class="va">self</span>.model.predict(np.vander(x, N<span class="op">=</span><span class="va">self</span>.deg <span class="op">+</span> <span class="dv">1</span>))</span>
+<span id="cb5-11"><a href="#cb5-11" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb5-12"><a href="#cb5-12" aria-hidden="true" tabindex="-1"></a>    <span class="at">@property</span></span>
+<span id="cb5-13"><a href="#cb5-13" aria-hidden="true" tabindex="-1"></a>    <span class="kw">def</span> coef_(<span class="va">self</span>):</span>
+<span id="cb5-14"><a href="#cb5-14" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> <span class="va">self</span>.model.coef_</span></code></pre></div>
+<p>Note that this is quite a naive approach to polynomial regression as all of the non-constant predictors, that is, <span class="math inline">\(x, x^2, x^3, \ldots, x^d\)</span>, will be quite correlated. This naive approach is, however, sufficient for our example.</p>
+<p>The <code>PolynomialRegression</code> class depends on the degree of the polynomial to be fit. If we know the degree of the polynomial that generated the data, then the regression is straightforward.</p>
+<div class="sourceCode" id="cb6"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>known_degree_model <span class="op">=</span> PolynomialRegression(deg<span class="op">=</span><span class="dv">3</span>)</span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>known_degree_model.fit(xs, ys)</span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>known_degree_model.coef_</span></code></pre></div>
+<pre><code>array([ 1.03303734, -3.21335403,  2.26034212,  0.88016067])</code></pre>
+<p>These values are the coefficients of the fit polynomial, starting with the coefficient of <span class="math inline">\(x^3\)</span>. We see that they come reasonably close to the true values, from a relatively small set of samples. As neat and tidy as this solution is, we are concerned with the more interesting case where we do not know the degree of the polynomial.</p>
+<p>If we approach the problem of choosing the correct degree without cross validation, it is extremely tempting to minimize the in-sample error of the fit polynomial. That is, if <span class="math inline">\((X_1, Y_1), \ldots, (X_N, Y_N)\)</span> are our observations, and <span class="math inline">\(\hat{p}(x)\)</span> is our regression polynomial, we are tempted to minimize the mean squared error,</p>
+<p><span class="math display">\[
+\begin{align*}
+MSE(\hat{p})
+    &amp; = \sum_{i = 1}^N \left( \hat{p}(X_i) - Y_i \right)^2.
+\end{align*}
+\]</span></p>
+<p>It is actually quite straightforward to choose a degree that will case this mean squared error to vanish. Since two points uniquely identify a line, three points uniquely identify a parabola, four points uniquely identify a cubic, etc., we see that our <span class="math inline">\(N\)</span> data points uniquely specify a polynomial of degree <span class="math inline">\(N - 1\)</span>.</p>
+<div class="sourceCode" id="cb8"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>overfit_model <span class="op">=</span> PolynomialRegression(deg<span class="op">=</span>N <span class="op">-</span> <span class="dv">1</span>)</span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>overfit_model.fit(xs, ys)</span></code></pre></div>
+<div class="sourceCode" id="cb9"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a>fig <span class="op">=</span> plt.figure()</span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>ax <span class="op">=</span> fig.add_subplot(<span class="dv">111</span>)</span>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a>plot_xs <span class="op">=</span> np.linspace(left, right, (right <span class="op">-</span> left) <span class="op">*</span> <span class="dv">100</span>)</span>
+<span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb9-6"><a href="#cb9-6" aria-hidden="true" tabindex="-1"></a>ax.scatter(xs, ys)<span class="op">;</span></span>
+<span id="cb9-7"><a href="#cb9-7" aria-hidden="true" tabindex="-1"></a>ax.plot(plot_xs, np.clip(overfit_model.predict(plot_xs), <span class="op">-</span><span class="dv">1</span>, <span class="dv">7</span>), color<span class="op">=</span><span class="st">&#39;k&#39;</span>, label<span class="op">=</span><span class="st">&#39;Overfit estimator&#39;</span>)<span class="op">;</span></span>
+<span id="cb9-8"><a href="#cb9-8" aria-hidden="true" tabindex="-1"></a>ax.plot(plot_xs, p(plot_xs), color<span class="op">=</span><span class="st">&#39;r&#39;</span>, label<span class="op">=</span><span class="st">&#39;True polynomial&#39;</span>)<span class="op">;</span></span>
+<span id="cb9-9"><a href="#cb9-9" aria-hidden="true" tabindex="-1"></a>ax.legend(loc<span class="op">=</span><span class="dv">2</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/polynomial-regression/overfit.png" title="fig:" alt="Plot of overfit versus correct model" />
+</center>
+<p>As we can see from this plot, the fitted <span class="math inline">\(N - 1\)</span>-degree polynomial is significantly less smooth than the true polynomial, <span class="math inline">\(p\)</span>. This roughness results from the fact that the <span class="math inline">\(N - 1\)</span>-degree polynomial has enough parameters to account for the noise in the model, instead of the true underlying structure of the data. Such a model is called overparametrized or overfit. While its mean squared error on the training data, its in-sample error, is quite small,</p>
+<div class="sourceCode" id="cb10"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a>mean_squared_error(overfit_model.predict(xs), ys)</span></code></pre></div>
+<pre><code>2.0039043409236146e-15</code></pre>
+<p>It will not, however, perform well when used to predict the value of <span class="math inline">\(p\)</span> at points not in the training set. (Note that this in-sample error should theoretically be zero. The small positive value is due to rounding errors.) To illustrate this inaccuracy, we generate ten more points uniformly distributed in the interval <span class="math inline">\([0, 3]\)</span> and use the overfit model to predict the value of <span class="math inline">\(p\)</span> at those points.</p>
+<div class="sourceCode" id="cb12"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a>N_prediction <span class="op">=</span> <span class="dv">10</span></span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a>prediction_xs <span class="op">=</span> stats.uniform.rvs(left, right, size<span class="op">=</span>N_prediction)</span>
+<span id="cb12-4"><a href="#cb12-4" aria-hidden="true" tabindex="-1"></a>prediction_eps <span class="op">=</span> stats.norm.rvs(<span class="dv">0</span>, np.sqrt(var), size<span class="op">=</span>N_prediction)</span>
+<span id="cb12-5"><a href="#cb12-5" aria-hidden="true" tabindex="-1"></a>prediction_ys <span class="op">=</span> p(prediction_xs) <span class="op">+</span> prediction_eps</span>
+<span id="cb12-6"><a href="#cb12-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb12-7"><a href="#cb12-7" aria-hidden="true" tabindex="-1"></a>mean_squared_error(overfit_model.predict(prediction_xs), prediction_ys)</span></code></pre></div>
+<pre><code>19.539402955310337</code></pre>
+<p>We see that the prediction error is many orders of magnitude larger than the in- sample error. This awful predictive performance of a model with excellent in- sample error illustrates the need for cross-validation to prevent overfitting.</p>
+<p>Here we use <code>scikit-learn</code>’s <a href="http://scikit-%20learn.org/stable/modules/generated/sklearn.grid_search.GridSearchCV.html"><code>GridSearchCV</code></a> to choose the degree of the polynomial using three-fold cross-validation. We constrain our search to degrees between one and twenty-five.</p>
+<div class="sourceCode" id="cb14"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a>estimator <span class="op">=</span> PolynomialRegression()</span>
+<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a>degrees <span class="op">=</span> np.arange(<span class="dv">1</span>, <span class="dv">25</span>)</span>
+<span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a>cv_model <span class="op">=</span> GridSearchCV(estimator,</span>
+<span id="cb14-4"><a href="#cb14-4" aria-hidden="true" tabindex="-1"></a>                        param_grid<span class="op">=</span>{<span class="st">&#39;deg&#39;</span>: degrees},</span>
+<span id="cb14-5"><a href="#cb14-5" aria-hidden="true" tabindex="-1"></a>                        scoring<span class="op">=</span><span class="st">&#39;mean_squared_error&#39;</span>)</span>
+<span id="cb14-6"><a href="#cb14-6" aria-hidden="true" tabindex="-1"></a>cv_model.fit(xs, ys)<span class="op">;</span></span></code></pre></div>
+<div class="sourceCode" id="cb15"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a>cv_model.best_params_, cv_model.best_estimator_.coef_</span></code></pre></div>
+<pre><code>({&#39;deg&#39;: 3}, array([ 1.03303734, -3.21335403,  2.26034212,  0.88016067]))</code></pre>
+<p>We see that cross-validation has chosen the correct degree of the polynomial, and recovered the same coefficients as the model with known degree.</p>
+<div class="sourceCode" id="cb17"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a>fig <span class="op">=</span> plt.figure()</span>
+<span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a>ax <span class="op">=</span> fig.add_subplot(<span class="dv">111</span>)</span>
+<span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb17-4"><a href="#cb17-4" aria-hidden="true" tabindex="-1"></a>plt.scatter(xs, ys)<span class="op">;</span></span>
+<span id="cb17-5"><a href="#cb17-5" aria-hidden="true" tabindex="-1"></a>ax.plot(plot_xs, np.clip(overfit_model.predict(plot_xs), <span class="op">-</span><span class="dv">1</span>, <span class="dv">7</span>), color<span class="op">=</span><span class="st">&#39;k&#39;</span>, label<span class="op">=</span><span class="st">&#39;Overfit estimator&#39;</span>)<span class="op">;</span></span>
+<span id="cb17-6"><a href="#cb17-6" aria-hidden="true" tabindex="-1"></a>plt.plot(plot_xs, cv_model.predict(plot_xs), color<span class="op">=</span><span class="st">&#39;b&#39;</span>, label<span class="op">=</span><span class="st">&#39;Cross-validated estimator&#39;</span>)<span class="op">;</span></span>
+<span id="cb17-7"><a href="#cb17-7" aria-hidden="true" tabindex="-1"></a>ax.plot(plot_xs, p(plot_xs), color<span class="op">=</span><span class="st">&#39;r&#39;</span>, label<span class="op">=</span><span class="st">&#39;True polynomial&#39;</span>)<span class="op">;</span></span>
+<span id="cb17-8"><a href="#cb17-8" aria-hidden="true" tabindex="-1"></a>ax.legend(loc<span class="op">=</span><span class="dv">2</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/polynomial-regression/cv.png" title="fig:" alt="Plot of the cross-validated model versus the overfit and true models" />
+</center>
+<p>We see that the cross-validated estimator is much smoother and closer to the true polynomial than the overfit estimator. The in-sample error of the cross- validated estimator is</p>
+<div class="sourceCode" id="cb18"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a>mean_squared_error(cv_model.predict(xs), ys)</span></code></pre></div>
+<pre><code>0.039089250360265018</code></pre>
+<p>and the prediction error is</p>
+<div class="sourceCode" id="cb20"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a>mean_squared_error(cv_model.predict(prediction_xs), prediction_ys)</span></code></pre></div>
+<pre><code>0.15873290784021762</code></pre>
+<p>These errors are much closer than the corresponding errors of the overfit model.</p>
+<p>To further illustrate the advantages of cross-validation, we show the following graph of the negative score versus the degree of the fit polynomial.</p>
+<div class="sourceCode" id="cb22"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb22-1"><a href="#cb22-1" aria-hidden="true" tabindex="-1"></a>fig <span class="op">=</span> plt.figure()</span>
+<span id="cb22-2"><a href="#cb22-2" aria-hidden="true" tabindex="-1"></a>ax <span class="op">=</span> fig.add_subplot(<span class="dv">111</span>)</span>
+<span id="cb22-3"><a href="#cb22-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb22-4"><a href="#cb22-4" aria-hidden="true" tabindex="-1"></a>scores <span class="op">=</span> np.array([grid_score.mean_validation_score <span class="cf">for</span> grid_score <span class="kw">in</span> cv_model.grid_scores_])</span>
+<span id="cb22-5"><a href="#cb22-5" aria-hidden="true" tabindex="-1"></a>ax.plot(degrees, <span class="op">-</span>scores)<span class="op">;</span></span>
+<span id="cb22-6"><a href="#cb22-6" aria-hidden="true" tabindex="-1"></a>ax.set_yscale(<span class="st">&#39;log&#39;</span>)<span class="op">;</span></span>
+<span id="cb22-7"><a href="#cb22-7" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="st">&#39;-1 * Score&#39;</span>)<span class="op">;</span></span>
+<span id="cb22-8"><a href="#cb22-8" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="st">&#39;Degree&#39;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/polynomial-regression/score.png" title="fig:" alt="Plot of negative cross-validation score" />
+</center>
+<p>The cross-validation process seeks to maximize score and therefore minimize the negative score. (We have plotted negative score here in order to be able to use a logarithmic scale.) We see that this quantity is minimized at degree three and explodes as the degree of the polynomial increases (note the logarithmic scale). While overfitting the model may decrease the in-sample error, this graph shows that the cross-validation score and therefore the predictive accuracy increases at a phenomenal rate.</p>
+<p>This post is available as an <a href="http://ipython.org/">IPython</a> notebook <a href="/resources/polynomial-regression/notebook.ipynb">here</a>.</p>
+<p>Discussion on <a href="https://news.ycombinator.com/item?id=6895540">Hacker News</a></p>

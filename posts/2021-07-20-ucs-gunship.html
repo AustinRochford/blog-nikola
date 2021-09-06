@@ -1,0 +1,1933 @@
+<meta name="title" content="A Fair Price for the Republic Gunship? A Bayesian Analysis of Ultimate Collector Series Prices in Python with PyMC3" />
+<meta name="tags" content="Lego, Python, PyMC3, Bayesian" />
+<meta name="date" content="2021-07-20" />
+<meta name="has_math" content="true" /><p>Since my last <a href="https://austinrochford.com/posts/2021-06-10-lego-pymc3.html">post</a> on modeling Lego prices, Lego has <a href="https://www.youtube.com/watch?v=vHx8oEI9rzY">announced</a> the release of <a href="https://www.lego.com/en-us/product/republic-gunship-75309">73509</a>, an Ultimate Collector Series Republic Gunship from the Battle of Geonosis.</p>
+<center>
+<table>
+<tr>
+<td>
+<img src="https://www.lego.com/cdn/cs/set/assets/blt4b90c515304ac9da/75309_alt1.jpg" width=300/>
+</td>
+<td>
+<img src="https://static.wikia.nocookie.net/swfanon/images/c/cd/LAAT_Gunship.jpg" width=370 />
+</td>
+</tr>
+</table>
+</center>
+<p><br></p>
+<p>As with <a href="https://www.lego.com/en-us/product/darth-vader-meditation-chamber-75296">75296</a>, Darth Vader Meditation Chamber, we can <a href="https://austinrochford.com/posts/2021-06-03-vader-meditation.html">ask</a> whether the $349.99 recommended retail price of this set is fair given its number of pieces, Star Wars theme, and Ultimate Collector Series status. This post will update the model from the previous one to include random effects for subtheme (in Lego collector jargon, the theme of 75309 is “Star Wars” and the subtheme is “Ultimate Collector Series”) to answer this question. In addition, we will explore the effect of different themes and subthemes on set prices.</p>
+<p>First we make some Python imports and do a bit of housekeeping.</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="op">%</span>matplotlib inline</span></code></pre></div>
+<div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> datetime</span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> functools <span class="im">import</span> <span class="bu">reduce</span></span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> warnings <span class="im">import</span> filterwarnings</span></code></pre></div>
+<div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> aesara <span class="im">import</span> shared, tensor <span class="im">as</span> at</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> arviz <span class="im">as</span> az</span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> matplotlib <span class="im">import</span> MatplotlibDeprecationWarning, pyplot <span class="im">as</span> plt</span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> matplotlib.ticker <span class="im">import</span> StrMethodFormatter</span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> numpy <span class="im">as</span> np</span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> pandas <span class="im">as</span> pd</span>
+<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> pymc3 <span class="im">as</span> pm</span>
+<span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> sklearn.preprocessing <span class="im">import</span> StandardScaler</span>
+<span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> seaborn <span class="im">as</span> sns</span></code></pre></div>
+<pre><code>You are running the v4 development version of PyMC3 which currently still lacks key features. You probably want to use the stable v3 instead which you can either install via conda or find on the v3 GitHub branch: https://github.com/pymc-devs/pymc3/tree/v3</code></pre>
+<div class="sourceCode" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>filterwarnings(<span class="st">&#39;ignore&#39;</span>, category<span class="op">=</span>MatplotlibDeprecationWarning, module<span class="op">=</span><span class="st">&#39;pandas&#39;</span>)</span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>filterwarnings(<span class="st">&#39;ignore&#39;</span>, category<span class="op">=</span><span class="pp">UserWarning</span>, module<span class="op">=</span><span class="st">&#39;aesara&#39;</span>)</span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>filterwarnings(<span class="st">&#39;ignore&#39;</span>, category<span class="op">=</span><span class="pp">UserWarning</span>, module<span class="op">=</span><span class="st">&#39;arviz&#39;</span>)</span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a>filterwarnings(<span class="st">&#39;ignore&#39;</span>, category<span class="op">=</span><span class="pp">UserWarning</span>, module<span class="op">=</span><span class="st">&#39;pandas&#39;</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb6"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>FIGSIZE <span class="op">=</span> (<span class="dv">8</span>, <span class="dv">6</span>)</span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>plt.rcParams[<span class="st">&#39;figure.figsize&#39;</span>] <span class="op">=</span> FIGSIZE</span>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a>sns.<span class="bu">set</span>(color_codes<span class="op">=</span><span class="va">True</span>)</span>
+<span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-6"><a href="#cb6-6" aria-hidden="true" tabindex="-1"></a>dollar_formatter <span class="op">=</span> StrMethodFormatter(<span class="st">&quot;${x:,.2f}&quot;</span>)</span></code></pre></div>
+<h2 id="load-the-data">Load the Data</h2>
+<p>We begin the real work by loading the data scraped from Brickset. See the <a href="https://austinrochford.com/posts/2021-06-03-vader-meditation.html">first post</a> in this series for more background on the data.</p>
+<div class="sourceCode" id="cb7"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a>DATA_URL <span class="op">=</span> <span class="st">&#39;https://austinrochford.com/resources/lego/brickset_01011980_06012021.csv.gz&#39;</span></span></code></pre></div>
+<div class="sourceCode" id="cb8"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> to_datetime(year):</span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> np.datetime64(<span class="ss">f&quot;</span><span class="sc">{</span><span class="bu">round</span>(year)<span class="sc">}</span><span class="ss">-01-01&quot;</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb9"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a>full_df <span class="op">=</span> (pd.read_csv(DATA_URL,</span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>                       usecols<span class="op">=</span>[</span>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a>                           <span class="st">&quot;Year released&quot;</span>, <span class="st">&quot;Set number&quot;</span>,</span>
+<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a>                           <span class="st">&quot;Name&quot;</span>, <span class="st">&quot;Set type&quot;</span>, <span class="st">&quot;Theme&quot;</span>, <span class="st">&quot;Subtheme&quot;</span>,</span>
+<span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a>                           <span class="st">&quot;Pieces&quot;</span>, <span class="st">&quot;RRP&quot;</span></span>
+<span id="cb9-6"><a href="#cb9-6" aria-hidden="true" tabindex="-1"></a>                       ])</span>
+<span id="cb9-7"><a href="#cb9-7" aria-hidden="true" tabindex="-1"></a>             .dropna(subset<span class="op">=</span>[</span>
+<span id="cb9-8"><a href="#cb9-8" aria-hidden="true" tabindex="-1"></a>                 <span class="st">&quot;Year released&quot;</span>, <span class="st">&quot;Set number&quot;</span>,</span>
+<span id="cb9-9"><a href="#cb9-9" aria-hidden="true" tabindex="-1"></a>                 <span class="st">&quot;Name&quot;</span>, <span class="st">&quot;Set type&quot;</span>, <span class="st">&quot;Theme&quot;</span>,</span>
+<span id="cb9-10"><a href="#cb9-10" aria-hidden="true" tabindex="-1"></a>                 <span class="st">&quot;Pieces&quot;</span>, <span class="st">&quot;RRP&quot;</span></span>
+<span id="cb9-11"><a href="#cb9-11" aria-hidden="true" tabindex="-1"></a>             ]))</span>
+<span id="cb9-12"><a href="#cb9-12" aria-hidden="true" tabindex="-1"></a>full_df[<span class="st">&quot;Year released&quot;</span>] <span class="op">=</span> full_df[<span class="st">&quot;Year released&quot;</span>].<span class="bu">apply</span>(to_datetime)</span>
+<span id="cb9-13"><a href="#cb9-13" aria-hidden="true" tabindex="-1"></a>full_df <span class="op">=</span> (full_df.set_index([<span class="st">&quot;Year released&quot;</span>, <span class="st">&quot;Set number&quot;</span>])</span>
+<span id="cb9-14"><a href="#cb9-14" aria-hidden="true" tabindex="-1"></a>                  .sort_index())</span></code></pre></div>
+<p>We see that the data set contains information on approximately 8,500 Lego sets produced between 1980 and June 2021.</p>
+<div class="sourceCode" id="cb10"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a>full_df.head()</span></code></pre></div>
+<center>
+<div>
+<style scoped>
+.dataframe tbody tr th:only-of-type {
+vertical-align: middle;
+}
+
+.dataframe tbody tr th {
+vertical-align: top;
+}
+
+.dataframe thead th {
+text-align: right;
+}
+</style>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th>
+</th>
+<th>
+</th>
+<th>
+Name
+</th>
+<th>
+Set type
+</th>
+<th>
+Theme
+</th>
+<th>
+Pieces
+</th>
+<th>
+RRP
+</th>
+<th>
+Subtheme
+</th>
+</tr>
+<tr>
+<th>
+Year released
+</th>
+<th>
+Set number
+</th>
+<th>
+</th>
+<th>
+</th>
+<th>
+</th>
+<th>
+</th>
+<th>
+</th>
+<th>
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th rowspan="5" valign="top">
+1980-01-01
+</th>
+<th>
+1041-2
+</th>
+<td>
+Educational Duplo Building Set
+</td>
+<td>
+Normal
+</td>
+<td>
+Dacta
+</td>
+<td>
+68.0
+</td>
+<td>
+36.50
+</td>
+<td>
+NaN
+</td>
+</tr>
+<tr>
+<th>
+1075-1
+</th>
+<td>
+LEGO People Supplementary Set
+</td>
+<td>
+Normal
+</td>
+<td>
+Dacta
+</td>
+<td>
+304.0
+</td>
+<td>
+14.50
+</td>
+<td>
+NaN
+</td>
+</tr>
+<tr>
+<th>
+1101-1
+</th>
+<td>
+Replacement 4.5V Motor
+</td>
+<td>
+Normal
+</td>
+<td>
+Service Packs
+</td>
+<td>
+1.0
+</td>
+<td>
+5.65
+</td>
+<td>
+NaN
+</td>
+</tr>
+<tr>
+<th>
+1123-1
+</th>
+<td>
+Ball and Socket Couplings &amp; One Articulated Joint
+</td>
+<td>
+Normal
+</td>
+<td>
+Service Packs
+</td>
+<td>
+8.0
+</td>
+<td>
+16.00
+</td>
+<td>
+NaN
+</td>
+</tr>
+<tr>
+<th>
+1130-1
+</th>
+<td>
+Plastic Folder for Building Instructions
+</td>
+<td>
+Normal
+</td>
+<td>
+Service Packs
+</td>
+<td>
+1.0
+</td>
+<td>
+14.00
+</td>
+<td>
+NaN
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center>
+<p><br></p>
+<div class="sourceCode" id="cb11"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a>full_df.tail()</span></code></pre></div>
+<center>
+<div>
+<style scoped>
+.dataframe tbody tr th:only-of-type {
+vertical-align: middle;
+}
+
+.dataframe tbody tr th {
+vertical-align: top;
+}
+
+.dataframe thead th {
+text-align: right;
+}
+</style>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th>
+</th>
+<th>
+</th>
+<th>
+Name
+</th>
+<th>
+Set type
+</th>
+<th>
+Theme
+</th>
+<th>
+Pieces
+</th>
+<th>
+RRP
+</th>
+<th>
+Subtheme
+</th>
+</tr>
+<tr>
+<th>
+Year released
+</th>
+<th>
+Set number
+</th>
+<th>
+</th>
+<th>
+</th>
+<th>
+</th>
+<th>
+</th>
+<th>
+</th>
+<th>
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th rowspan="5" valign="top">
+2021-01-01
+</th>
+<th>
+80022-1
+</th>
+<td>
+Spider Queen’s Arachnoid Base
+</td>
+<td>
+Normal
+</td>
+<td>
+Monkie Kid
+</td>
+<td>
+1170.0
+</td>
+<td>
+119.99
+</td>
+<td>
+Season 2
+</td>
+</tr>
+<tr>
+<th>
+80023-1
+</th>
+<td>
+Monkie Kid’s Team Dronecopter
+</td>
+<td>
+Normal
+</td>
+<td>
+Monkie Kid
+</td>
+<td>
+1462.0
+</td>
+<td>
+149.99
+</td>
+<td>
+Season 2
+</td>
+</tr>
+<tr>
+<th>
+80024-1
+</th>
+<td>
+The Legendary Flower Fruit Mountain
+</td>
+<td>
+Normal
+</td>
+<td>
+Monkie Kid
+</td>
+<td>
+1949.0
+</td>
+<td>
+169.99
+</td>
+<td>
+Season 2
+</td>
+</tr>
+<tr>
+<th>
+80106-1
+</th>
+<td>
+Story of Nian
+</td>
+<td>
+Normal
+</td>
+<td>
+Seasonal
+</td>
+<td>
+1067.0
+</td>
+<td>
+79.99
+</td>
+<td>
+Chinese Traditional Festivals
+</td>
+</tr>
+<tr>
+<th>
+80107-1
+</th>
+<td>
+Spring Lantern Festival
+</td>
+<td>
+Normal
+</td>
+<td>
+Seasonal
+</td>
+<td>
+1793.0
+</td>
+<td>
+119.99
+</td>
+<td>
+Chinese Traditional Festivals
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center>
+<p><br></p>
+<div class="sourceCode" id="cb12"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a>full_df.describe()</span></code></pre></div>
+<center>
+<div>
+<style scoped>
+.dataframe tbody tr th:only-of-type {
+vertical-align: middle;
+}
+
+.dataframe tbody tr th {
+vertical-align: top;
+}
+
+.dataframe thead th {
+text-align: right;
+}
+</style>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th>
+</th>
+<th>
+Pieces
+</th>
+<th>
+RRP
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>
+count
+</th>
+<td>
+8502.000000
+</td>
+<td>
+8502.000000
+</td>
+</tr>
+<tr>
+<th>
+mean
+</th>
+<td>
+258.739591
+</td>
+<td>
+31.230506
+</td>
+</tr>
+<tr>
+<th>
+std
+</th>
+<td>
+481.627846
+</td>
+<td>
+44.993559
+</td>
+</tr>
+<tr>
+<th>
+min
+</th>
+<td>
+0.000000
+</td>
+<td>
+0.000000
+</td>
+</tr>
+<tr>
+<th>
+25%
+</th>
+<td>
+32.000000
+</td>
+<td>
+7.000000
+</td>
+</tr>
+<tr>
+<th>
+50%
+</th>
+<td>
+98.000000
+</td>
+<td>
+17.000000
+</td>
+</tr>
+<tr>
+<th>
+75%
+</th>
+<td>
+300.000000
+</td>
+<td>
+39.990000
+</td>
+</tr>
+<tr>
+<th>
+max
+</th>
+<td>
+11695.000000
+</td>
+<td>
+799.990000
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center>
+<p><br></p>
+<div class="sourceCode" id="cb13"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a>CPI_URL <span class="op">=</span> <span class="st">&#39;https://austinrochford.com/resources/lego/CPIAUCNS202100401.csv&#39;</span></span></code></pre></div>
+<div class="sourceCode" id="cb14"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a>years <span class="op">=</span> pd.date_range(<span class="st">&#39;1979-01-01&#39;</span>, <span class="st">&#39;2021-01-01&#39;</span>, freq<span class="op">=</span><span class="st">&#39;Y&#39;</span>) <span class="op">\</span></span>
+<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a>        <span class="op">+</span> datetime.timedelta(days<span class="op">=</span><span class="dv">1</span>)</span>
+<span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a>cpi_df <span class="op">=</span> (pd.read_csv(CPI_URL, index_col<span class="op">=</span><span class="st">&quot;DATE&quot;</span>, parse_dates<span class="op">=</span>[<span class="st">&quot;DATE&quot;</span>])</span>
+<span id="cb14-4"><a href="#cb14-4" aria-hidden="true" tabindex="-1"></a>        .loc[years])</span>
+<span id="cb14-5"><a href="#cb14-5" aria-hidden="true" tabindex="-1"></a>cpi_df[<span class="st">&quot;to2021&quot;</span>] <span class="op">=</span> cpi_df.loc[<span class="st">&quot;2021-01-01&quot;</span>] <span class="op">/</span> cpi_df</span></code></pre></div>
+<p>We now add a column <code>RRP2021</code>, which is <code>RRP</code> adjusted to 2021 dollars.</p>
+<div class="sourceCode" id="cb15"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a>full_df[<span class="st">&quot;RRP2021&quot;</span>] <span class="op">=</span> (pd.merge(full_df, cpi_df,</span>
+<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a>                           left_on<span class="op">=</span>[<span class="st">&quot;Year released&quot;</span>],</span>
+<span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a>                           right_index<span class="op">=</span><span class="va">True</span>)</span>
+<span id="cb15-4"><a href="#cb15-4" aria-hidden="true" tabindex="-1"></a>                    .<span class="bu">apply</span>(<span class="kw">lambda</span> df: df[<span class="st">&quot;RRP&quot;</span>] <span class="op">*</span> df[<span class="st">&quot;to2021&quot;</span>],</span>
+<span id="cb15-5"><a href="#cb15-5" aria-hidden="true" tabindex="-1"></a>                           axis<span class="op">=</span><span class="dv">1</span>))</span></code></pre></div>
+<p>Based on the exploratory data analysis in the first post in this series, we filter <code>full_df</code> down to approximately 6,300 sets to be included in our analysis.</p>
+<div class="sourceCode" id="cb16"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a>FILTERS <span class="op">=</span> [</span>
+<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a>full_df[<span class="st">&quot;Set type&quot;</span>] <span class="op">==</span> <span class="st">&quot;Normal&quot;</span>,</span>
+<span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a>full_df[<span class="st">&quot;Pieces&quot;</span>] <span class="op">&gt;</span> <span class="dv">10</span>,</span>
+<span id="cb16-4"><a href="#cb16-4" aria-hidden="true" tabindex="-1"></a>full_df[<span class="st">&quot;Theme&quot;</span>] <span class="op">!=</span> <span class="st">&quot;Duplo&quot;</span>,</span>
+<span id="cb16-5"><a href="#cb16-5" aria-hidden="true" tabindex="-1"></a>full_df[<span class="st">&quot;Theme&quot;</span>] <span class="op">!=</span> <span class="st">&quot;Service Packs&quot;</span>,</span>
+<span id="cb16-6"><a href="#cb16-6" aria-hidden="true" tabindex="-1"></a>full_df[<span class="st">&quot;Theme&quot;</span>] <span class="op">!=</span> <span class="st">&quot;Bulk Bricks&quot;</span>,</span>
+<span id="cb16-7"><a href="#cb16-7" aria-hidden="true" tabindex="-1"></a>full_df[<span class="st">&quot;RRP&quot;</span>] <span class="op">&gt;</span> <span class="dv">0</span></span>
+<span id="cb16-8"><a href="#cb16-8" aria-hidden="true" tabindex="-1"></a>]</span></code></pre></div>
+<div class="sourceCode" id="cb17"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a>df <span class="op">=</span> full_df[<span class="bu">reduce</span>(np.logical_and, FILTERS)].copy()</span></code></pre></div>
+<div class="sourceCode" id="cb18"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a>df.head()</span></code></pre></div>
+<center>
+<div>
+<style scoped>
+.dataframe tbody tr th:only-of-type {
+vertical-align: middle;
+}
+
+.dataframe tbody tr th {
+vertical-align: top;
+}
+
+.dataframe thead th {
+text-align: right;
+}
+</style>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th>
+</th>
+<th>
+</th>
+<th>
+Name
+</th>
+<th>
+Set type
+</th>
+<th>
+Theme
+</th>
+<th>
+Pieces
+</th>
+<th>
+RRP
+</th>
+<th>
+Subtheme
+</th>
+<th>
+RRP2021
+</th>
+</tr>
+<tr>
+<th>
+Year released
+</th>
+<th>
+Set number
+</th>
+<th>
+</th>
+<th>
+</th>
+<th>
+</th>
+<th>
+</th>
+<th>
+</th>
+<th>
+</th>
+<th>
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th rowspan="5" valign="top">
+1980-01-01
+</th>
+<th>
+1041-2
+</th>
+<td>
+Educational Duplo Building Set
+</td>
+<td>
+Normal
+</td>
+<td>
+Dacta
+</td>
+<td>
+68.0
+</td>
+<td>
+36.50
+</td>
+<td>
+NaN
+</td>
+<td>
+122.721632
+</td>
+</tr>
+<tr>
+<th>
+1075-1
+</th>
+<td>
+LEGO People Supplementary Set
+</td>
+<td>
+Normal
+</td>
+<td>
+Dacta
+</td>
+<td>
+304.0
+</td>
+<td>
+14.50
+</td>
+<td>
+NaN
+</td>
+<td>
+48.752429
+</td>
+</tr>
+<tr>
+<th>
+5233-1
+</th>
+<td>
+Bedroom
+</td>
+<td>
+Normal
+</td>
+<td>
+Homemaker
+</td>
+<td>
+26.0
+</td>
+<td>
+4.50
+</td>
+<td>
+NaN
+</td>
+<td>
+15.130064
+</td>
+</tr>
+<tr>
+<th>
+6305-1
+</th>
+<td>
+Trees and Flowers
+</td>
+<td>
+Normal
+</td>
+<td>
+Town
+</td>
+<td>
+12.0
+</td>
+<td>
+3.75
+</td>
+<td>
+Accessories
+</td>
+<td>
+12.608387
+</td>
+</tr>
+<tr>
+<th>
+6306-1
+</th>
+<td>
+Road Signs
+</td>
+<td>
+Normal
+</td>
+<td>
+Town
+</td>
+<td>
+12.0
+</td>
+<td>
+2.50
+</td>
+<td>
+Accessories
+</td>
+<td>
+8.405591
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center>
+<p><br></p>
+<div class="sourceCode" id="cb19"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a>df.describe()</span></code></pre></div>
+<center>
+<div>
+<style scoped>
+.dataframe tbody tr th:only-of-type {
+vertical-align: middle;
+}
+
+.dataframe tbody tr th {
+vertical-align: top;
+}
+
+.dataframe thead th {
+text-align: right;
+}
+</style>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th>
+</th>
+<th>
+Pieces
+</th>
+<th>
+RRP
+</th>
+<th>
+RRP2021
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>
+count
+</th>
+<td>
+6312.000000
+</td>
+<td>
+6312.000000
+</td>
+<td>
+6312.000000
+</td>
+</tr>
+<tr>
+<th>
+mean
+</th>
+<td>
+337.177440
+</td>
+<td>
+37.038246
+</td>
+<td>
+45.795998
+</td>
+</tr>
+<tr>
+<th>
+std
+</th>
+<td>
+535.619271
+</td>
+<td>
+49.657704
+</td>
+<td>
+58.952563
+</td>
+</tr>
+<tr>
+<th>
+min
+</th>
+<td>
+11.000000
+</td>
+<td>
+0.600000
+</td>
+<td>
+0.971220
+</td>
+</tr>
+<tr>
+<th>
+25%
+</th>
+<td>
+68.000000
+</td>
+<td>
+9.990000
+</td>
+<td>
+11.866173
+</td>
+</tr>
+<tr>
+<th>
+50%
+</th>
+<td>
+177.000000
+</td>
+<td>
+19.990000
+</td>
+<td>
+26.712319
+</td>
+</tr>
+<tr>
+<th>
+75%
+</th>
+<td>
+400.000000
+</td>
+<td>
+49.500000
+</td>
+<td>
+55.952471
+</td>
+</tr>
+<tr>
+<th>
+max
+</th>
+<td>
+11695.000000
+</td>
+<td>
+799.990000
+</td>
+<td>
+897.373477
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center>
+<p><br></p>
+<h2 id="exploratory-data-analysis">Exploratory Data Analysis</h2>
+<p>The first post in this series does quite a lot of exploratory data analysis (EDA) on this data which we will not repeat here. For this post our EDA will focus on subtheme.</p>
+<p>We see that there are a bit less than 500 subthemes and that just under a quarter of sets have no subtheme associated with them on Brickset.</p>
+<div class="sourceCode" id="cb20"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a>df[<span class="st">&quot;Subtheme&quot;</span>].describe()</span></code></pre></div>
+<pre><code>count       4896
+unique       482
+top       3 in 1
+freq         189
+Name: Subtheme, dtype: object</code></pre>
+<div class="sourceCode" id="cb22"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb22-1"><a href="#cb22-1" aria-hidden="true" tabindex="-1"></a>df[<span class="st">&quot;Subtheme&quot;</span>].isnull().mean()</span></code></pre></div>
+<pre><code>0.22433460076045628</code></pre>
+<p>We see that there are many <a href="https://www.lego.com/en-us/themes/technic">Technic</a> sets with no subtheme, and a few other themes also stand out for having many sets with no subtheme.</p>
+<div class="sourceCode" id="cb24"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a>ax <span class="op">=</span> (df[df[<span class="st">&quot;Subtheme&quot;</span>].isnull()]</span>
+<span id="cb24-2"><a href="#cb24-2" aria-hidden="true" tabindex="-1"></a>        [<span class="st">&quot;Theme&quot;</span>]</span>
+<span id="cb24-3"><a href="#cb24-3" aria-hidden="true" tabindex="-1"></a>        .value_counts()</span>
+<span id="cb24-4"><a href="#cb24-4" aria-hidden="true" tabindex="-1"></a>        .plot.barh(figsize<span class="op">=</span>(<span class="dv">8</span>, <span class="dv">16</span>)))</span>
+<span id="cb24-5"><a href="#cb24-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb24-6"><a href="#cb24-6" aria-hidden="true" tabindex="-1"></a>ax.set_xscale(<span class="st">&#39;log&#39;</span>)<span class="op">;</span></span>
+<span id="cb24-7"><a href="#cb24-7" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="st">&quot;Number of sets with no subtheme&quot;</span>)<span class="op">;</span></span>
+<span id="cb24-8"><a href="#cb24-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb24-9"><a href="#cb24-9" aria-hidden="true" tabindex="-1"></a>ax.invert_yaxis()<span class="op">;</span></span>
+<span id="cb24-10"><a href="#cb24-10" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="st">&quot;Theme&quot;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/ucs_gunship_files/ucs_gunship_28_0.png" title="fig:" alt="png" />
+</center>
+<p>When we introduce subtheme-based random effects we will treat these sets with null subtheme values carefully.</p>
+<p>Now we check whether or not each subtheme is only ever paired with one theme.</p>
+<div class="sourceCode" id="cb25"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb25-1"><a href="#cb25-1" aria-hidden="true" tabindex="-1"></a>sub_n_themes <span class="op">=</span> (df.groupby(<span class="st">&quot;Subtheme&quot;</span>)</span>
+<span id="cb25-2"><a href="#cb25-2" aria-hidden="true" tabindex="-1"></a>                  [<span class="st">&quot;Theme&quot;</span>]</span>
+<span id="cb25-3"><a href="#cb25-3" aria-hidden="true" tabindex="-1"></a>                  .nunique())</span></code></pre></div>
+<div class="sourceCode" id="cb26"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb26-1"><a href="#cb26-1" aria-hidden="true" tabindex="-1"></a>ax <span class="op">=</span> (sub_n_themes.value_counts()</span>
+<span id="cb26-2"><a href="#cb26-2" aria-hidden="true" tabindex="-1"></a>                  .plot.bar(rot<span class="op">=</span><span class="dv">0</span>))</span>
+<span id="cb26-3"><a href="#cb26-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb26-4"><a href="#cb26-4" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel((<span class="st">&quot;Number of themes associated</span><span class="ch">\n</span><span class="st">&quot;</span></span>
+<span id="cb26-5"><a href="#cb26-5" aria-hidden="true" tabindex="-1"></a>               <span class="st">&quot;with the subtheme&quot;</span>))<span class="op">;</span></span>
+<span id="cb26-6"><a href="#cb26-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb26-7"><a href="#cb26-7" aria-hidden="true" tabindex="-1"></a>ax.set_yscale(<span class="st">&#39;log&#39;</span>)<span class="op">;</span></span>
+<span id="cb26-8"><a href="#cb26-8" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="st">&quot;Number of subthemes&quot;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/ucs_gunship_files/ucs_gunship_31_0.png" title="fig:" alt="png" />
+</center>
+<div class="sourceCode" id="cb27"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a>(sub_n_themes <span class="op">==</span> <span class="dv">1</span>).mean()</span></code></pre></div>
+<pre><code>0.9190871369294605</code></pre>
+<p>This plot and calculation show that the vast majority (about 92%) of subthemes are associated with only one theme. We now examine the subthemes that are associated with more than one theme.</p>
+<div class="sourceCode" id="cb29"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb29-1"><a href="#cb29-1" aria-hidden="true" tabindex="-1"></a>ax <span class="op">=</span> (sub_n_themes[sub_n_themes <span class="op">&gt;</span> <span class="dv">1</span>]</span>
+<span id="cb29-2"><a href="#cb29-2" aria-hidden="true" tabindex="-1"></a>                  .sort_values()</span>
+<span id="cb29-3"><a href="#cb29-3" aria-hidden="true" tabindex="-1"></a>                  .plot.barh(figsize<span class="op">=</span>(<span class="dv">8</span>, <span class="dv">9</span>)))</span>
+<span id="cb29-4"><a href="#cb29-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb29-5"><a href="#cb29-5" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel((<span class="st">&quot;Number of themes associated</span><span class="ch">\n</span><span class="st">&quot;</span></span>
+<span id="cb29-6"><a href="#cb29-6" aria-hidden="true" tabindex="-1"></a>               <span class="st">&quot;with the subtheme&quot;</span>))<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/ucs_gunship_files/ucs_gunship_34_0.png" title="fig:" alt="png" />
+</center>
+<p>The subthemes associated with the most themes make sense, many themes will have “Miscellaneous,” “Promotional,” “Seasonal,” and “Accessories” sets. Of the remaining such subthemes, I personally am curious about the themes that the “Star Wars” subtheme is associated with.</p>
+<div class="sourceCode" id="cb30"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb30-1"><a href="#cb30-1" aria-hidden="true" tabindex="-1"></a>STAR_WARS <span class="op">=</span> <span class="st">&quot;Star Wars&quot;</span></span></code></pre></div>
+<div class="sourceCode" id="cb31"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb31-1"><a href="#cb31-1" aria-hidden="true" tabindex="-1"></a>ax <span class="op">=</span> (df[df[<span class="st">&quot;Subtheme&quot;</span>] <span class="op">==</span> STAR_WARS]</span>
+<span id="cb31-2"><a href="#cb31-2" aria-hidden="true" tabindex="-1"></a>        [<span class="st">&quot;Theme&quot;</span>]</span>
+<span id="cb31-3"><a href="#cb31-3" aria-hidden="true" tabindex="-1"></a>        .value_counts()</span>
+<span id="cb31-4"><a href="#cb31-4" aria-hidden="true" tabindex="-1"></a>        .plot.barh())</span>
+<span id="cb31-5"><a href="#cb31-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb31-6"><a href="#cb31-6" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel((<span class="st">&quot;Number of sets with</span><span class="ch">\n</span><span class="st">&quot;</span></span>
+<span id="cb31-7"><a href="#cb31-7" aria-hidden="true" tabindex="-1"></a>               <span class="st">&quot;</span><span class="ch">\&quot;</span><span class="st">Star Wars</span><span class="ch">\&quot;</span><span class="st"> subtheme&quot;</span>))</span>
+<span id="cb31-8"><a href="#cb31-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb31-9"><a href="#cb31-9" aria-hidden="true" tabindex="-1"></a>ax.invert_yaxis()<span class="op">;</span></span>
+<span id="cb31-10"><a href="#cb31-10" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="st">&quot;Theme&quot;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/ucs_gunship_files/ucs_gunship_37_0.png" title="fig:" alt="png" />
+</center>
+<p>These themes make sense, there are “BrickHeadz” of many sorts (in addition to Star Wars, Disney, Harry Potter, and Pets come to mind immediately) and the same reasoning applies to “Brick Sketches” and “Mindstorms.”</p>
+<p>In order to truly remain faithful to the source data, we will treat theme and subtheme as if they are not nested, even though in reality they are.</p>
+<h2 id="modeling">Modeling</h2>
+<h3 id="time-varying-intercepts-theme-based-random-effects-and-slopes">Time-varying intercepts, theme-based random effects and slopes</h3>
+<p>We begin by rebuilding the final model from the previous post, which models the relationship between log RRP in 2021 dollars and log piece count using time-varying intercepts and time-constant slopes with theme-based random effects. For full details of this model please consult the previous post.</p>
+<p>First we build the feature vector <span class="math inline">\(x\)</span> (standardized log price) and the target vector <span class="math inline">\(y\)</span> (log RRP in 2021 dollars).</p>
+<div class="sourceCode" id="cb32"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb32-1"><a href="#cb32-1" aria-hidden="true" tabindex="-1"></a>pieces <span class="op">=</span> df[<span class="st">&quot;Pieces&quot;</span>].values</span>
+<span id="cb32-2"><a href="#cb32-2" aria-hidden="true" tabindex="-1"></a>log_pieces <span class="op">=</span> np.log(df[<span class="st">&quot;Pieces&quot;</span>].values)</span>
+<span id="cb32-3"><a href="#cb32-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb32-4"><a href="#cb32-4" aria-hidden="true" tabindex="-1"></a>rrp2021 <span class="op">=</span> df[<span class="st">&quot;RRP2021&quot;</span>].values</span>
+<span id="cb32-5"><a href="#cb32-5" aria-hidden="true" tabindex="-1"></a>log_rrp2021 <span class="op">=</span> np.log(rrp2021)</span></code></pre></div>
+<div class="sourceCode" id="cb33"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb33-1"><a href="#cb33-1" aria-hidden="true" tabindex="-1"></a>scaler <span class="op">=</span> StandardScaler().fit(log_pieces[:, np.newaxis])</span>
+<span id="cb33-2"><a href="#cb33-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb33-3"><a href="#cb33-3" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> scale_log_pieces(log_pieces, scaler<span class="op">=</span>scaler):</span>
+<span id="cb33-4"><a href="#cb33-4" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> scaler.transform(log_pieces[:, np.newaxis])[:, <span class="dv">0</span>]</span>
+<span id="cb33-5"><a href="#cb33-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb33-6"><a href="#cb33-6" aria-hidden="true" tabindex="-1"></a>std_log_pieces <span class="op">=</span> scale_log_pieces(log_pieces)</span>
+<span id="cb33-7"><a href="#cb33-7" aria-hidden="true" tabindex="-1"></a>std_log_pieces_ <span class="op">=</span> shared(std_log_pieces)</span></code></pre></div>
+<p>We also encode the themes as integer indices and calculate the (standardize) mean log piece count per theme in order to make an adjustment to satisfy the Gauss-Markov criteria.</p>
+<div class="sourceCode" id="cb34"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb34-1"><a href="#cb34-1" aria-hidden="true" tabindex="-1"></a>theme_id, theme_map <span class="op">=</span> df[<span class="st">&quot;Theme&quot;</span>].factorize(sort<span class="op">=</span><span class="va">True</span>)</span>
+<span id="cb34-2"><a href="#cb34-2" aria-hidden="true" tabindex="-1"></a>n_theme <span class="op">=</span> theme_map.size</span>
+<span id="cb34-3"><a href="#cb34-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb34-4"><a href="#cb34-4" aria-hidden="true" tabindex="-1"></a>theme_id_ <span class="op">=</span> shared(theme_id)</span></code></pre></div>
+<div class="sourceCode" id="cb35"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb35-1"><a href="#cb35-1" aria-hidden="true" tabindex="-1"></a>theme_mean_std_log_pieces <span class="op">=</span> (pd.Series(std_log_pieces, index<span class="op">=</span>df.index)</span>
+<span id="cb35-2"><a href="#cb35-2" aria-hidden="true" tabindex="-1"></a>                               .groupby(df[<span class="st">&quot;Theme&quot;</span>])</span>
+<span id="cb35-3"><a href="#cb35-3" aria-hidden="true" tabindex="-1"></a>                               .mean())</span></code></pre></div>
+<p>Finally we encode the year (in years since 1960) that the set was released for the time-varying component of the intercept.</p>
+<div class="sourceCode" id="cb36"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb36-1"><a href="#cb36-1" aria-hidden="true" tabindex="-1"></a>year <span class="op">=</span> df.index.get_level_values(<span class="st">&quot;Year released&quot;</span>).year.values</span>
+<span id="cb36-2"><a href="#cb36-2" aria-hidden="true" tabindex="-1"></a>t <span class="op">=</span> year <span class="op">-</span> year.<span class="bu">min</span>()</span>
+<span id="cb36-3"><a href="#cb36-3" aria-hidden="true" tabindex="-1"></a>n_year <span class="op">=</span> <span class="bu">int</span>(t.<span class="bu">max</span>() <span class="op">+</span> <span class="dv">1</span>)</span>
+<span id="cb36-4"><a href="#cb36-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb36-5"><a href="#cb36-5" aria-hidden="true" tabindex="-1"></a>t_ <span class="op">=</span> shared(t)</span></code></pre></div>
+<p>We now define the final model of the previous post in PyMC3.</p>
+<div class="sourceCode" id="cb37"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb37-1"><a href="#cb37-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> hierarchical_normal(name, shape, μ<span class="op">=</span><span class="va">None</span>):</span>
+<span id="cb37-2"><a href="#cb37-2" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> μ <span class="kw">is</span> <span class="va">None</span>:</span>
+<span id="cb37-3"><a href="#cb37-3" aria-hidden="true" tabindex="-1"></a>        μ <span class="op">=</span> pm.Normal(<span class="ss">f&quot;μ_</span><span class="sc">{</span>name<span class="sc">}</span><span class="ss">&quot;</span>, <span class="fl">0.</span>, <span class="fl">2.5</span>)</span>
+<span id="cb37-4"><a href="#cb37-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb37-5"><a href="#cb37-5" aria-hidden="true" tabindex="-1"></a>    Δ <span class="op">=</span> pm.Normal(<span class="ss">f&quot;Δ_</span><span class="sc">{</span>name<span class="sc">}</span><span class="ss">&quot;</span>, <span class="fl">0.</span>, <span class="fl">1.</span>, shape<span class="op">=</span>shape)</span>
+<span id="cb37-6"><a href="#cb37-6" aria-hidden="true" tabindex="-1"></a>    σ <span class="op">=</span> pm.HalfNormal(<span class="ss">f&quot;σ_</span><span class="sc">{</span>name<span class="sc">}</span><span class="ss">&quot;</span>, <span class="fl">2.5</span>)</span>
+<span id="cb37-7"><a href="#cb37-7" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb37-8"><a href="#cb37-8" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> pm.Deterministic(name, μ <span class="op">+</span> Δ <span class="op">*</span> σ)</span>
+<span id="cb37-9"><a href="#cb37-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb37-10"><a href="#cb37-10" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> hierarchical_normal_with_mean(name, x_mean, shape,</span>
+<span id="cb37-11"><a href="#cb37-11" aria-hidden="true" tabindex="-1"></a>                                  μ<span class="op">=</span><span class="va">None</span>, mean_name<span class="op">=</span><span class="st">&quot;γ&quot;</span>):</span>
+<span id="cb37-12"><a href="#cb37-12" aria-hidden="true" tabindex="-1"></a>    mean_coef <span class="op">=</span> pm.Normal(<span class="ss">f&quot;</span><span class="sc">{</span>mean_name<span class="sc">}</span><span class="ss">_</span><span class="sc">{</span>name<span class="sc">}</span><span class="ss">&quot;</span>, <span class="fl">0.</span>, <span class="fl">2.5</span>)</span>
+<span id="cb37-13"><a href="#cb37-13" aria-hidden="true" tabindex="-1"></a>        </span>
+<span id="cb37-14"><a href="#cb37-14" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> pm.Deterministic(</span>
+<span id="cb37-15"><a href="#cb37-15" aria-hidden="true" tabindex="-1"></a>        name,</span>
+<span id="cb37-16"><a href="#cb37-16" aria-hidden="true" tabindex="-1"></a>        hierarchical_normal(<span class="ss">f&quot;_</span><span class="sc">{</span>name<span class="sc">}</span><span class="ss">&quot;</span>, shape, μ<span class="op">=</span>μ) <span class="op">\</span></span>
+<span id="cb37-17"><a href="#cb37-17" aria-hidden="true" tabindex="-1"></a>            <span class="op">+</span> mean_coef <span class="op">*</span> x_mean</span>
+<span id="cb37-18"><a href="#cb37-18" aria-hidden="true" tabindex="-1"></a>    )</span></code></pre></div>
+<div class="sourceCode" id="cb38"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb38-1"><a href="#cb38-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> gaussian_random_walk(name, shape, innov_scale<span class="op">=</span><span class="fl">1.</span>):</span>
+<span id="cb38-2"><a href="#cb38-2" aria-hidden="true" tabindex="-1"></a>    Δ <span class="op">=</span> pm.Normal(<span class="ss">f&quot;Δ_</span><span class="sc">{</span>name<span class="sc">}</span><span class="ss">&quot;</span>, <span class="fl">0.</span>, innov_scale,  shape<span class="op">=</span>shape)</span>
+<span id="cb38-3"><a href="#cb38-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb38-4"><a href="#cb38-4" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> pm.Deterministic(name, Δ.cumsum())</span></code></pre></div>
+<div class="sourceCode" id="cb39"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb39-1"><a href="#cb39-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> pm.Model() <span class="im">as</span> model:</span>
+<span id="cb39-2"><a href="#cb39-2" aria-hidden="true" tabindex="-1"></a>    β<span class="dv">0_0</span> <span class="op">=</span> pm.Normal(<span class="st">&quot;β0_0&quot;</span>, <span class="fl">0.</span>, <span class="fl">2.5</span>)</span>
+<span id="cb39-3"><a href="#cb39-3" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb39-4"><a href="#cb39-4" aria-hidden="true" tabindex="-1"></a>    β<span class="dv">0</span><span class="er">_t</span> <span class="op">=</span> gaussian_random_walk(<span class="st">&quot;β0_t&quot;</span>, n_year, innov_scale<span class="op">=</span><span class="fl">0.1</span>)</span>
+<span id="cb39-5"><a href="#cb39-5" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb39-6"><a href="#cb39-6" aria-hidden="true" tabindex="-1"></a>    β<span class="dv">0</span><span class="er">_theme</span> <span class="op">=</span> hierarchical_normal_with_mean(</span>
+<span id="cb39-7"><a href="#cb39-7" aria-hidden="true" tabindex="-1"></a>        <span class="st">&quot;β0_theme&quot;</span>,</span>
+<span id="cb39-8"><a href="#cb39-8" aria-hidden="true" tabindex="-1"></a>        at.constant(theme_mean_std_log_pieces),</span>
+<span id="cb39-9"><a href="#cb39-9" aria-hidden="true" tabindex="-1"></a>        n_theme, μ<span class="op">=</span><span class="fl">0.</span></span>
+<span id="cb39-10"><a href="#cb39-10" aria-hidden="true" tabindex="-1"></a>    )</span>
+<span id="cb39-11"><a href="#cb39-11" aria-hidden="true" tabindex="-1"></a>    β<span class="dv">0</span><span class="er">_i</span> <span class="op">=</span> β<span class="dv">0_0</span> <span class="op">+</span> β<span class="dv">0</span><span class="er">_t</span>[t_] <span class="op">+</span> β<span class="dv">0</span><span class="er">_theme</span>[theme_id_]</span>
+<span id="cb39-12"><a href="#cb39-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb39-13"><a href="#cb39-13" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb39-14"><a href="#cb39-14" aria-hidden="true" tabindex="-1"></a>    β_pieces_0 <span class="op">=</span> pm.Normal(<span class="st">&quot;β_pieces_0&quot;</span>, <span class="fl">0.</span>, <span class="fl">2.5</span>)</span>
+<span id="cb39-15"><a href="#cb39-15" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb39-16"><a href="#cb39-16" aria-hidden="true" tabindex="-1"></a>    β_pieces_theme <span class="op">=</span> hierarchical_normal_with_mean(</span>
+<span id="cb39-17"><a href="#cb39-17" aria-hidden="true" tabindex="-1"></a>        <span class="st">&quot;β_pieces_theme&quot;</span>,</span>
+<span id="cb39-18"><a href="#cb39-18" aria-hidden="true" tabindex="-1"></a>        at.constant(theme_mean_std_log_pieces),</span>
+<span id="cb39-19"><a href="#cb39-19" aria-hidden="true" tabindex="-1"></a>        n_theme, μ<span class="op">=</span><span class="fl">0.</span></span>
+<span id="cb39-20"><a href="#cb39-20" aria-hidden="true" tabindex="-1"></a>    )</span>
+<span id="cb39-21"><a href="#cb39-21" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb39-22"><a href="#cb39-22" aria-hidden="true" tabindex="-1"></a>    β_pieces <span class="op">=</span> β_pieces_0 <span class="op">+</span> β_pieces_theme</span>
+<span id="cb39-23"><a href="#cb39-23" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb39-24"><a href="#cb39-24" aria-hidden="true" tabindex="-1"></a>    σ <span class="op">=</span> pm.HalfNormal(<span class="st">&quot;σ&quot;</span>, <span class="fl">5.</span>)</span>
+<span id="cb39-25"><a href="#cb39-25" aria-hidden="true" tabindex="-1"></a>    μ <span class="op">=</span> β<span class="dv">0</span><span class="er">_i</span> <span class="op">+</span> β_pieces_theme[theme_id_] <span class="op">*</span> std_log_pieces_ <span class="op">-</span> <span class="fl">0.5</span> <span class="op">*</span> σ<span class="op">**</span><span class="dv">2</span></span>
+<span id="cb39-26"><a href="#cb39-26" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb39-27"><a href="#cb39-27" aria-hidden="true" tabindex="-1"></a>    obs <span class="op">=</span> pm.Normal(<span class="st">&quot;obs&quot;</span>, μ, σ, observed<span class="op">=</span>log_rrp2021)</span></code></pre></div>
+<p>We are finally ready to sample from the posterior distribution of this model given the Brickset data.</p>
+<div class="sourceCode" id="cb40"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb40-1"><a href="#cb40-1" aria-hidden="true" tabindex="-1"></a>CHAINS <span class="op">=</span> <span class="dv">3</span></span>
+<span id="cb40-2"><a href="#cb40-2" aria-hidden="true" tabindex="-1"></a>SEED <span class="op">=</span> <span class="dv">123456789</span></span>
+<span id="cb40-3"><a href="#cb40-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb40-4"><a href="#cb40-4" aria-hidden="true" tabindex="-1"></a>SAMPLE_KWARGS <span class="op">=</span> {</span>
+<span id="cb40-5"><a href="#cb40-5" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;cores&#39;</span>: CHAINS,</span>
+<span id="cb40-6"><a href="#cb40-6" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;random_seed&#39;</span>: [SEED <span class="op">+</span> i <span class="cf">for</span> i <span class="kw">in</span> <span class="bu">range</span>(CHAINS)],</span>
+<span id="cb40-7"><a href="#cb40-7" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;return_inferencedata&#39;</span>: <span class="va">True</span></span>
+<span id="cb40-8"><a href="#cb40-8" aria-hidden="true" tabindex="-1"></a>}</span></code></pre></div>
+<div class="sourceCode" id="cb41"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb41-1"><a href="#cb41-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> model:</span>
+<span id="cb41-2"><a href="#cb41-2" aria-hidden="true" tabindex="-1"></a>    trace <span class="op">=</span> pm.sample(<span class="op">**</span>SAMPLE_KWARGS)</span></code></pre></div>
+<pre><code>Auto-assigning NUTS sampler...
+Initializing NUTS using jitter+adapt_diag...
+Multiprocess sampling (3 chains in 3 jobs)
+NUTS: [β0_0, Δ_β0_t, γ_β0_theme, Δ__β0_theme, σ__β0_theme, β_pieces_0, γ_β_pieces_theme, Δ__β_pieces_theme, σ__β_pieces_theme, σ]</code></pre>
+<div>
+<style>
+/* Turns off some styling */
+progress {
+/* gets rid of default border in Firefox and Opera. */
+border: none;
+/* Needs to be in here for Safari polyfill so background images work as expected. */
+background-size: auto;
+}
+.progress-bar-interrupted, .progress-bar-interrupted::-webkit-progress-bar {
+background: #F44336;
+}
+</style>
+<progress value="6000" class max="6000" style="width:300px; height:20px; vertical-align: middle;">
+</progress>
+<p>100.00% [6000/6000 09:51&lt;00:00 Sampling 3 chains, 0 divergences]</p>
+</div>
+<pre><code>Sampling 3 chains for 1_000 tune and 1_000 draw iterations (3_000 + 3_000 draws total) took 592 seconds.
+The estimated number of effective samples is smaller than 200 for some parameters.</code></pre>
+<p>The standard sampling diagnostics show no cause for concern.</p>
+<div class="sourceCode" id="cb44"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb44-1"><a href="#cb44-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> plot_diagnostics(trace, axes<span class="op">=</span><span class="va">None</span>, min_mult<span class="op">=</span><span class="fl">0.995</span>, max_mult<span class="op">=</span><span class="fl">1.005</span>):</span>
+<span id="cb44-2"><a href="#cb44-2" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> axes <span class="kw">is</span> <span class="va">None</span>:</span>
+<span id="cb44-3"><a href="#cb44-3" aria-hidden="true" tabindex="-1"></a>        fig, axes <span class="op">=</span> plt.subplots(ncols<span class="op">=</span><span class="dv">2</span>, sharex<span class="op">=</span><span class="va">False</span>, sharey<span class="op">=</span><span class="va">False</span>,</span>
+<span id="cb44-4"><a href="#cb44-4" aria-hidden="true" tabindex="-1"></a>                                 figsize<span class="op">=</span>(<span class="dv">16</span>, <span class="dv">6</span>))</span>
+<span id="cb44-5"><a href="#cb44-5" aria-hidden="true" tabindex="-1"></a>        </span>
+<span id="cb44-6"><a href="#cb44-6" aria-hidden="true" tabindex="-1"></a>    az.plot_energy(trace, ax<span class="op">=</span>axes[<span class="dv">0</span>])</span>
+<span id="cb44-7"><a href="#cb44-7" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb44-8"><a href="#cb44-8" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb44-9"><a href="#cb44-9" aria-hidden="true" tabindex="-1"></a>    rhat <span class="op">=</span> az.rhat(trace).<span class="bu">max</span>()</span>
+<span id="cb44-10"><a href="#cb44-10" aria-hidden="true" tabindex="-1"></a>    axes[<span class="dv">1</span>].barh(np.arange(<span class="bu">len</span>(rhat.variables)), rhat.to_array(),</span>
+<span id="cb44-11"><a href="#cb44-11" aria-hidden="true" tabindex="-1"></a>                 tick_label<span class="op">=</span><span class="bu">list</span>(rhat.variables.keys()))</span>
+<span id="cb44-12"><a href="#cb44-12" aria-hidden="true" tabindex="-1"></a>    axes[<span class="dv">1</span>].axvline(<span class="dv">1</span>, c<span class="op">=</span><span class="st">&#39;k&#39;</span>, ls<span class="op">=</span><span class="st">&#39;--&#39;</span>)</span>
+<span id="cb44-13"><a href="#cb44-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb44-14"><a href="#cb44-14" aria-hidden="true" tabindex="-1"></a>    axes[<span class="dv">1</span>].set_xlim(</span>
+<span id="cb44-15"><a href="#cb44-15" aria-hidden="true" tabindex="-1"></a>        min_mult <span class="op">*</span> <span class="bu">min</span>(rhat.<span class="bu">min</span>().to_array().<span class="bu">min</span>(), <span class="dv">1</span>),</span>
+<span id="cb44-16"><a href="#cb44-16" aria-hidden="true" tabindex="-1"></a>        max_mult <span class="op">*</span> <span class="bu">max</span>(rhat.<span class="bu">max</span>().to_array().<span class="bu">max</span>(), <span class="dv">1</span>)</span>
+<span id="cb44-17"><a href="#cb44-17" aria-hidden="true" tabindex="-1"></a>    )</span>
+<span id="cb44-18"><a href="#cb44-18" aria-hidden="true" tabindex="-1"></a>    axes[<span class="dv">1</span>].set_xlabel(<span class="vs">r&quot;$\hat</span><span class="sc">{R}</span><span class="vs">$&quot;</span>)</span>
+<span id="cb44-19"><a href="#cb44-19" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb44-20"><a href="#cb44-20" aria-hidden="true" tabindex="-1"></a>    axes[<span class="dv">1</span>].set_ylabel(<span class="st">&quot;Variable&quot;</span>)</span>
+<span id="cb44-21"><a href="#cb44-21" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb44-22"><a href="#cb44-22" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> fig, axes</span></code></pre></div>
+<div class="sourceCode" id="cb45"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb45-1"><a href="#cb45-1" aria-hidden="true" tabindex="-1"></a>plot_diagnostics(trace)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/ucs_gunship_files/ucs_gunship_56_0.png" title="fig:" alt="png" />
+</center>
+<p>We now sample from the posterior predictive distribution of the model and visualize the resulting residuals.</p>
+<div class="sourceCode" id="cb46"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb46-1"><a href="#cb46-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> model:</span>
+<span id="cb46-2"><a href="#cb46-2" aria-hidden="true" tabindex="-1"></a>    pp_data <span class="op">=</span> pm.sample_posterior_predictive(trace)</span>
+<span id="cb46-3"><a href="#cb46-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb46-4"><a href="#cb46-4" aria-hidden="true" tabindex="-1"></a>df[<span class="st">&quot;pred&quot;</span>] <span class="op">=</span> pp_data[<span class="st">&quot;obs&quot;</span>].mean(axis<span class="op">=</span><span class="dv">0</span>)</span>
+<span id="cb46-5"><a href="#cb46-5" aria-hidden="true" tabindex="-1"></a>df[<span class="st">&quot;resid&quot;</span>] <span class="op">=</span> log_rrp2021 <span class="op">-</span> df[<span class="st">&quot;pred&quot;</span>]</span></code></pre></div>
+<div>
+<style>
+/* Turns off some styling */
+progress {
+/* gets rid of default border in Firefox and Opera. */
+border: none;
+/* Needs to be in here for Safari polyfill so background images work as expected. */
+background-size: auto;
+}
+.progress-bar-interrupted, .progress-bar-interrupted::-webkit-progress-bar {
+background: #F44336;
+}
+</style>
+<progress value="3000" class max="3000" style="width:300px; height:20px; vertical-align: middle;">
+</progress>
+<p>100.00% [3000/3000 00:01&lt;00:00]</p>
+</div>
+<div class="sourceCode" id="cb47"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb47-1"><a href="#cb47-1" aria-hidden="true" tabindex="-1"></a>ax <span class="op">=</span> sns.scatterplot(x<span class="op">=</span><span class="st">&quot;Pieces&quot;</span>, y<span class="op">=</span><span class="st">&quot;resid&quot;</span>,</span>
+<span id="cb47-2"><a href="#cb47-2" aria-hidden="true" tabindex="-1"></a>                     data<span class="op">=</span>df.reset_index(),</span>
+<span id="cb47-3"><a href="#cb47-3" aria-hidden="true" tabindex="-1"></a>                     color<span class="op">=</span><span class="st">&#39;C0&#39;</span>, alpha<span class="op">=</span><span class="fl">0.1</span>)<span class="op">;</span></span>
+<span id="cb47-4"><a href="#cb47-4" aria-hidden="true" tabindex="-1"></a>(df.groupby(df[<span class="st">&quot;Pieces&quot;</span>].<span class="bu">round</span>(<span class="op">-</span><span class="dv">2</span>))</span>
+<span id="cb47-5"><a href="#cb47-5" aria-hidden="true" tabindex="-1"></a>   [<span class="st">&quot;resid&quot;</span>]</span>
+<span id="cb47-6"><a href="#cb47-6" aria-hidden="true" tabindex="-1"></a>   .mean()</span>
+<span id="cb47-7"><a href="#cb47-7" aria-hidden="true" tabindex="-1"></a>   .plot(c<span class="op">=</span><span class="st">&#39;k&#39;</span>, label<span class="op">=</span><span class="st">&quot;Bucketed average&quot;</span>,</span>
+<span id="cb47-8"><a href="#cb47-8" aria-hidden="true" tabindex="-1"></a>         ax<span class="op">=</span>ax))<span class="op">;</span></span>
+<span id="cb47-9"><a href="#cb47-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb47-10"><a href="#cb47-10" aria-hidden="true" tabindex="-1"></a>ax.set_xscale(<span class="st">&#39;log&#39;</span>)<span class="op">;</span></span>
+<span id="cb47-11"><a href="#cb47-11" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb47-12"><a href="#cb47-12" aria-hidden="true" tabindex="-1"></a>ax.set_ylim(<span class="op">-</span><span class="dv">2</span>, <span class="dv">2</span>)<span class="op">;</span></span>
+<span id="cb47-13"><a href="#cb47-13" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="st">&quot;Log RRP residual (2021 $)&quot;</span>)<span class="op">;</span></span>
+<span id="cb47-14"><a href="#cb47-14" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb47-15"><a href="#cb47-15" aria-hidden="true" tabindex="-1"></a>ax.legend(loc<span class="op">=</span><span class="st">&#39;upper left&#39;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/ucs_gunship_files/ucs_gunship_59_0.png" title="fig:" alt="png" />
+</center>
+<div class="sourceCode" id="cb48"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb48-1"><a href="#cb48-1" aria-hidden="true" tabindex="-1"></a>ax <span class="op">=</span> (df.groupby(level<span class="op">=</span><span class="st">&quot;Year released&quot;</span>)</span>
+<span id="cb48-2"><a href="#cb48-2" aria-hidden="true" tabindex="-1"></a>        [<span class="st">&quot;resid&quot;</span>]</span>
+<span id="cb48-3"><a href="#cb48-3" aria-hidden="true" tabindex="-1"></a>        .mean()</span>
+<span id="cb48-4"><a href="#cb48-4" aria-hidden="true" tabindex="-1"></a>        .plot(c<span class="op">=</span><span class="st">&#39;k&#39;</span>, label<span class="op">=</span><span class="st">&quot;Year average&quot;</span>))<span class="op">;</span></span>
+<span id="cb48-5"><a href="#cb48-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb48-6"><a href="#cb48-6" aria-hidden="true" tabindex="-1"></a>strip_ax <span class="op">=</span> ax.twiny()</span>
+<span id="cb48-7"><a href="#cb48-7" aria-hidden="true" tabindex="-1"></a>sns.stripplot(x<span class="op">=</span><span class="st">&quot;Year released&quot;</span>, y<span class="op">=</span><span class="st">&quot;resid&quot;</span>,</span>
+<span id="cb48-8"><a href="#cb48-8" aria-hidden="true" tabindex="-1"></a>              data<span class="op">=</span>df.reset_index(),</span>
+<span id="cb48-9"><a href="#cb48-9" aria-hidden="true" tabindex="-1"></a>              jitter<span class="op">=</span><span class="fl">1.5</span>,</span>
+<span id="cb48-10"><a href="#cb48-10" aria-hidden="true" tabindex="-1"></a>              color<span class="op">=</span><span class="st">&#39;C0&#39;</span>, alpha<span class="op">=</span><span class="fl">0.1</span>,</span>
+<span id="cb48-11"><a href="#cb48-11" aria-hidden="true" tabindex="-1"></a>              ax<span class="op">=</span>strip_ax)<span class="op">;</span></span>
+<span id="cb48-12"><a href="#cb48-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb48-13"><a href="#cb48-13" aria-hidden="true" tabindex="-1"></a>strip_ax.set_axis_off()<span class="op">;</span></span>
+<span id="cb48-14"><a href="#cb48-14" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb48-15"><a href="#cb48-15" aria-hidden="true" tabindex="-1"></a>ax.set_ylim(<span class="op">-</span><span class="dv">2</span>, <span class="dv">2</span>)<span class="op">;</span></span>
+<span id="cb48-16"><a href="#cb48-16" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="st">&quot;Log RRP residual (2021 $)&quot;</span>)<span class="op">;</span></span>
+<span id="cb48-17"><a href="#cb48-17" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb48-18"><a href="#cb48-18" aria-hidden="true" tabindex="-1"></a>ax.legend(loc<span class="op">=</span><span class="st">&#39;upper left&#39;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/ucs_gunship_files/ucs_gunship_60_0.png" title="fig:" alt="png" />
+</center>
+<p>The residuals are reasonably well-centered around zero when grouped by piece and year as expected from the previous post.</p>
+<h3 id="adding-subtheme-based-random-effects-and-slopes">Adding subtheme-based random effects and slopes</h3>
+<p>We now encode subthemes as integer identifiers.</p>
+<div class="sourceCode" id="cb49"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb49-1"><a href="#cb49-1" aria-hidden="true" tabindex="-1"></a>sub_id, sub_map <span class="op">=</span> df[<span class="st">&quot;Subtheme&quot;</span>].factorize(sort<span class="op">=</span><span class="va">True</span>)</span>
+<span id="cb49-2"><a href="#cb49-2" aria-hidden="true" tabindex="-1"></a>n_sub <span class="op">=</span> sub_map.size</span>
+<span id="cb49-3"><a href="#cb49-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb49-4"><a href="#cb49-4" aria-hidden="true" tabindex="-1"></a>sub_id_ <span class="op">=</span> shared(sub_id)</span></code></pre></div>
+<p>Note that <a href="https://pandas.pydata.org/docs/reference/api/pandas.factorize.html"><code>factorize</code></a> encodes null values as <code>-1</code> by default, so we see that the number of such entries in <code>sub_id</code> matches the number of sets with null subtheme.</p>
+<div class="sourceCode" id="cb50"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb50-1"><a href="#cb50-1" aria-hidden="true" tabindex="-1"></a>(sub_id <span class="op">==</span> <span class="op">-</span><span class="dv">1</span>).<span class="bu">sum</span>()</span></code></pre></div>
+<pre><code>1416</code></pre>
+<div class="sourceCode" id="cb52"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb52-1"><a href="#cb52-1" aria-hidden="true" tabindex="-1"></a>(df[<span class="st">&quot;Subtheme&quot;</span>]</span>
+<span id="cb52-2"><a href="#cb52-2" aria-hidden="true" tabindex="-1"></a>   .isnull()</span>
+<span id="cb52-3"><a href="#cb52-3" aria-hidden="true" tabindex="-1"></a>   .<span class="bu">sum</span>())</span></code></pre></div>
+<pre><code>1416</code></pre>
+<p>We build a mask indicating which subthemes are null.</p>
+<div class="sourceCode" id="cb54"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb54-1"><a href="#cb54-1" aria-hidden="true" tabindex="-1"></a>sub_isnull <span class="op">=</span> sub_id <span class="op">==</span> <span class="op">-</span><span class="dv">1</span></span>
+<span id="cb54-2"><a href="#cb54-2" aria-hidden="true" tabindex="-1"></a>sub_isnull_ <span class="op">=</span> shared(sub_isnull)</span></code></pre></div>
+<p>We also calculate the average (standardized) log number of pieces for each set in a subtheme.</p>
+<div class="sourceCode" id="cb55"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb55-1"><a href="#cb55-1" aria-hidden="true" tabindex="-1"></a>sub_mean_std_log_pieces <span class="op">=</span> (pd.Series(std_log_pieces, index<span class="op">=</span>df.index)</span>
+<span id="cb55-2"><a href="#cb55-2" aria-hidden="true" tabindex="-1"></a>                             .groupby(df[<span class="st">&quot;Subtheme&quot;</span>])</span>
+<span id="cb55-3"><a href="#cb55-3" aria-hidden="true" tabindex="-1"></a>                             .mean())</span></code></pre></div>
+<p>Recall from the previous post that <span class="math inline">\(j(i)\)</span> represents the index of the theme of the <span class="math inline">\(i\)</span>-th set. In similar fashion, let <span class="math inline">\(k(i)\)</span> denote the index of the subtheme of the <span class="math inline">\(i\)</span>-th set.</p>
+<p>Our model with additional random effects and slopes for subthemes is as follows.</p>
+<p>The expected value of the slope is <span class="math inline">\(\beta_0^0 \sim N(0, 2.5^2)\)</span>.</p>
+<div class="sourceCode" id="cb56"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb56-1"><a href="#cb56-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> pm.Model() <span class="im">as</span> sub_model:</span>
+<span id="cb56-2"><a href="#cb56-2" aria-hidden="true" tabindex="-1"></a>    β<span class="dv">0_0</span> <span class="op">=</span> pm.Normal(<span class="st">&quot;β0_0&quot;</span>, <span class="fl">0.</span>, <span class="fl">2.5</span>)</span></code></pre></div>
+<p>The time-varying component of the intercept is</p>
+<p><span class="math display">\[\beta_{0, t} \sim \text{GaussianRandomWalk}\left(0, (0.1)^2\right).\]</span></p>
+<div class="sourceCode" id="cb57"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb57-1"><a href="#cb57-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> sub_model:</span>
+<span id="cb57-2"><a href="#cb57-2" aria-hidden="true" tabindex="-1"></a>    β<span class="dv">0</span><span class="er">_t</span> <span class="op">=</span> gaussian_random_walk(<span class="st">&quot;β0_t&quot;</span>, n_year, innov_scale<span class="op">=</span><span class="fl">0.1</span>)</span></code></pre></div>
+<p><span class="math display">\[
+\begin{align*}
+    \gamma_0
+        &amp; \sim N(0, 2.5^2) \\
+    \sigma_0^{\text{theme}}
+        &amp; \sim \textrm{HalfNormal}(2.5^2) \\
+    \beta_{0, j}^{\text{theme}}
+        &amp; \sim N\left(\gamma_0 \cdot \bar{\tilde{x}}_j, \left(\sigma_0^{\text{theme}}\right)^2\right).
+\end{align*}
+\]</span></p>
+<p>Recall that here <span class="math inline">\(\tilde{x}_i\)</span> is the standardized log piece count of the <span class="math inline">\(i\)</span>-th set and <span class="math inline">\(\bar{\tilde{x}}_j\)</span> is the average standardized log piece count of all sets in the <span class="math inline">\(j\)</span>-th theme.</p>
+<div class="sourceCode" id="cb58"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb58-1"><a href="#cb58-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> sub_model:</span>
+<span id="cb58-2"><a href="#cb58-2" aria-hidden="true" tabindex="-1"></a>    β<span class="dv">0</span><span class="er">_theme</span> <span class="op">=</span> hierarchical_normal_with_mean(</span>
+<span id="cb58-3"><a href="#cb58-3" aria-hidden="true" tabindex="-1"></a>        <span class="st">&quot;β0_theme&quot;</span>,</span>
+<span id="cb58-4"><a href="#cb58-4" aria-hidden="true" tabindex="-1"></a>        at.constant(theme_mean_std_log_pieces),</span>
+<span id="cb58-5"><a href="#cb58-5" aria-hidden="true" tabindex="-1"></a>        n_theme, μ<span class="op">=</span><span class="fl">0.</span></span>
+<span id="cb58-6"><a href="#cb58-6" aria-hidden="true" tabindex="-1"></a>    )</span></code></pre></div>
+<p>We now include the sub-theme based random intercepts. All sets with null subtheme are given the same subtheme effect, <span class="math inline">\(\beta_{0, -1}^{\text{sub}}\)</span>. We use</p>
+<p><span class="math display">\[
+\begin{align*}
+    \beta_{0, -1}^{\text{sub}}, \lambda_0^{\text{pieces}}
+        &amp; \sim N(0, 2.5^2) \\
+    \sigma_0^{\text{sub}}
+        &amp; \sim \text{HalfNormal}(2.5^2) \\
+     \beta_{0, k}^{\text{sub}}
+        &amp; \sim N\left(\lambda_0^{\text{pieces}} \cdot \check{\tilde{x}}_k, \left(\sigma_0^{\text{sub}}\right)^2\right).
+\end{align*}
+\]</span></p>
+<p>Here <span class="math inline">\(\check{\tilde{x}}_k\)</span> is the average standardized log piece count of all sets in the <span class="math inline">\(k\)</span>-th subtheme.</p>
+<div class="sourceCode" id="cb59"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb59-1"><a href="#cb59-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> sub_model:</span>
+<span id="cb59-2"><a href="#cb59-2" aria-hidden="true" tabindex="-1"></a>    β<span class="dv">0</span><span class="er">_sub_null</span> <span class="op">=</span> pm.Normal(<span class="st">&quot;β0_sub_null&quot;</span>, <span class="fl">0.</span>, <span class="fl">2.5</span>)</span>
+<span id="cb59-3"><a href="#cb59-3" aria-hidden="true" tabindex="-1"></a>    β<span class="dv">0</span><span class="er">_sub_nn</span> <span class="op">=</span> hierarchical_normal_with_mean(</span>
+<span id="cb59-4"><a href="#cb59-4" aria-hidden="true" tabindex="-1"></a>        <span class="st">&quot;β0_sub_nn&quot;</span>,</span>
+<span id="cb59-5"><a href="#cb59-5" aria-hidden="true" tabindex="-1"></a>        at.constant(sub_mean_std_log_pieces),</span>
+<span id="cb59-6"><a href="#cb59-6" aria-hidden="true" tabindex="-1"></a>        n_sub, μ<span class="op">=</span><span class="fl">0.</span>, mean_name<span class="op">=</span><span class="st">&quot;λ&quot;</span></span>
+<span id="cb59-7"><a href="#cb59-7" aria-hidden="true" tabindex="-1"></a>    )</span>
+<span id="cb59-8"><a href="#cb59-8" aria-hidden="true" tabindex="-1"></a>    β<span class="dv">0</span><span class="er">_sub_i</span> <span class="op">=</span> at.switch(</span>
+<span id="cb59-9"><a href="#cb59-9" aria-hidden="true" tabindex="-1"></a>        sub_isnull_,</span>
+<span id="cb59-10"><a href="#cb59-10" aria-hidden="true" tabindex="-1"></a>        β<span class="dv">0</span><span class="er">_sub_null</span>,</span>
+<span id="cb59-11"><a href="#cb59-11" aria-hidden="true" tabindex="-1"></a>        β<span class="dv">0</span><span class="er">_sub_nn</span>[at.clip(sub_id_, <span class="dv">0</span>, n_sub)]</span>
+<span id="cb59-12"><a href="#cb59-12" aria-hidden="true" tabindex="-1"></a>    )</span></code></pre></div>
+<p>Assembling the intercept terms, we get</p>
+<p><span class="math display">\[\beta_{0, i} = \beta_{0, 0} + \beta_{0, t(i)} + \beta_{0, j(i)}^{\text{theme}} + \beta_{0, k(i)}^{\text{sub}}.\]</span></p>
+<div class="sourceCode" id="cb60"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb60-1"><a href="#cb60-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> sub_model:</span>
+<span id="cb60-2"><a href="#cb60-2" aria-hidden="true" tabindex="-1"></a>    β<span class="dv">0</span><span class="er">_i</span> <span class="op">=</span> β<span class="dv">0_0</span> <span class="op">+</span> β<span class="dv">0</span><span class="er">_t</span>[t_] <span class="op">+</span> β<span class="dv">0</span><span class="er">_theme</span>[theme_id_] <span class="op">+</span> β<span class="dv">0</span><span class="er">_sub_i</span></span></code></pre></div>
+<p>The varying slopes, <span class="math inline">\(\beta_{\text{pieces}, i}\)</span>, are defined similarly, just without a time-varying component.</p>
+<div class="sourceCode" id="cb61"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb61-1"><a href="#cb61-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> sub_model:</span>
+<span id="cb61-2"><a href="#cb61-2" aria-hidden="true" tabindex="-1"></a>    β_pieces_0 <span class="op">=</span> pm.Normal(<span class="st">&quot;β_pieces_0&quot;</span>, <span class="fl">0.</span>, <span class="fl">2.5</span>)</span>
+<span id="cb61-3"><a href="#cb61-3" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb61-4"><a href="#cb61-4" aria-hidden="true" tabindex="-1"></a>    β_pieces_theme <span class="op">=</span> hierarchical_normal_with_mean(</span>
+<span id="cb61-5"><a href="#cb61-5" aria-hidden="true" tabindex="-1"></a>        <span class="st">&quot;β_pieces_theme&quot;</span>,</span>
+<span id="cb61-6"><a href="#cb61-6" aria-hidden="true" tabindex="-1"></a>        at.constant(theme_mean_std_log_pieces),</span>
+<span id="cb61-7"><a href="#cb61-7" aria-hidden="true" tabindex="-1"></a>        n_theme, μ<span class="op">=</span><span class="fl">0.</span></span>
+<span id="cb61-8"><a href="#cb61-8" aria-hidden="true" tabindex="-1"></a>    )</span>
+<span id="cb61-9"><a href="#cb61-9" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb61-10"><a href="#cb61-10" aria-hidden="true" tabindex="-1"></a>    β_pieces_sub_null <span class="op">=</span> pm.Normal(<span class="st">&quot;β_pieces_sub_null&quot;</span>, <span class="fl">0.</span>, <span class="fl">2.5</span>)</span>
+<span id="cb61-11"><a href="#cb61-11" aria-hidden="true" tabindex="-1"></a>    β_pieces_sub_nn <span class="op">=</span> hierarchical_normal_with_mean(</span>
+<span id="cb61-12"><a href="#cb61-12" aria-hidden="true" tabindex="-1"></a>        <span class="st">&quot;β_pieces_sub_nn&quot;</span>,</span>
+<span id="cb61-13"><a href="#cb61-13" aria-hidden="true" tabindex="-1"></a>        at.constant(sub_mean_std_log_pieces),</span>
+<span id="cb61-14"><a href="#cb61-14" aria-hidden="true" tabindex="-1"></a>        n_sub, μ<span class="op">=</span><span class="fl">0.</span>, mean_name<span class="op">=</span><span class="st">&quot;λ&quot;</span></span>
+<span id="cb61-15"><a href="#cb61-15" aria-hidden="true" tabindex="-1"></a>    )</span>
+<span id="cb61-16"><a href="#cb61-16" aria-hidden="true" tabindex="-1"></a>    β_pieces_sub_i <span class="op">=</span> at.switch(</span>
+<span id="cb61-17"><a href="#cb61-17" aria-hidden="true" tabindex="-1"></a>        sub_isnull_,</span>
+<span id="cb61-18"><a href="#cb61-18" aria-hidden="true" tabindex="-1"></a>        β_pieces_sub_null,</span>
+<span id="cb61-19"><a href="#cb61-19" aria-hidden="true" tabindex="-1"></a>        β_pieces_sub_nn[at.clip(sub_id_, <span class="dv">0</span>, n_sub)]</span>
+<span id="cb61-20"><a href="#cb61-20" aria-hidden="true" tabindex="-1"></a>    )</span>
+<span id="cb61-21"><a href="#cb61-21" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb61-22"><a href="#cb61-22" aria-hidden="true" tabindex="-1"></a>    β_pieces_i <span class="op">=</span> β_pieces_0 <span class="op">+</span> β_pieces_theme[theme_id_] <span class="op">+</span> β_pieces_sub_i</span></code></pre></div>
+<p>Finally, we specify the likelihood of this model and sample from its posterior distribution.</p>
+<div class="sourceCode" id="cb62"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb62-1"><a href="#cb62-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> sub_model:</span>
+<span id="cb62-2"><a href="#cb62-2" aria-hidden="true" tabindex="-1"></a>    σ <span class="op">=</span> pm.HalfNormal(<span class="st">&quot;σ&quot;</span>, <span class="fl">5.</span>)</span>
+<span id="cb62-3"><a href="#cb62-3" aria-hidden="true" tabindex="-1"></a>    μ <span class="op">=</span> β<span class="dv">0</span><span class="er">_i</span> <span class="op">+</span> β_pieces_i <span class="op">*</span> std_log_pieces_ <span class="op">-</span> <span class="fl">0.5</span> <span class="op">*</span> σ<span class="op">**</span><span class="dv">2</span></span>
+<span id="cb62-4"><a href="#cb62-4" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb62-5"><a href="#cb62-5" aria-hidden="true" tabindex="-1"></a>    obs <span class="op">=</span> pm.Normal(<span class="st">&quot;obs&quot;</span>, μ, σ, observed<span class="op">=</span>log_rrp2021)</span></code></pre></div>
+<div class="sourceCode" id="cb63"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb63-1"><a href="#cb63-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> sub_model:</span>
+<span id="cb63-2"><a href="#cb63-2" aria-hidden="true" tabindex="-1"></a>    sub_trace <span class="op">=</span> pm.sample(<span class="op">**</span>SAMPLE_KWARGS)</span></code></pre></div>
+<pre><code>Auto-assigning NUTS sampler...
+Initializing NUTS using jitter+adapt_diag...
+Multiprocess sampling (3 chains in 3 jobs)
+NUTS: [β0_0, Δ_β0_t, γ_β0_theme, Δ__β0_theme, σ__β0_theme, β0_sub_null, λ_β0_sub_nn, Δ__β0_sub_nn, σ__β0_sub_nn, β_pieces_0, γ_β_pieces_theme, Δ__β_pieces_theme, σ__β_pieces_theme, β_pieces_sub_null, λ_β_pieces_sub_nn, Δ__β_pieces_sub_nn, σ__β_pieces_sub_nn, σ]</code></pre>
+<div>
+<style>
+/* Turns off some styling */
+progress {
+/* gets rid of default border in Firefox and Opera. */
+border: none;
+/* Needs to be in here for Safari polyfill so background images work as expected. */
+background-size: auto;
+}
+.progress-bar-interrupted, .progress-bar-interrupted::-webkit-progress-bar {
+background: #F44336;
+}
+</style>
+<progress value="6000" class max="6000" style="width:300px; height:20px; vertical-align: middle;">
+</progress>
+<p>100.00% [6000/6000 17:10&lt;00:00 Sampling 3 chains, 0 divergences]</p>
+</div>
+<pre><code>Sampling 3 chains for 1_000 tune and 1_000 draw iterations (3_000 + 3_000 draws total) took 1031 seconds.
+The number of effective samples is smaller than 25% for some parameters.</code></pre>
+<p>The sampling diagnostics show no cause for concern.</p>
+<div class="sourceCode" id="cb66"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb66-1"><a href="#cb66-1" aria-hidden="true" tabindex="-1"></a>plot_diagnostics(sub_trace)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/ucs_gunship_files/ucs_gunship_87_0.png" title="fig:" alt="png" />
+</center>
+<p>We now sample from the posterior predictive distribution of the model and compare the resulting residuals to those of the baseline model.</p>
+<div class="sourceCode" id="cb67"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb67-1"><a href="#cb67-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> sub_model:</span>
+<span id="cb67-2"><a href="#cb67-2" aria-hidden="true" tabindex="-1"></a>    pp_sub_data <span class="op">=</span> pm.sample_posterior_predictive(sub_trace)</span>
+<span id="cb67-3"><a href="#cb67-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb67-4"><a href="#cb67-4" aria-hidden="true" tabindex="-1"></a>df[<span class="st">&quot;sub_pred&quot;</span>] <span class="op">=</span> pp_sub_data[<span class="st">&quot;obs&quot;</span>].mean(axis<span class="op">=</span><span class="dv">0</span>)</span>
+<span id="cb67-5"><a href="#cb67-5" aria-hidden="true" tabindex="-1"></a>df[<span class="st">&quot;sub_resid&quot;</span>] <span class="op">=</span> log_rrp2021 <span class="op">-</span> df[<span class="st">&quot;sub_pred&quot;</span>]</span></code></pre></div>
+<div>
+<style>
+/* Turns off some styling */
+progress {
+/* gets rid of default border in Firefox and Opera. */
+border: none;
+/* Needs to be in here for Safari polyfill so background images work as expected. */
+background-size: auto;
+}
+.progress-bar-interrupted, .progress-bar-interrupted::-webkit-progress-bar {
+background: #F44336;
+}
+</style>
+<progress value="3000" class max="3000" style="width:300px; height:20px; vertical-align: middle;">
+</progress>
+<p>100.00% [3000/3000 00:02&lt;00:00]</p>
+</div>
+<div class="sourceCode" id="cb68"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb68-1"><a href="#cb68-1" aria-hidden="true" tabindex="-1"></a>fig, (ax, sub_ax) <span class="op">=</span> plt.subplots(</span>
+<span id="cb68-2"><a href="#cb68-2" aria-hidden="true" tabindex="-1"></a>    ncols<span class="op">=</span><span class="dv">2</span>, sharex<span class="op">=</span><span class="va">True</span>, sharey<span class="op">=</span><span class="va">True</span>,</span>
+<span id="cb68-3"><a href="#cb68-3" aria-hidden="true" tabindex="-1"></a>    figsize<span class="op">=</span>(<span class="dv">2</span> <span class="op">*</span> FIGSIZE[<span class="dv">0</span>], FIGSIZE[<span class="dv">1</span>])</span>
+<span id="cb68-4"><a href="#cb68-4" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb68-5"><a href="#cb68-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb68-6"><a href="#cb68-6" aria-hidden="true" tabindex="-1"></a>sns.scatterplot(x<span class="op">=</span><span class="st">&quot;Pieces&quot;</span>, y<span class="op">=</span><span class="st">&quot;resid&quot;</span>,</span>
+<span id="cb68-7"><a href="#cb68-7" aria-hidden="true" tabindex="-1"></a>                data<span class="op">=</span>df.reset_index(),</span>
+<span id="cb68-8"><a href="#cb68-8" aria-hidden="true" tabindex="-1"></a>                color<span class="op">=</span><span class="st">&#39;C0&#39;</span>, alpha<span class="op">=</span><span class="fl">0.1</span>,</span>
+<span id="cb68-9"><a href="#cb68-9" aria-hidden="true" tabindex="-1"></a>                ax<span class="op">=</span>ax)<span class="op">;</span></span>
+<span id="cb68-10"><a href="#cb68-10" aria-hidden="true" tabindex="-1"></a>(df.groupby(df[<span class="st">&quot;Pieces&quot;</span>].<span class="bu">round</span>(<span class="op">-</span><span class="dv">2</span>))</span>
+<span id="cb68-11"><a href="#cb68-11" aria-hidden="true" tabindex="-1"></a>   [<span class="st">&quot;resid&quot;</span>]</span>
+<span id="cb68-12"><a href="#cb68-12" aria-hidden="true" tabindex="-1"></a>   .mean()</span>
+<span id="cb68-13"><a href="#cb68-13" aria-hidden="true" tabindex="-1"></a>   .plot(c<span class="op">=</span><span class="st">&#39;k&#39;</span>, label<span class="op">=</span><span class="st">&quot;Bucketed average&quot;</span>,</span>
+<span id="cb68-14"><a href="#cb68-14" aria-hidden="true" tabindex="-1"></a>         ax<span class="op">=</span>ax))<span class="op">;</span></span>
+<span id="cb68-15"><a href="#cb68-15" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb68-16"><a href="#cb68-16" aria-hidden="true" tabindex="-1"></a>ax.set_xscale(<span class="st">&#39;log&#39;</span>)<span class="op">;</span></span>
+<span id="cb68-17"><a href="#cb68-17" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb68-18"><a href="#cb68-18" aria-hidden="true" tabindex="-1"></a>ax.set_ylim(<span class="op">-</span><span class="dv">2</span>, <span class="dv">2</span>)<span class="op">;</span></span>
+<span id="cb68-19"><a href="#cb68-19" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="st">&quot;Log RRP residual (2021 $)&quot;</span>)<span class="op">;</span></span>
+<span id="cb68-20"><a href="#cb68-20" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb68-21"><a href="#cb68-21" aria-hidden="true" tabindex="-1"></a>ax.legend(loc<span class="op">=</span><span class="st">&#39;upper left&#39;</span>)<span class="op">;</span></span>
+<span id="cb68-22"><a href="#cb68-22" aria-hidden="true" tabindex="-1"></a>ax.set_title(<span class="st">&quot;Baseline model&quot;</span>)<span class="op">;</span></span>
+<span id="cb68-23"><a href="#cb68-23" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb68-24"><a href="#cb68-24" aria-hidden="true" tabindex="-1"></a>sns.scatterplot(x<span class="op">=</span><span class="st">&quot;Pieces&quot;</span>, y<span class="op">=</span><span class="st">&quot;sub_resid&quot;</span>,</span>
+<span id="cb68-25"><a href="#cb68-25" aria-hidden="true" tabindex="-1"></a>                data<span class="op">=</span>df.reset_index(),</span>
+<span id="cb68-26"><a href="#cb68-26" aria-hidden="true" tabindex="-1"></a>                color<span class="op">=</span><span class="st">&#39;C0&#39;</span>, alpha<span class="op">=</span><span class="fl">0.1</span>,</span>
+<span id="cb68-27"><a href="#cb68-27" aria-hidden="true" tabindex="-1"></a>                ax<span class="op">=</span>sub_ax)<span class="op">;</span></span>
+<span id="cb68-28"><a href="#cb68-28" aria-hidden="true" tabindex="-1"></a>(df.groupby(df[<span class="st">&quot;Pieces&quot;</span>].<span class="bu">round</span>(<span class="op">-</span><span class="dv">2</span>))</span>
+<span id="cb68-29"><a href="#cb68-29" aria-hidden="true" tabindex="-1"></a>   [<span class="st">&quot;sub_resid&quot;</span>]</span>
+<span id="cb68-30"><a href="#cb68-30" aria-hidden="true" tabindex="-1"></a>   .mean()</span>
+<span id="cb68-31"><a href="#cb68-31" aria-hidden="true" tabindex="-1"></a>   .plot(c<span class="op">=</span><span class="st">&#39;k&#39;</span>, ax<span class="op">=</span>sub_ax))<span class="op">;</span></span>
+<span id="cb68-32"><a href="#cb68-32" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb68-33"><a href="#cb68-33" aria-hidden="true" tabindex="-1"></a>sub_ax.set_title(<span class="st">&quot;Subtheme model&quot;</span>)<span class="op">;</span></span>
+<span id="cb68-34"><a href="#cb68-34" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb68-35"><a href="#cb68-35" aria-hidden="true" tabindex="-1"></a>fig.tight_layout()<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/ucs_gunship_files/ucs_gunship_90_0.png" title="fig:" alt="png" />
+</center>
+<div class="sourceCode" id="cb69"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb69-1"><a href="#cb69-1" aria-hidden="true" tabindex="-1"></a>fig, (ax, sub_ax) <span class="op">=</span> plt.subplots(</span>
+<span id="cb69-2"><a href="#cb69-2" aria-hidden="true" tabindex="-1"></a>    ncols<span class="op">=</span><span class="dv">2</span>, sharex<span class="op">=</span><span class="va">True</span>, sharey<span class="op">=</span><span class="va">True</span>,</span>
+<span id="cb69-3"><a href="#cb69-3" aria-hidden="true" tabindex="-1"></a>    figsize<span class="op">=</span>(<span class="dv">2</span> <span class="op">*</span> FIGSIZE[<span class="dv">0</span>], FIGSIZE[<span class="dv">1</span>])</span>
+<span id="cb69-4"><a href="#cb69-4" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb69-5"><a href="#cb69-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb69-6"><a href="#cb69-6" aria-hidden="true" tabindex="-1"></a>(df.groupby(level<span class="op">=</span><span class="st">&quot;Year released&quot;</span>)</span>
+<span id="cb69-7"><a href="#cb69-7" aria-hidden="true" tabindex="-1"></a>   [<span class="st">&quot;resid&quot;</span>]</span>
+<span id="cb69-8"><a href="#cb69-8" aria-hidden="true" tabindex="-1"></a>   .mean()</span>
+<span id="cb69-9"><a href="#cb69-9" aria-hidden="true" tabindex="-1"></a>   .plot(c<span class="op">=</span><span class="st">&#39;k&#39;</span>, label<span class="op">=</span><span class="st">&quot;Year average&quot;</span>,</span>
+<span id="cb69-10"><a href="#cb69-10" aria-hidden="true" tabindex="-1"></a>         ax<span class="op">=</span>ax))<span class="op">;</span></span>
+<span id="cb69-11"><a href="#cb69-11" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb69-12"><a href="#cb69-12" aria-hidden="true" tabindex="-1"></a>strip_ax <span class="op">=</span> ax.twiny()</span>
+<span id="cb69-13"><a href="#cb69-13" aria-hidden="true" tabindex="-1"></a>sns.stripplot(x<span class="op">=</span><span class="st">&quot;Year released&quot;</span>, y<span class="op">=</span><span class="st">&quot;resid&quot;</span>,</span>
+<span id="cb69-14"><a href="#cb69-14" aria-hidden="true" tabindex="-1"></a>              data<span class="op">=</span>df.reset_index(),</span>
+<span id="cb69-15"><a href="#cb69-15" aria-hidden="true" tabindex="-1"></a>              jitter<span class="op">=</span><span class="fl">1.5</span>,</span>
+<span id="cb69-16"><a href="#cb69-16" aria-hidden="true" tabindex="-1"></a>              color<span class="op">=</span><span class="st">&#39;C0&#39;</span>, alpha<span class="op">=</span><span class="fl">0.1</span>,</span>
+<span id="cb69-17"><a href="#cb69-17" aria-hidden="true" tabindex="-1"></a>              ax<span class="op">=</span>strip_ax)<span class="op">;</span></span>
+<span id="cb69-18"><a href="#cb69-18" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb69-19"><a href="#cb69-19" aria-hidden="true" tabindex="-1"></a>strip_ax.set_axis_off()<span class="op">;</span></span>
+<span id="cb69-20"><a href="#cb69-20" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb69-21"><a href="#cb69-21" aria-hidden="true" tabindex="-1"></a>ax.set_ylim(<span class="op">-</span><span class="dv">2</span>, <span class="dv">2</span>)<span class="op">;</span></span>
+<span id="cb69-22"><a href="#cb69-22" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="st">&quot;Log RRP residual (2021 $)&quot;</span>)<span class="op">;</span></span>
+<span id="cb69-23"><a href="#cb69-23" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb69-24"><a href="#cb69-24" aria-hidden="true" tabindex="-1"></a>ax.legend(loc<span class="op">=</span><span class="st">&#39;upper left&#39;</span>)<span class="op">;</span></span>
+<span id="cb69-25"><a href="#cb69-25" aria-hidden="true" tabindex="-1"></a>ax.set_title(<span class="st">&quot;Baseline model&quot;</span>)<span class="op">;</span></span>
+<span id="cb69-26"><a href="#cb69-26" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb69-27"><a href="#cb69-27" aria-hidden="true" tabindex="-1"></a>(df.groupby(level<span class="op">=</span><span class="st">&quot;Year released&quot;</span>)</span>
+<span id="cb69-28"><a href="#cb69-28" aria-hidden="true" tabindex="-1"></a>   [<span class="st">&quot;sub_resid&quot;</span>]</span>
+<span id="cb69-29"><a href="#cb69-29" aria-hidden="true" tabindex="-1"></a>   .mean()</span>
+<span id="cb69-30"><a href="#cb69-30" aria-hidden="true" tabindex="-1"></a>   .plot(c<span class="op">=</span><span class="st">&#39;k&#39;</span>, label<span class="op">=</span><span class="st">&quot;Year average&quot;</span>,</span>
+<span id="cb69-31"><a href="#cb69-31" aria-hidden="true" tabindex="-1"></a>         ax<span class="op">=</span>sub_ax))<span class="op">;</span></span>
+<span id="cb69-32"><a href="#cb69-32" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb69-33"><a href="#cb69-33" aria-hidden="true" tabindex="-1"></a>sub_strip_ax <span class="op">=</span> sub_ax.twiny()</span>
+<span id="cb69-34"><a href="#cb69-34" aria-hidden="true" tabindex="-1"></a>sns.stripplot(x<span class="op">=</span><span class="st">&quot;Year released&quot;</span>, y<span class="op">=</span><span class="st">&quot;sub_resid&quot;</span>,</span>
+<span id="cb69-35"><a href="#cb69-35" aria-hidden="true" tabindex="-1"></a>              data<span class="op">=</span>df.reset_index(),</span>
+<span id="cb69-36"><a href="#cb69-36" aria-hidden="true" tabindex="-1"></a>              jitter<span class="op">=</span><span class="fl">1.5</span>,</span>
+<span id="cb69-37"><a href="#cb69-37" aria-hidden="true" tabindex="-1"></a>              color<span class="op">=</span><span class="st">&#39;C0&#39;</span>, alpha<span class="op">=</span><span class="fl">0.1</span>,</span>
+<span id="cb69-38"><a href="#cb69-38" aria-hidden="true" tabindex="-1"></a>              ax<span class="op">=</span>sub_strip_ax)<span class="op">;</span></span>
+<span id="cb69-39"><a href="#cb69-39" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb69-40"><a href="#cb69-40" aria-hidden="true" tabindex="-1"></a>sub_strip_ax.set_axis_off()<span class="op">;</span></span>
+<span id="cb69-41"><a href="#cb69-41" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb69-42"><a href="#cb69-42" aria-hidden="true" tabindex="-1"></a>sub_ax.set_title(<span class="st">&quot;Subtheme model&quot;</span>)<span class="op">;</span></span>
+<span id="cb69-43"><a href="#cb69-43" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb69-44"><a href="#cb69-44" aria-hidden="true" tabindex="-1"></a>fig.tight_layout()<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/ucs_gunship_files/ucs_gunship_91_0.png" title="fig:" alt="png" />
+</center>
+<p>The residuals look quite similar, with perhaps slightly less variation for the subtheme model. Since the residuals are so visually similar, we turn to Pareto-smoothed importance sampling leave-one-out cross validation<a href="#fn1" class="footnote-ref" id="fnref1" role="doc-noteref"><sup>1</sup></a> (PSIS-LOO) to compare the models.</p>
+<div class="sourceCode" id="cb70"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb70-1"><a href="#cb70-1" aria-hidden="true" tabindex="-1"></a>traces <span class="op">=</span> {</span>
+<span id="cb70-2"><a href="#cb70-2" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;Baseline&quot;</span>: trace,</span>
+<span id="cb70-3"><a href="#cb70-3" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;Subtheme&quot;</span>: sub_trace</span>
+<span id="cb70-4"><a href="#cb70-4" aria-hidden="true" tabindex="-1"></a>}</span></code></pre></div>
+<div class="sourceCode" id="cb71"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb71-1"><a href="#cb71-1" aria-hidden="true" tabindex="-1"></a><span class="op">%%</span>time</span>
+<span id="cb71-2"><a href="#cb71-2" aria-hidden="true" tabindex="-1"></a>comp_df <span class="op">=</span> az.compare(traces)</span></code></pre></div>
+<pre><code>CPU times: user 20.7 s, sys: 397 ms, total: 21.1 s
+Wall time: 21.1 s</code></pre>
+<div class="sourceCode" id="cb73"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb73-1"><a href="#cb73-1" aria-hidden="true" tabindex="-1"></a>comp_df.loc[:, :<span class="st">&quot;weight&quot;</span>]</span></code></pre></div>
+<center>
+<div>
+<style scoped>
+.dataframe tbody tr th:only-of-type {
+vertical-align: middle;
+}
+
+.dataframe tbody tr th {
+vertical-align: top;
+}
+
+.dataframe thead th {
+text-align: right;
+}
+</style>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th>
+</th>
+<th>
+rank
+</th>
+<th>
+loo
+</th>
+<th>
+p_loo
+</th>
+<th>
+d_loo
+</th>
+<th>
+weight
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>
+Subtheme
+</th>
+<td>
+0
+</td>
+<td>
+-1142.927746
+</td>
+<td>
+639.913733
+</td>
+<td>
+0.000000
+</td>
+<td>
+0.911548
+</td>
+</tr>
+<tr>
+<th>
+Baseline
+</th>
+<td>
+1
+</td>
+<td>
+-2062.767732
+</td>
+<td>
+251.538394
+</td>
+<td>
+919.839986
+</td>
+<td>
+0.088452
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center>
+<p><br></p>
+<div class="sourceCode" id="cb74"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb74-1"><a href="#cb74-1" aria-hidden="true" tabindex="-1"></a>az.plot_compare(comp_df, plot_ic_diff<span class="op">=</span><span class="va">False</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/ucs_gunship_files/ucs_gunship_96_0.png" title="fig:" alt="png" />
+</center>
+<p>We see that the subtheme model has approximately 2.5 times as many effective parameters as the baseline model and produces a significantly higher PSIS-LOO score.</p>
+<h3 id="model-interpretation">Model interpretation</h3>
+<p>We now interpret the posterior distributions of various parameters and the posterior predictions of these two models.</p>
+<div class="sourceCode" id="cb75"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb75-1"><a href="#cb75-1" aria-hidden="true" tabindex="-1"></a>LARGE_LABEL_FS <span class="op">=</span> <span class="dv">18</span></span></code></pre></div>
+<div class="sourceCode" id="cb76"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb76-1"><a href="#cb76-1" aria-hidden="true" tabindex="-1"></a>grid <span class="op">=</span> az.plot_posterior(</span>
+<span id="cb76-2"><a href="#cb76-2" aria-hidden="true" tabindex="-1"></a>    trace,</span>
+<span id="cb76-3"><a href="#cb76-3" aria-hidden="true" tabindex="-1"></a>    var_names<span class="op">=</span>[</span>
+<span id="cb76-4"><a href="#cb76-4" aria-hidden="true" tabindex="-1"></a>        <span class="st">&quot;σ__β0_theme&quot;</span>,</span>
+<span id="cb76-5"><a href="#cb76-5" aria-hidden="true" tabindex="-1"></a>        <span class="st">&quot;σ__β_pieces_theme&quot;</span></span>
+<span id="cb76-6"><a href="#cb76-6" aria-hidden="true" tabindex="-1"></a>    ],</span>
+<span id="cb76-7"><a href="#cb76-7" aria-hidden="true" tabindex="-1"></a>    hdi_prob<span class="op">=</span><span class="st">&#39;hide&#39;</span>,</span>
+<span id="cb76-8"><a href="#cb76-8" aria-hidden="true" tabindex="-1"></a>    color<span class="op">=</span><span class="st">&#39;C0&#39;</span>, label<span class="op">=</span><span class="st">&quot;Baseline model&quot;</span></span>
+<span id="cb76-9"><a href="#cb76-9" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb76-10"><a href="#cb76-10" aria-hidden="true" tabindex="-1"></a>az.plot_posterior(</span>
+<span id="cb76-11"><a href="#cb76-11" aria-hidden="true" tabindex="-1"></a>    sub_trace,</span>
+<span id="cb76-12"><a href="#cb76-12" aria-hidden="true" tabindex="-1"></a>    var_names<span class="op">=</span>[</span>
+<span id="cb76-13"><a href="#cb76-13" aria-hidden="true" tabindex="-1"></a>        <span class="st">&quot;σ__β0_theme&quot;</span>,</span>
+<span id="cb76-14"><a href="#cb76-14" aria-hidden="true" tabindex="-1"></a>        <span class="st">&quot;σ__β_pieces_theme&quot;</span></span>
+<span id="cb76-15"><a href="#cb76-15" aria-hidden="true" tabindex="-1"></a>    ],</span>
+<span id="cb76-16"><a href="#cb76-16" aria-hidden="true" tabindex="-1"></a>    hdi_prob<span class="op">=</span><span class="st">&#39;hide&#39;</span>,</span>
+<span id="cb76-17"><a href="#cb76-17" aria-hidden="true" tabindex="-1"></a>    color<span class="op">=</span><span class="st">&#39;C1&#39;</span>, label<span class="op">=</span><span class="st">&quot;Subtheme model&quot;</span>,</span>
+<span id="cb76-18"><a href="#cb76-18" aria-hidden="true" tabindex="-1"></a>    ax<span class="op">=</span>grid</span>
+<span id="cb76-19"><a href="#cb76-19" aria-hidden="true" tabindex="-1"></a>)<span class="op">;</span></span>
+<span id="cb76-20"><a href="#cb76-20" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb76-21"><a href="#cb76-21" aria-hidden="true" tabindex="-1"></a>grid[<span class="dv">0</span>].set_xlabel(<span class="vs">r&quot;$\sigma_{\beta_0^{\mathrm</span><span class="sc">{theme}}}</span><span class="vs">$&quot;</span>,</span>
+<span id="cb76-22"><a href="#cb76-22" aria-hidden="true" tabindex="-1"></a>                   fontsize<span class="op">=</span>LARGE_LABEL_FS)<span class="op">;</span></span>
+<span id="cb76-23"><a href="#cb76-23" aria-hidden="true" tabindex="-1"></a>grid[<span class="dv">0</span>].set_title(<span class="va">None</span>)<span class="op">;</span></span>
+<span id="cb76-24"><a href="#cb76-24" aria-hidden="true" tabindex="-1"></a>grid[<span class="dv">0</span>].get_legend().remove()</span>
+<span id="cb76-25"><a href="#cb76-25" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb76-26"><a href="#cb76-26" aria-hidden="true" tabindex="-1"></a>grid[<span class="dv">1</span>].set_xlabel(<span class="vs">r&quot;$\sigma_{\beta_{\mathrm</span><span class="sc">{pieces}</span><span class="vs">}^{\mathrm</span><span class="sc">{theme}}}</span><span class="vs">$&quot;</span>,</span>
+<span id="cb76-27"><a href="#cb76-27" aria-hidden="true" tabindex="-1"></a>                   fontsize<span class="op">=</span>LARGE_LABEL_FS)<span class="op">;</span></span>
+<span id="cb76-28"><a href="#cb76-28" aria-hidden="true" tabindex="-1"></a>grid[<span class="dv">1</span>].set_title(<span class="va">None</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/ucs_gunship_files/ucs_gunship_100_0.png" title="fig:" alt="png" />
+</center>
+<p>We see that after adding subtheme-based varying intercepts and slopes that the scale of the varying intercepts remains roughly the same, but the scale of the varying slopes is greatly reduced.</p>
+<div class="sourceCode" id="cb77"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb77-1"><a href="#cb77-1" aria-hidden="true" tabindex="-1"></a>grid <span class="op">=</span> az.plot_posterior(sub_trace,</span>
+<span id="cb77-2"><a href="#cb77-2" aria-hidden="true" tabindex="-1"></a>                         var_names<span class="op">=</span>[</span>
+<span id="cb77-3"><a href="#cb77-3" aria-hidden="true" tabindex="-1"></a>                            <span class="st">&quot;σ__β0_sub_nn&quot;</span>,</span>
+<span id="cb77-4"><a href="#cb77-4" aria-hidden="true" tabindex="-1"></a>                            <span class="st">&quot;σ__β_pieces_sub_nn&quot;</span></span>
+<span id="cb77-5"><a href="#cb77-5" aria-hidden="true" tabindex="-1"></a>                         ])</span>
+<span id="cb77-6"><a href="#cb77-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb77-7"><a href="#cb77-7" aria-hidden="true" tabindex="-1"></a>grid[<span class="dv">0</span>].set_xlabel(<span class="vs">r&quot;$\sigma_{\beta_0^{\mathrm</span><span class="sc">{sub}}}</span><span class="vs">$&quot;</span>,</span>
+<span id="cb77-8"><a href="#cb77-8" aria-hidden="true" tabindex="-1"></a>                   fontsize<span class="op">=</span><span class="dv">18</span>)<span class="op">;</span></span>
+<span id="cb77-9"><a href="#cb77-9" aria-hidden="true" tabindex="-1"></a>grid[<span class="dv">0</span>].set_title(<span class="va">None</span>)<span class="op">;</span></span>
+<span id="cb77-10"><a href="#cb77-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb77-11"><a href="#cb77-11" aria-hidden="true" tabindex="-1"></a>grid[<span class="dv">1</span>].set_xlabel(<span class="vs">r&quot;$\sigma_{\beta_{\mathrm</span><span class="sc">{pieces}</span><span class="vs">}^{\mathrm</span><span class="sc">{sub}}}</span><span class="vs">$&quot;</span>,</span>
+<span id="cb77-12"><a href="#cb77-12" aria-hidden="true" tabindex="-1"></a>                   fontsize<span class="op">=</span><span class="dv">18</span>)<span class="op">;</span></span>
+<span id="cb77-13"><a href="#cb77-13" aria-hidden="true" tabindex="-1"></a>grid[<span class="dv">1</span>].set_title(<span class="va">None</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/ucs_gunship_files/ucs_gunship_102_0.png" title="fig:" alt="png" />
+</center>
+<p>Interestingly, the scale of the subtheme-based variation is significantly smaller than that of the theme-based variation in the baseline model.</p>
+<div class="sourceCode" id="cb78"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb78-1"><a href="#cb78-1" aria-hidden="true" tabindex="-1"></a>β<span class="dv">0</span><span class="er">_theme_hat</span> <span class="op">=</span> trace[<span class="st">&quot;posterior&quot;</span>][<span class="st">&quot;β0_theme&quot;</span>].mean(dim<span class="op">=</span>(<span class="st">&quot;chain&quot;</span>, <span class="st">&quot;draw&quot;</span>))</span>
+<span id="cb78-2"><a href="#cb78-2" aria-hidden="true" tabindex="-1"></a>β_pieces_theme_hat <span class="op">=</span> trace[<span class="st">&quot;posterior&quot;</span>][<span class="st">&quot;β_pieces_theme&quot;</span>].mean(dim<span class="op">=</span>(<span class="st">&quot;chain&quot;</span>, <span class="st">&quot;draw&quot;</span>))</span>
+<span id="cb78-3"><a href="#cb78-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb78-4"><a href="#cb78-4" aria-hidden="true" tabindex="-1"></a>β<span class="dv">0</span><span class="er">_theme_hat_sub</span> <span class="op">=</span> sub_trace[<span class="st">&quot;posterior&quot;</span>][<span class="st">&quot;β0_theme&quot;</span>].mean(dim<span class="op">=</span>(<span class="st">&quot;chain&quot;</span>, <span class="st">&quot;draw&quot;</span>))</span>
+<span id="cb78-5"><a href="#cb78-5" aria-hidden="true" tabindex="-1"></a>β_pieces_theme_hat_sub <span class="op">=</span> sub_trace[<span class="st">&quot;posterior&quot;</span>][<span class="st">&quot;β_pieces_theme&quot;</span>].mean(dim<span class="op">=</span>(<span class="st">&quot;chain&quot;</span>, <span class="st">&quot;draw&quot;</span>))</span></code></pre></div>
+<div class="sourceCode" id="cb79"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb79-1"><a href="#cb79-1" aria-hidden="true" tabindex="-1"></a>fig, (int_ax, slope_ax) <span class="op">=</span> plt.subplots(</span>
+<span id="cb79-2"><a href="#cb79-2" aria-hidden="true" tabindex="-1"></a>    ncols<span class="op">=</span><span class="dv">2</span>,</span>
+<span id="cb79-3"><a href="#cb79-3" aria-hidden="true" tabindex="-1"></a>    figsize<span class="op">=</span>(<span class="dv">2</span> <span class="op">*</span> FIGSIZE[<span class="dv">1</span>], FIGSIZE[<span class="dv">1</span>])</span>
+<span id="cb79-4"><a href="#cb79-4" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb79-5"><a href="#cb79-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb79-6"><a href="#cb79-6" aria-hidden="true" tabindex="-1"></a>int_ax.set_aspect(<span class="st">&#39;equal&#39;</span>)<span class="op">;</span></span>
+<span id="cb79-7"><a href="#cb79-7" aria-hidden="true" tabindex="-1"></a>slope_ax.set_aspect(<span class="st">&#39;equal&#39;</span>)<span class="op">;</span></span>
+<span id="cb79-8"><a href="#cb79-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb79-9"><a href="#cb79-9" aria-hidden="true" tabindex="-1"></a>sns.scatterplot(</span>
+<span id="cb79-10"><a href="#cb79-10" aria-hidden="true" tabindex="-1"></a>    x<span class="op">=</span>β<span class="dv">0</span><span class="er">_theme_hat</span>, y<span class="op">=</span>β<span class="dv">0</span><span class="er">_theme_hat_sub</span>,</span>
+<span id="cb79-11"><a href="#cb79-11" aria-hidden="true" tabindex="-1"></a>    alpha<span class="op">=</span><span class="fl">0.5</span>, ax<span class="op">=</span>int_ax</span>
+<span id="cb79-12"><a href="#cb79-12" aria-hidden="true" tabindex="-1"></a>)<span class="op">;</span></span>
+<span id="cb79-13"><a href="#cb79-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb79-14"><a href="#cb79-14" aria-hidden="true" tabindex="-1"></a>int_ax.axline((<span class="dv">0</span>, <span class="dv">0</span>), slope<span class="op">=</span><span class="dv">1</span>, c<span class="op">=</span><span class="st">&#39;k&#39;</span>, ls<span class="op">=</span><span class="st">&#39;--&#39;</span>)<span class="op">;</span></span>
+<span id="cb79-15"><a href="#cb79-15" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb79-16"><a href="#cb79-16" aria-hidden="true" tabindex="-1"></a>int_ax.set_xlabel(<span class="st">&quot;Baseline model&quot;</span>)<span class="op">;</span></span>
+<span id="cb79-17"><a href="#cb79-17" aria-hidden="true" tabindex="-1"></a>int_ax.set_ylabel(<span class="st">&quot;Subtheme model&quot;</span>)<span class="op">;</span></span>
+<span id="cb79-18"><a href="#cb79-18" aria-hidden="true" tabindex="-1"></a>int_ax.set_title(<span class="vs">r&quot;$\beta_0^{\mathrm</span><span class="sc">{theme}</span><span class="vs">}$&quot;</span>)<span class="op">;</span></span>
+<span id="cb79-19"><a href="#cb79-19" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb79-20"><a href="#cb79-20" aria-hidden="true" tabindex="-1"></a>sns.scatterplot(</span>
+<span id="cb79-21"><a href="#cb79-21" aria-hidden="true" tabindex="-1"></a>    x<span class="op">=</span>β_pieces_theme_hat, y<span class="op">=</span>β_pieces_theme_hat_sub,</span>
+<span id="cb79-22"><a href="#cb79-22" aria-hidden="true" tabindex="-1"></a>    alpha<span class="op">=</span><span class="fl">0.5</span>, ax<span class="op">=</span>slope_ax</span>
+<span id="cb79-23"><a href="#cb79-23" aria-hidden="true" tabindex="-1"></a>)<span class="op">;</span></span>
+<span id="cb79-24"><a href="#cb79-24" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb79-25"><a href="#cb79-25" aria-hidden="true" tabindex="-1"></a>slope_ax.axline((<span class="dv">0</span>, <span class="dv">0</span>), slope<span class="op">=</span><span class="dv">1</span>, c<span class="op">=</span><span class="st">&#39;k&#39;</span>, ls<span class="op">=</span><span class="st">&#39;--&#39;</span>)<span class="op">;</span></span>
+<span id="cb79-26"><a href="#cb79-26" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb79-27"><a href="#cb79-27" aria-hidden="true" tabindex="-1"></a>slope_ax.set_xlabel(<span class="st">&quot;Baseline model&quot;</span>)<span class="op">;</span></span>
+<span id="cb79-28"><a href="#cb79-28" aria-hidden="true" tabindex="-1"></a>slope_ax.set_ylabel(<span class="st">&quot;Subtheme model&quot;</span>)<span class="op">;</span></span>
+<span id="cb79-29"><a href="#cb79-29" aria-hidden="true" tabindex="-1"></a>slope_ax.set_title(<span class="vs">r&quot;$\beta_{\mathrm</span><span class="sc">{pieces}</span><span class="vs">}^{\mathrm</span><span class="sc">{theme}</span><span class="vs">}$&quot;</span>)<span class="op">;</span></span>
+<span id="cb79-30"><a href="#cb79-30" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb79-31"><a href="#cb79-31" aria-hidden="true" tabindex="-1"></a>fig.tight_layout()<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/ucs_gunship_files/ucs_gunship_105_0.png" title="fig:" alt="png" />
+</center>
+<p>These relationships are shown clearly when we scatter plot the posterior expected value of the theme-based varying slopes and intercepts against each other from each model. We see that the theme-based varying intercepts are largely concentrated around the line <span class="math inline">\(y = x\)</span> while the theme-based varying slopes almost all have <span class="math inline">\(y &lt; x\)</span>.</p>
+<div class="sourceCode" id="cb80"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb80-1"><a href="#cb80-1" aria-hidden="true" tabindex="-1"></a>β<span class="dv">0</span><span class="er">_sub_nn_hat</span> <span class="op">=</span> sub_trace[<span class="st">&quot;posterior&quot;</span>][<span class="st">&quot;β0_sub_nn&quot;</span>].mean(dim<span class="op">=</span>(<span class="st">&quot;chain&quot;</span>, <span class="st">&quot;draw&quot;</span>))</span>
+<span id="cb80-2"><a href="#cb80-2" aria-hidden="true" tabindex="-1"></a>β_pieces_sub_nn_hat <span class="op">=</span> sub_trace[<span class="st">&quot;posterior&quot;</span>][<span class="st">&quot;β_pieces_sub_nn&quot;</span>].mean(dim<span class="op">=</span>(<span class="st">&quot;chain&quot;</span>, <span class="st">&quot;draw&quot;</span>))</span></code></pre></div>
+<div class="sourceCode" id="cb81"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb81-1"><a href="#cb81-1" aria-hidden="true" tabindex="-1"></a>ax <span class="op">=</span> sns.scatterplot(</span>
+<span id="cb81-2"><a href="#cb81-2" aria-hidden="true" tabindex="-1"></a>    x<span class="op">=</span>β<span class="dv">0</span><span class="er">_sub_nn_hat</span>, y<span class="op">=</span>β_pieces_sub_nn_hat,</span>
+<span id="cb81-3"><a href="#cb81-3" aria-hidden="true" tabindex="-1"></a>    alpha<span class="op">=</span><span class="fl">0.5</span></span>
+<span id="cb81-4"><a href="#cb81-4" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb81-5"><a href="#cb81-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb81-6"><a href="#cb81-6" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="vs">r&quot;$\beta_0^{\mathrm</span><span class="sc">{sub}</span><span class="vs">}$&quot;</span>)<span class="op">;</span></span>
+<span id="cb81-7"><a href="#cb81-7" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="vs">r&quot;$\beta_{\mathrm</span><span class="sc">{pieces}</span><span class="vs">}^{\mathrm</span><span class="sc">{sub}</span><span class="vs">}$&quot;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/ucs_gunship_files/ucs_gunship_108_0.png" title="fig:" alt="png" />
+</center>
+<p>There is a negative relationship subtheme-based varying intercepts and slopes. As the subtheme-based intercept increased, the subtheme-based slope decreases.</p>
+<div class="sourceCode" id="cb82"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb82-1"><a href="#cb82-1" aria-hidden="true" tabindex="-1"></a>fig, (int_ax, slope_ax) <span class="op">=</span> plt.subplots(</span>
+<span id="cb82-2"><a href="#cb82-2" aria-hidden="true" tabindex="-1"></a>    ncols<span class="op">=</span><span class="dv">2</span>,</span>
+<span id="cb82-3"><a href="#cb82-3" aria-hidden="true" tabindex="-1"></a>    figsize<span class="op">=</span>(<span class="dv">2</span> <span class="op">*</span> FIGSIZE[<span class="dv">1</span>], FIGSIZE[<span class="dv">1</span>])</span>
+<span id="cb82-4"><a href="#cb82-4" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb82-5"><a href="#cb82-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb82-6"><a href="#cb82-6" aria-hidden="true" tabindex="-1"></a>sns.scatterplot(</span>
+<span id="cb82-7"><a href="#cb82-7" aria-hidden="true" tabindex="-1"></a>    x<span class="op">=</span>β<span class="dv">0</span><span class="er">_theme_hat</span>, y<span class="op">=</span>β_pieces_theme_hat,</span>
+<span id="cb82-8"><a href="#cb82-8" aria-hidden="true" tabindex="-1"></a>    alpha<span class="op">=</span><span class="fl">0.5</span>, ax<span class="op">=</span>int_ax</span>
+<span id="cb82-9"><a href="#cb82-9" aria-hidden="true" tabindex="-1"></a>)<span class="op">;</span></span>
+<span id="cb82-10"><a href="#cb82-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb82-11"><a href="#cb82-11" aria-hidden="true" tabindex="-1"></a>int_ax.set_xlabel(<span class="vs">r&quot;$\beta_0^{\mathrm</span><span class="sc">{theme}</span><span class="vs">}$&quot;</span>)<span class="op">;</span></span>
+<span id="cb82-12"><a href="#cb82-12" aria-hidden="true" tabindex="-1"></a>int_ax.set_ylabel(<span class="vs">r&quot;$\beta_{\mathrm</span><span class="sc">{pieces}</span><span class="vs">}^{\mathrm</span><span class="sc">{theme}</span><span class="vs">}$&quot;</span>)<span class="op">;</span></span>
+<span id="cb82-13"><a href="#cb82-13" aria-hidden="true" tabindex="-1"></a>int_ax.set_title(<span class="st">&quot;Baseline model&quot;</span>)<span class="op">;</span></span>
+<span id="cb82-14"><a href="#cb82-14" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb82-15"><a href="#cb82-15" aria-hidden="true" tabindex="-1"></a>sns.scatterplot(</span>
+<span id="cb82-16"><a href="#cb82-16" aria-hidden="true" tabindex="-1"></a>    x<span class="op">=</span>β<span class="dv">0</span><span class="er">_theme_hat_sub</span>, y<span class="op">=</span>β_pieces_theme_hat_sub,</span>
+<span id="cb82-17"><a href="#cb82-17" aria-hidden="true" tabindex="-1"></a>    alpha<span class="op">=</span><span class="fl">0.5</span>, ax<span class="op">=</span>slope_ax</span>
+<span id="cb82-18"><a href="#cb82-18" aria-hidden="true" tabindex="-1"></a>)<span class="op">;</span></span>
+<span id="cb82-19"><a href="#cb82-19" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb82-20"><a href="#cb82-20" aria-hidden="true" tabindex="-1"></a>slope_ax.set_xlabel(<span class="vs">r&quot;$\beta_0^{\mathrm</span><span class="sc">{theme}</span><span class="vs">}$&quot;</span>)<span class="op">;</span></span>
+<span id="cb82-21"><a href="#cb82-21" aria-hidden="true" tabindex="-1"></a>slope_ax.set_ylabel(<span class="vs">r&quot;$\beta_{\mathrm</span><span class="sc">{pieces}</span><span class="vs">}^{\mathrm</span><span class="sc">{theme}</span><span class="vs">}$&quot;</span>)<span class="op">;</span></span>
+<span id="cb82-22"><a href="#cb82-22" aria-hidden="true" tabindex="-1"></a>slope_ax.set_title(<span class="st">&quot;Subtheme model&quot;</span>)<span class="op">;</span></span>
+<span id="cb82-23"><a href="#cb82-23" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb82-24"><a href="#cb82-24" aria-hidden="true" tabindex="-1"></a>fig.tight_layout()<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/ucs_gunship_files/ucs_gunship_110_0.png" title="fig:" alt="png" />
+</center>
+<p>These negative relationships exist for the theme-based varying intercepts and slopes in both models as well, but are less pronounced. This tighter relationship between subtheme-based varying intercepts and slopes is partially responsible for the smaller scale of the theme-based varying slopes in the subtheme model.</p>
+<p>We now turn to examining the effects of particular subthemes. First we plot the subthemes with the most extreme intercept and slopes.</p>
+<div class="sourceCode" id="cb83"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb83-1"><a href="#cb83-1" aria-hidden="true" tabindex="-1"></a>N_EXTREME <span class="op">=</span> <span class="dv">10</span></span></code></pre></div>
+<div class="sourceCode" id="cb84"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb84-1"><a href="#cb84-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> get_extreme_ix(x, n_extreme<span class="op">=</span>N_EXTREME):</span>
+<span id="cb84-2"><a href="#cb84-2" aria-hidden="true" tabindex="-1"></a>    argsorted <span class="op">=</span> x.argsort()</span>
+<span id="cb84-3"><a href="#cb84-3" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb84-4"><a href="#cb84-4" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> np.concatenate((argsorted[:n_extreme <span class="op">//</span> <span class="dv">2</span>], argsorted[<span class="op">-</span>(n_extreme <span class="op">//</span> <span class="dv">2</span>):]))</span></code></pre></div>
+<div class="sourceCode" id="cb85"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb85-1"><a href="#cb85-1" aria-hidden="true" tabindex="-1"></a>β<span class="dv">0</span><span class="er">_sub_ext_ix</span> <span class="op">=</span> get_extreme_ix(β<span class="dv">0</span><span class="er">_sub_nn_hat</span>)</span>
+<span id="cb85-2"><a href="#cb85-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb85-3"><a href="#cb85-3" aria-hidden="true" tabindex="-1"></a>ax, <span class="op">=</span> az.plot_forest(sub_trace, var_names<span class="op">=</span>[<span class="st">&quot;β0_sub_nn&quot;</span>],</span>
+<span id="cb85-4"><a href="#cb85-4" aria-hidden="true" tabindex="-1"></a>                     coords<span class="op">=</span>{</span>
+<span id="cb85-5"><a href="#cb85-5" aria-hidden="true" tabindex="-1"></a>                       <span class="st">&quot;β0_sub_nn_dim_0&quot;</span>: β<span class="dv">0</span><span class="er">_sub_ext_ix</span></span>
+<span id="cb85-6"><a href="#cb85-6" aria-hidden="true" tabindex="-1"></a>                     },</span>
+<span id="cb85-7"><a href="#cb85-7" aria-hidden="true" tabindex="-1"></a>                     hdi_prob<span class="op">=</span><span class="fl">0.95</span>, combined<span class="op">=</span><span class="va">True</span>)</span>
+<span id="cb85-8"><a href="#cb85-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb85-9"><a href="#cb85-9" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="vs">r&quot;$\beta_0^{\mathrm</span><span class="sc">{sub}</span><span class="vs">}$&quot;</span>)<span class="op">;</span></span>
+<span id="cb85-10"><a href="#cb85-10" aria-hidden="true" tabindex="-1"></a>ax.set_yticklabels(sub_map[β<span class="dv">0</span><span class="er">_sub_ext_ix</span>][::<span class="op">-</span><span class="dv">1</span>])<span class="op">;</span></span>
+<span id="cb85-11"><a href="#cb85-11" aria-hidden="true" tabindex="-1"></a>ax.set_title(<span class="va">None</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/ucs_gunship_files/ucs_gunship_114_0.png" title="fig:" alt="png" />
+</center>
+<div class="sourceCode" id="cb86"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb86-1"><a href="#cb86-1" aria-hidden="true" tabindex="-1"></a>β_pieces_sub_ext_ix <span class="op">=</span> get_extreme_ix(β_pieces_sub_nn_hat)</span>
+<span id="cb86-2"><a href="#cb86-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb86-3"><a href="#cb86-3" aria-hidden="true" tabindex="-1"></a>ax, <span class="op">=</span> az.plot_forest(sub_trace, var_names<span class="op">=</span>[<span class="st">&quot;β_pieces_sub_nn&quot;</span>],</span>
+<span id="cb86-4"><a href="#cb86-4" aria-hidden="true" tabindex="-1"></a>                     coords<span class="op">=</span>{</span>
+<span id="cb86-5"><a href="#cb86-5" aria-hidden="true" tabindex="-1"></a>                       <span class="st">&quot;β_pieces_sub_nn_dim_0&quot;</span>: β_pieces_sub_ext_ix</span>
+<span id="cb86-6"><a href="#cb86-6" aria-hidden="true" tabindex="-1"></a>                     },</span>
+<span id="cb86-7"><a href="#cb86-7" aria-hidden="true" tabindex="-1"></a>                     hdi_prob<span class="op">=</span><span class="fl">0.95</span>, combined<span class="op">=</span><span class="va">True</span>)</span>
+<span id="cb86-8"><a href="#cb86-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb86-9"><a href="#cb86-9" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="vs">r&quot;$\beta_{\mathrm</span><span class="sc">{pieces}</span><span class="vs">}^{\mathrm</span><span class="sc">{sub}</span><span class="vs">}$&quot;</span>)<span class="op">;</span></span>
+<span id="cb86-10"><a href="#cb86-10" aria-hidden="true" tabindex="-1"></a>ax.set_yticklabels(sub_map[β_pieces_sub_ext_ix][::<span class="op">-</span><span class="dv">1</span>])<span class="op">;</span></span>
+<span id="cb86-11"><a href="#cb86-11" aria-hidden="true" tabindex="-1"></a>ax.set_title(<span class="va">None</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/ucs_gunship_files/ucs_gunship_115_0.png" title="fig:" alt="png" />
+</center>
+<p>That subthemes like “Extra Dots,” “Bulk Set,” and “Mini Building Set” have some of the smallest intercepts and “Outdoor RC” has the largest is intuitive. Due to the negative correlation between subtheme intercepts and slopes, we then see that “Outdoor RC” is in the bottom in terms of slope. It also makes sense that “Technic” has one of the highest slopes, as Technic sets tend to include specialized pieces more often than most subthemes.</p>
+<h4 id="the-republic-gunship">The Republic Gunship</h4>
+<p>We now return to the original question in this post, whether the Ultimate Collector Series Republic Gunship is fairly priced. To answer this question, first we examine the varying slopes and intercepts for Star Wars-themed and Ultimate Collector Series-subthemed sets for the models.</p>
+<div class="sourceCode" id="cb87"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb87-1"><a href="#cb87-1" aria-hidden="true" tabindex="-1"></a>star_wars_id <span class="op">=</span> (theme_map <span class="op">==</span> STAR_WARS).argmax()</span></code></pre></div>
+<div class="sourceCode" id="cb88"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb88-1"><a href="#cb88-1" aria-hidden="true" tabindex="-1"></a>grid <span class="op">=</span> az.plot_posterior(</span>
+<span id="cb88-2"><a href="#cb88-2" aria-hidden="true" tabindex="-1"></a>    trace,</span>
+<span id="cb88-3"><a href="#cb88-3" aria-hidden="true" tabindex="-1"></a>    var_names<span class="op">=</span>[</span>
+<span id="cb88-4"><a href="#cb88-4" aria-hidden="true" tabindex="-1"></a>        <span class="st">&quot;β0_theme&quot;</span>,</span>
+<span id="cb88-5"><a href="#cb88-5" aria-hidden="true" tabindex="-1"></a>        <span class="st">&quot;β_pieces_theme&quot;</span></span>
+<span id="cb88-6"><a href="#cb88-6" aria-hidden="true" tabindex="-1"></a>    ],</span>
+<span id="cb88-7"><a href="#cb88-7" aria-hidden="true" tabindex="-1"></a>    coords<span class="op">=</span>{</span>
+<span id="cb88-8"><a href="#cb88-8" aria-hidden="true" tabindex="-1"></a>        <span class="st">&quot;β0_theme_dim_0&quot;</span>: [star_wars_id],</span>
+<span id="cb88-9"><a href="#cb88-9" aria-hidden="true" tabindex="-1"></a>        <span class="st">&quot;β_pieces_theme_dim_0&quot;</span>: [star_wars_id]</span>
+<span id="cb88-10"><a href="#cb88-10" aria-hidden="true" tabindex="-1"></a>    },</span>
+<span id="cb88-11"><a href="#cb88-11" aria-hidden="true" tabindex="-1"></a>    hdi_prob<span class="op">=</span><span class="st">&#39;hide&#39;</span>,</span>
+<span id="cb88-12"><a href="#cb88-12" aria-hidden="true" tabindex="-1"></a>    color<span class="op">=</span><span class="st">&#39;C0&#39;</span>, label<span class="op">=</span><span class="st">&quot;Baseline model&quot;</span></span>
+<span id="cb88-13"><a href="#cb88-13" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb88-14"><a href="#cb88-14" aria-hidden="true" tabindex="-1"></a>az.plot_posterior(</span>
+<span id="cb88-15"><a href="#cb88-15" aria-hidden="true" tabindex="-1"></a>    sub_trace,</span>
+<span id="cb88-16"><a href="#cb88-16" aria-hidden="true" tabindex="-1"></a>    var_names<span class="op">=</span>[</span>
+<span id="cb88-17"><a href="#cb88-17" aria-hidden="true" tabindex="-1"></a>        <span class="st">&quot;β0_theme&quot;</span>,</span>
+<span id="cb88-18"><a href="#cb88-18" aria-hidden="true" tabindex="-1"></a>        <span class="st">&quot;β_pieces_theme&quot;</span></span>
+<span id="cb88-19"><a href="#cb88-19" aria-hidden="true" tabindex="-1"></a>    ],</span>
+<span id="cb88-20"><a href="#cb88-20" aria-hidden="true" tabindex="-1"></a>    coords<span class="op">=</span>{</span>
+<span id="cb88-21"><a href="#cb88-21" aria-hidden="true" tabindex="-1"></a>        <span class="st">&quot;β0_theme_dim_0&quot;</span>: [star_wars_id],</span>
+<span id="cb88-22"><a href="#cb88-22" aria-hidden="true" tabindex="-1"></a>        <span class="st">&quot;β_pieces_theme_dim_0&quot;</span>: [star_wars_id]</span>
+<span id="cb88-23"><a href="#cb88-23" aria-hidden="true" tabindex="-1"></a>    },</span>
+<span id="cb88-24"><a href="#cb88-24" aria-hidden="true" tabindex="-1"></a>    hdi_prob<span class="op">=</span><span class="st">&#39;hide&#39;</span>,</span>
+<span id="cb88-25"><a href="#cb88-25" aria-hidden="true" tabindex="-1"></a>    color<span class="op">=</span><span class="st">&#39;C1&#39;</span>, label<span class="op">=</span><span class="st">&quot;Subtheme model&quot;</span>,</span>
+<span id="cb88-26"><a href="#cb88-26" aria-hidden="true" tabindex="-1"></a>    ax<span class="op">=</span>grid</span>
+<span id="cb88-27"><a href="#cb88-27" aria-hidden="true" tabindex="-1"></a>)<span class="op">;</span></span>
+<span id="cb88-28"><a href="#cb88-28" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb88-29"><a href="#cb88-29" aria-hidden="true" tabindex="-1"></a>grid[<span class="dv">0</span>].set_xlabel(<span class="vs">r&quot;$\beta_0^{\mathrm</span><span class="sc">{theme}</span><span class="vs">}$&quot;</span>,</span>
+<span id="cb88-30"><a href="#cb88-30" aria-hidden="true" tabindex="-1"></a>                   fontsize<span class="op">=</span>LARGE_LABEL_FS)<span class="op">;</span></span>
+<span id="cb88-31"><a href="#cb88-31" aria-hidden="true" tabindex="-1"></a>grid[<span class="dv">0</span>].set_title(<span class="va">None</span>)<span class="op">;</span></span>
+<span id="cb88-32"><a href="#cb88-32" aria-hidden="true" tabindex="-1"></a>grid[<span class="dv">0</span>].get_legend().remove()</span>
+<span id="cb88-33"><a href="#cb88-33" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb88-34"><a href="#cb88-34" aria-hidden="true" tabindex="-1"></a>grid[<span class="dv">1</span>].set_xlabel(<span class="vs">r&quot;$\beta_{\mathrm</span><span class="sc">{pieces}</span><span class="vs">}^{\mathrm</span><span class="sc">{theme}</span><span class="vs">}$&quot;</span>,</span>
+<span id="cb88-35"><a href="#cb88-35" aria-hidden="true" tabindex="-1"></a>                   fontsize<span class="op">=</span>LARGE_LABEL_FS)<span class="op">;</span></span>
+<span id="cb88-36"><a href="#cb88-36" aria-hidden="true" tabindex="-1"></a>grid[<span class="dv">1</span>].set_title(<span class="va">None</span>)<span class="op">;</span></span>
+<span id="cb88-37"><a href="#cb88-37" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb88-38"><a href="#cb88-38" aria-hidden="true" tabindex="-1"></a>plt.gcf().suptitle(<span class="st">&quot;Star Wars&quot;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/ucs_gunship_files/ucs_gunship_119_0.png" title="fig:" alt="png" />
+</center>
+<p>As with the general trend, we see that the posterior distributions for the intercept Star Wars-themed sets are similar for both models, but their slopes are quite different.</p>
+<div class="sourceCode" id="cb89"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb89-1"><a href="#cb89-1" aria-hidden="true" tabindex="-1"></a>UCS <span class="op">=</span> <span class="st">&quot;Ultimate Collector Series&quot;</span></span>
+<span id="cb89-2"><a href="#cb89-2" aria-hidden="true" tabindex="-1"></a>ucs_id <span class="op">=</span> (sub_map <span class="op">==</span> UCS).argmax()</span></code></pre></div>
+<p>We see that the intercept for Ultimate Collector series sets is quite average and the slope for such sets is perhaps slightly positive, but not large.</p>
+<div class="sourceCode" id="cb90"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb90-1"><a href="#cb90-1" aria-hidden="true" tabindex="-1"></a>int_ax, slope_ax <span class="op">=</span> az.plot_posterior(</span>
+<span id="cb90-2"><a href="#cb90-2" aria-hidden="true" tabindex="-1"></a>    sub_trace,</span>
+<span id="cb90-3"><a href="#cb90-3" aria-hidden="true" tabindex="-1"></a>    var_names<span class="op">=</span>[</span>
+<span id="cb90-4"><a href="#cb90-4" aria-hidden="true" tabindex="-1"></a>        <span class="st">&quot;β0_sub_nn&quot;</span>,</span>
+<span id="cb90-5"><a href="#cb90-5" aria-hidden="true" tabindex="-1"></a>        <span class="st">&quot;β_pieces_sub_nn&quot;</span></span>
+<span id="cb90-6"><a href="#cb90-6" aria-hidden="true" tabindex="-1"></a>    ],</span>
+<span id="cb90-7"><a href="#cb90-7" aria-hidden="true" tabindex="-1"></a>    coords<span class="op">=</span>{</span>
+<span id="cb90-8"><a href="#cb90-8" aria-hidden="true" tabindex="-1"></a>        <span class="st">&quot;β0_sub_nn_dim_0&quot;</span>: [ucs_id],</span>
+<span id="cb90-9"><a href="#cb90-9" aria-hidden="true" tabindex="-1"></a>        <span class="st">&quot;β_pieces_sub_nn_dim_0&quot;</span>: [ucs_id]</span>
+<span id="cb90-10"><a href="#cb90-10" aria-hidden="true" tabindex="-1"></a>    },</span>
+<span id="cb90-11"><a href="#cb90-11" aria-hidden="true" tabindex="-1"></a>    ref_val<span class="op">=</span><span class="fl">0.</span></span>
+<span id="cb90-12"><a href="#cb90-12" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb90-13"><a href="#cb90-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb90-14"><a href="#cb90-14" aria-hidden="true" tabindex="-1"></a>int_ax.set_xlabel(<span class="vs">r&quot;$\beta_0^{\mathrm</span><span class="sc">{sub}</span><span class="vs">}$&quot;</span>,</span>
+<span id="cb90-15"><a href="#cb90-15" aria-hidden="true" tabindex="-1"></a>                  fontsize<span class="op">=</span>LARGE_LABEL_FS)<span class="op">;</span></span>
+<span id="cb90-16"><a href="#cb90-16" aria-hidden="true" tabindex="-1"></a>int_ax.set_title(<span class="va">None</span>)<span class="op">;</span></span>
+<span id="cb90-17"><a href="#cb90-17" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb90-18"><a href="#cb90-18" aria-hidden="true" tabindex="-1"></a>slope_ax.set_xlabel(<span class="vs">r&quot;$\beta_{\mathrm</span><span class="sc">{pieces}</span><span class="vs">}^{\mathrm</span><span class="sc">{sub}</span><span class="vs">}$&quot;</span>,</span>
+<span id="cb90-19"><a href="#cb90-19" aria-hidden="true" tabindex="-1"></a>                    fontsize<span class="op">=</span>LARGE_LABEL_FS)<span class="op">;</span></span>
+<span id="cb90-20"><a href="#cb90-20" aria-hidden="true" tabindex="-1"></a>slope_ax.set_title(<span class="va">None</span>)<span class="op">;</span></span>
+<span id="cb90-21"><a href="#cb90-21" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb90-22"><a href="#cb90-22" aria-hidden="true" tabindex="-1"></a>plt.gcf().suptitle(<span class="st">&quot;Ultimate Collector Series&quot;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/ucs_gunship_files/ucs_gunship_123_0.png" title="fig:" alt="png" />
+</center>
+<p>We see that Ultimate Collector series sets are not really set apart by their subtheme intercept or slope, but rather the fact that they have many more pieces than most Star WSars sets (on average).</p>
+<div class="sourceCode" id="cb91"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb91-1"><a href="#cb91-1" aria-hidden="true" tabindex="-1"></a>ax <span class="op">=</span> sns.kdeplot(df[<span class="st">&quot;Pieces&quot;</span>][df[<span class="st">&quot;Theme&quot;</span>] <span class="op">==</span> STAR_WARS],</span>
+<span id="cb91-2"><a href="#cb91-2" aria-hidden="true" tabindex="-1"></a>                 clip<span class="op">=</span>(<span class="fl">0.</span>, np.inf),</span>
+<span id="cb91-3"><a href="#cb91-3" aria-hidden="true" tabindex="-1"></a>                 label<span class="op">=</span><span class="st">&quot;All Star Wars sets&quot;</span>)</span>
+<span id="cb91-4"><a href="#cb91-4" aria-hidden="true" tabindex="-1"></a>sns.kdeplot(df[<span class="st">&quot;Pieces&quot;</span>][df[<span class="st">&quot;Subtheme&quot;</span>] <span class="op">==</span> UCS],</span>
+<span id="cb91-5"><a href="#cb91-5" aria-hidden="true" tabindex="-1"></a>            clip<span class="op">=</span>(<span class="fl">0.</span>, np.inf),</span>
+<span id="cb91-6"><a href="#cb91-6" aria-hidden="true" tabindex="-1"></a>            label<span class="op">=</span><span class="st">&quot;Ultimate Collector Series sets&quot;</span>,</span>
+<span id="cb91-7"><a href="#cb91-7" aria-hidden="true" tabindex="-1"></a>            ax<span class="op">=</span>ax)<span class="op">;</span></span>
+<span id="cb91-8"><a href="#cb91-8" aria-hidden="true" tabindex="-1"></a>sns.rugplot(df[<span class="st">&quot;Pieces&quot;</span>][df[<span class="st">&quot;Subtheme&quot;</span>] <span class="op">==</span> UCS],</span>
+<span id="cb91-9"><a href="#cb91-9" aria-hidden="true" tabindex="-1"></a>            height<span class="op">=</span><span class="fl">0.05</span>, c<span class="op">=</span><span class="st">&#39;C1&#39;</span>, ax<span class="op">=</span>ax)<span class="op">;</span></span>
+<span id="cb91-10"><a href="#cb91-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb91-11"><a href="#cb91-11" aria-hidden="true" tabindex="-1"></a>ax.set_xlim(left<span class="op">=-</span><span class="fl">100.</span>)<span class="op">;</span></span>
+<span id="cb91-12"><a href="#cb91-12" aria-hidden="true" tabindex="-1"></a>ax.set_yticklabels([])<span class="op">;</span></span>
+<span id="cb91-13"><a href="#cb91-13" aria-hidden="true" tabindex="-1"></a>ax.legend()<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/ucs_gunship_files/ucs_gunship_125_0.png" title="fig:" alt="png" />
+</center>
+<p>Finally we examine the posterior predictive distribution of the price of the Ultimate Collector Series Republic Gunship.</p>
+<div class="sourceCode" id="cb92"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb92-1"><a href="#cb92-1" aria-hidden="true" tabindex="-1"></a>GUNSHIP_SET_NUM <span class="op">=</span> <span class="st">&quot;73509&quot;</span></span>
+<span id="cb92-2"><a href="#cb92-2" aria-hidden="true" tabindex="-1"></a>GUNSHIP_PIECES <span class="op">=</span> <span class="dv">3292</span></span>
+<span id="cb92-3"><a href="#cb92-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb92-4"><a href="#cb92-4" aria-hidden="true" tabindex="-1"></a>GUNSHIP_YEAR <span class="op">=</span> <span class="dv">2021</span></span>
+<span id="cb92-5"><a href="#cb92-5" aria-hidden="true" tabindex="-1"></a>gunship_t <span class="op">=</span> <span class="dv">2021</span> <span class="op">-</span> year.<span class="bu">min</span>()</span></code></pre></div>
+<div class="sourceCode" id="cb93"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb93-1"><a href="#cb93-1" aria-hidden="true" tabindex="-1"></a>std_log_pieces_.set_value(scale_log_pieces(np.log([GUNSHIP_PIECES])))</span>
+<span id="cb93-2"><a href="#cb93-2" aria-hidden="true" tabindex="-1"></a>theme_id_.set_value([star_wars_id])</span>
+<span id="cb93-3"><a href="#cb93-3" aria-hidden="true" tabindex="-1"></a>sub_isnull_.set_value([<span class="va">False</span>])</span>
+<span id="cb93-4"><a href="#cb93-4" aria-hidden="true" tabindex="-1"></a>sub_id_.set_value([ucs_id])</span>
+<span id="cb93-5"><a href="#cb93-5" aria-hidden="true" tabindex="-1"></a>t_.set_value([gunship_t])</span></code></pre></div>
+<div class="sourceCode" id="cb94"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb94-1"><a href="#cb94-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> model:</span>
+<span id="cb94-2"><a href="#cb94-2" aria-hidden="true" tabindex="-1"></a>    pp_gunship_data <span class="op">=</span> pm.sample_posterior_predictive(trace)</span></code></pre></div>
+<div>
+<style>
+/* Turns off some styling */
+progress {
+/* gets rid of default border in Firefox and Opera. */
+border: none;
+/* Needs to be in here for Safari polyfill so background images work as expected. */
+background-size: auto;
+}
+.progress-bar-interrupted, .progress-bar-interrupted::-webkit-progress-bar {
+background: #F44336;
+}
+</style>
+<progress value="3000" class max="3000" style="width:300px; height:20px; vertical-align: middle;">
+</progress>
+<p>100.00% [3000/3000 00:00&lt;00:00]</p>
+</div>
+<div class="sourceCode" id="cb95"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb95-1"><a href="#cb95-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> sub_model:</span>
+<span id="cb95-2"><a href="#cb95-2" aria-hidden="true" tabindex="-1"></a>    pp_gunship_sub_data <span class="op">=</span> pm.sample_posterior_predictive(sub_trace)</span></code></pre></div>
+<div>
+<style>
+/* Turns off some styling */
+progress {
+/* gets rid of default border in Firefox and Opera. */
+border: none;
+/* Needs to be in here for Safari polyfill so background images work as expected. */
+background-size: auto;
+}
+.progress-bar-interrupted, .progress-bar-interrupted::-webkit-progress-bar {
+background: #F44336;
+}
+</style>
+<progress value="3000" class max="3000" style="width:300px; height:20px; vertical-align: middle;">
+</progress>
+<p>100.00% [3000/3000 00:00&lt;00:00]</p>
+</div>
+<div class="sourceCode" id="cb96"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb96-1"><a href="#cb96-1" aria-hidden="true" tabindex="-1"></a>GUNSHIP_RRP <span class="op">=</span> <span class="fl">349.99</span></span></code></pre></div>
+<div class="sourceCode" id="cb97"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb97-1"><a href="#cb97-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> format_posterior_artist(artist, formatter):</span>
+<span id="cb97-2"><a href="#cb97-2" aria-hidden="true" tabindex="-1"></a>    text <span class="op">=</span> artist.get_text()</span>
+<span id="cb97-3"><a href="#cb97-3" aria-hidden="true" tabindex="-1"></a>    x, _ <span class="op">=</span> artist.get_position()</span>
+<span id="cb97-4"><a href="#cb97-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb97-5"><a href="#cb97-5" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> text.startswith(<span class="st">&quot; &quot;</span>) <span class="kw">or</span> text.endswith(<span class="st">&quot; &quot;</span>):</span>
+<span id="cb97-6"><a href="#cb97-6" aria-hidden="true" tabindex="-1"></a>        fmtd_text <span class="op">=</span> formatter(x)</span>
+<span id="cb97-7"><a href="#cb97-7" aria-hidden="true" tabindex="-1"></a>        artist.set_text(</span>
+<span id="cb97-8"><a href="#cb97-8" aria-hidden="true" tabindex="-1"></a>            <span class="st">&quot; &quot;</span> <span class="op">+</span> fmtd_text <span class="cf">if</span> text.startswith(<span class="st">&quot; &quot;</span>) <span class="cf">else</span> fmtd_text <span class="op">+</span> <span class="st">&quot; &quot;</span></span>
+<span id="cb97-9"><a href="#cb97-9" aria-hidden="true" tabindex="-1"></a>        )</span>
+<span id="cb97-10"><a href="#cb97-10" aria-hidden="true" tabindex="-1"></a>    <span class="cf">elif</span> <span class="st">&quot;=&quot;</span> <span class="kw">in</span> text:</span>
+<span id="cb97-11"><a href="#cb97-11" aria-hidden="true" tabindex="-1"></a>        before, _ <span class="op">=</span> text.split(<span class="st">&quot;=&quot;</span>)</span>
+<span id="cb97-12"><a href="#cb97-12" aria-hidden="true" tabindex="-1"></a>        artist.set_text(<span class="st">&quot;=&quot;</span>.join((before, formatter(x))))</span>
+<span id="cb97-13"><a href="#cb97-13" aria-hidden="true" tabindex="-1"></a>    <span class="cf">elif</span> <span class="st">&quot;&lt;&quot;</span> <span class="kw">in</span> text:</span>
+<span id="cb97-14"><a href="#cb97-14" aria-hidden="true" tabindex="-1"></a>        below, ref_val_str, above <span class="op">=</span> text.split(<span class="st">&quot;&lt;&quot;</span>)</span>
+<span id="cb97-15"><a href="#cb97-15" aria-hidden="true" tabindex="-1"></a>        artist.set_text(<span class="st">&quot;&lt;&quot;</span>.join((</span>
+<span id="cb97-16"><a href="#cb97-16" aria-hidden="true" tabindex="-1"></a>            below,</span>
+<span id="cb97-17"><a href="#cb97-17" aria-hidden="true" tabindex="-1"></a>            <span class="st">&quot; &quot;</span> <span class="op">+</span> formatter(<span class="bu">float</span>(ref_val_str)) <span class="op">+</span> <span class="st">&quot; &quot;</span>,</span>
+<span id="cb97-18"><a href="#cb97-18" aria-hidden="true" tabindex="-1"></a>            above</span>
+<span id="cb97-19"><a href="#cb97-19" aria-hidden="true" tabindex="-1"></a>        )))</span>
+<span id="cb97-20"><a href="#cb97-20" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb97-21"><a href="#cb97-21" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> format_posterior_text(formatter, ax<span class="op">=</span><span class="va">None</span>):</span>
+<span id="cb97-22"><a href="#cb97-22" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> ax <span class="kw">is</span> <span class="va">None</span>:</span>
+<span id="cb97-23"><a href="#cb97-23" aria-hidden="true" tabindex="-1"></a>        ax <span class="op">=</span> plt.gca()</span>
+<span id="cb97-24"><a href="#cb97-24" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb97-25"><a href="#cb97-25" aria-hidden="true" tabindex="-1"></a>    artists <span class="op">=</span> [artist <span class="cf">for</span> artist <span class="kw">in</span> ax.get_children() <span class="cf">if</span> <span class="bu">isinstance</span>(artist, plt.Text)]</span>
+<span id="cb97-26"><a href="#cb97-26" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb97-27"><a href="#cb97-27" aria-hidden="true" tabindex="-1"></a>    <span class="cf">for</span> artist <span class="kw">in</span> artists:</span>
+<span id="cb97-28"><a href="#cb97-28" aria-hidden="true" tabindex="-1"></a>        format_posterior_artist(artist, formatter),</span></code></pre></div>
+<div class="sourceCode" id="cb98"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb98-1"><a href="#cb98-1" aria-hidden="true" tabindex="-1"></a>fig, (ax, sub_ax) <span class="op">=</span> plt.subplots(</span>
+<span id="cb98-2"><a href="#cb98-2" aria-hidden="true" tabindex="-1"></a>    ncols<span class="op">=</span><span class="dv">2</span>, sharex<span class="op">=</span><span class="va">True</span>, sharey<span class="op">=</span><span class="va">True</span>,</span>
+<span id="cb98-3"><a href="#cb98-3" aria-hidden="true" tabindex="-1"></a>    figsize<span class="op">=</span>(<span class="dv">2</span> <span class="op">*</span> FIGSIZE[<span class="dv">0</span>], FIGSIZE[<span class="dv">1</span>]))</span>
+<span id="cb98-4"><a href="#cb98-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb98-5"><a href="#cb98-5" aria-hidden="true" tabindex="-1"></a>az.plot_posterior(np.exp(pp_gunship_data[<span class="st">&quot;obs&quot;</span>]),</span>
+<span id="cb98-6"><a href="#cb98-6" aria-hidden="true" tabindex="-1"></a>                  ref_val<span class="op">=</span>GUNSHIP_RRP, ax<span class="op">=</span>ax)<span class="op">;</span></span>
+<span id="cb98-7"><a href="#cb98-7" aria-hidden="true" tabindex="-1"></a>format_posterior_text(dollar_formatter, ax<span class="op">=</span>ax)</span>
+<span id="cb98-8"><a href="#cb98-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb98-9"><a href="#cb98-9" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="ss">f&quot;Posterior predicted RRP for </span><span class="sc">{</span>GUNSHIP_SET_NUM<span class="sc">}</span><span class="ch">\n</span><span class="ss">(2021 $)&quot;</span>)<span class="op">;</span></span>
+<span id="cb98-10"><a href="#cb98-10" aria-hidden="true" tabindex="-1"></a>ax.set_title(<span class="st">&quot;Baseline model&quot;</span>)<span class="op">;</span></span>
+<span id="cb98-11"><a href="#cb98-11" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb98-12"><a href="#cb98-12" aria-hidden="true" tabindex="-1"></a>az.plot_posterior(np.exp(pp_gunship_sub_data[<span class="st">&quot;obs&quot;</span>]),</span>
+<span id="cb98-13"><a href="#cb98-13" aria-hidden="true" tabindex="-1"></a>                  ref_val<span class="op">=</span>GUNSHIP_RRP, ax<span class="op">=</span>sub_ax)<span class="op">;</span></span>
+<span id="cb98-14"><a href="#cb98-14" aria-hidden="true" tabindex="-1"></a>format_posterior_text(dollar_formatter, ax<span class="op">=</span>sub_ax)</span>
+<span id="cb98-15"><a href="#cb98-15" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb98-16"><a href="#cb98-16" aria-hidden="true" tabindex="-1"></a>sub_ax.set_xlabel(<span class="ss">f&quot;Posterior predicted RRP for </span><span class="sc">{</span>GUNSHIP_SET_NUM<span class="sc">}</span><span class="ch">\n</span><span class="ss">(2021 $)&quot;</span>)<span class="op">;</span></span>
+<span id="cb98-17"><a href="#cb98-17" aria-hidden="true" tabindex="-1"></a>sub_ax.set_title(<span class="st">&quot;Subtheme model&quot;</span>)<span class="op">;</span></span>
+<span id="cb98-18"><a href="#cb98-18" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb98-19"><a href="#cb98-19" aria-hidden="true" tabindex="-1"></a>fig.tight_layout()<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/ucs_gunship_files/ucs_gunship_133_0.png" title="fig:" alt="png" />
+</center>
+<p>The plot on the left shows that the baseline model considers the Ultimate Collector Series Republic Gunship slightly overpriced, while the plot on the right shows that the subtheme model considers it slightly underpriced. Since these deviations from the posterior expected value are small in either case, it is safe to say that both of these models consider the Ultimate Collector Series Republic Gunship to be priced in line with Lego’s historic prices. (I’ll be ordering it come August 1.)</p>
+<p>This post is available as a Jupyter notebook <a href="https://nbviewer.jupyter.org/gist/AustinRochford/f590045a086ee61ea94e7f2ca20d3991">here</a>.</p>
+<div class="sourceCode" id="cb99"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb99-1"><a href="#cb99-1" aria-hidden="true" tabindex="-1"></a><span class="op">%</span>load_ext watermark</span>
+<span id="cb99-2"><a href="#cb99-2" aria-hidden="true" tabindex="-1"></a><span class="op">%</span>watermark <span class="op">-</span>n <span class="op">-</span>u <span class="op">-</span>v <span class="op">-</span>iv</span></code></pre></div>
+<pre><code>Last updated: Tue Jul 20 2021
+
+Python implementation: CPython
+Python version       : 3.7.10
+IPython version      : 7.24.1
+
+aesara    : 2.0.12
+seaborn   : 0.11.1
+numpy     : 1.19.5
+pymc3     : 4.0
+matplotlib: 3.4.2
+arviz     : 0.11.2
+pandas    : 1.2.4</code></pre>
+<section class="footnotes" role="doc-endnotes">
+<hr />
+<ol>
+<li id="fn1" role="doc-endnote"><p>Vehtari, A., Gelman, A., &amp; Gabry, J. (2017). <a href="https://arxiv.org/abs/1507.04544">Practical Bayesian model evaluation using leave-one-out cross-validation and WAIC.</a> <em>Statistics and computing</em>, 27(5), 1413-1432.<a href="#fnref1" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+</ol>
+</section>

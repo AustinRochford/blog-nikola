@@ -1,0 +1,63 @@
+<meta name="title" content="Euler's Formula in sympy" />
+<meta name="tags" content="Math, Python" />
+<meta name="date" content="2014-02-05" />
+<meta name="has_math" content="true" /><p>Euler’s formula,</p>
+<p><span class="math display">\[e^{i \theta} = \cos \theta + i \sin \theta,\]</span></p>
+<p>is both a beautiful and eminently useful result about the complex numbers. It leads directly to the more widely known Euler’s identity,</p>
+<p><span class="math display">\[e^{i \pi} + 1 = 0,\]</span></p>
+<p>which shows a somewhat suprising connection between five of the most significant numbers in mathematics. There are many proofs of Euler’s formula, but as someone who has taught Calculus II for many years, the proof using Taylor series is rather close to my heart. In this post, we’ll explore this proof using <code>sympy</code>, a Python library for symbolic mathematics, in order to avoid using calculus ourselves.</p>
+<p>The basic idea of Taylor series is that many (though not all) functions on the real line may be represented by polynomials of infinite degree. The most well- known example of a Taylor series is the sum the geometric series,</p>
+<p><span class="math display">\[\frac{1}{1 - x} = 1 + x + x^2 + x^3 + x^4 + x^5 + \cdots\]</span></p>
+<p>for <span class="math inline">\(|x| &lt; 1\)</span>.</p>
+<p>We can illustrate this sum in <code>sympy</code> as follows.</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> sympy.interactive <span class="im">import</span> printing</span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>printing.init_printing()</span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> sympy <span class="im">as</span> sym</span></code></pre></div>
+<div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>x <span class="op">=</span> sym.Symbol(<span class="st">&#39;x&#39;</span>)</span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>sym.series(<span class="dv">1</span> <span class="op">/</span> (<span class="dv">1</span> <span class="op">-</span> x))</span></code></pre></div>
+<p><span class="math display">\[1 + x + x^{2} + x^{3} + x^{4} + x^{5} + \mathcal{O}\left(x^{6}\right)\]</span></p>
+<p>The term</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>sym.Order(x<span class="op">**</span><span class="dv">6</span>)</span></code></pre></div>
+<p><span class="math display">\[\mathcal{O}\left(x^{6}\right)\]</span></p>
+<p>here indicates that all of the omitted terms have degree greater than or equal to six. Naturally, <code>sympy</code> can only ever calculate finitely many terms of a functions Taylor series. (We’ll discuss the impact of this limitation on our “proof” later.) We may control the number of terms of the Taylor series calculated by <code>sympy</code> by passing the optional argument <code>n</code> to <code>sympy.series</code>. For example, we may calculate the first ten terms of the geometric series as follows.</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>sym.series(<span class="dv">1</span> <span class="op">/</span> (<span class="dv">1</span> <span class="op">-</span> x), n<span class="op">=</span><span class="dv">10</span>)</span></code></pre></div>
+<p><span class="math display">\[1 + x + x^{2} + x^{3} + x^{4} + x^{5} + x^{6} + x^{7} + x^{8} + x^{9} + \mathcal{O}\left(x^{10}\right)\]</span></p>
+<p>We now turn our attentation to Euler’s formula by first defining the variable <code>theta</code>.</p>
+<div class="sourceCode" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>theta <span class="op">=</span> sym.Symbol(<span class="st">&#39;</span><span class="ch">\\</span><span class="st">theta&#39;</span>, real<span class="op">=</span><span class="va">True</span>)</span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>theta</span></code></pre></div>
+<p><span class="math display">\[\theta\]</span></p>
+<p>We also define functions to calculate the Taylor series of <span class="math inline">\(\sin \theta\)</span> and <span class="math inline">\(\cos \theta\)</span> for any degree <span class="math inline">\(n\)</span>.</p>
+<div class="sourceCode" id="cb6"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> sin_series(n):</span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> sym.series(sym.sin(theta), n<span class="op">=</span>n)</span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> cos_series(n):</span>
+<span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> sym.series(sym.cos(theta), n<span class="op">=</span>n)</span></code></pre></div>
+<p>The first few terms for the series of <span class="math inline">\(\sin \theta\)</span> are</p>
+<div class="sourceCode" id="cb7"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a>n <span class="op">=</span> <span class="dv">10</span></span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a>sin_series(n)</span></code></pre></div>
+<p><span class="math display">\[\theta - \frac{\theta^{3}}{6} + \frac{\theta^{5}}{120} - \frac{\theta^{7}}{5040} + \frac{\theta^{9}}{362880} + \mathcal{O}\left(\theta^{10}\right)\]</span></p>
+<p>and the first few for <span class="math inline">\(\cos \theta\)</span> are</p>
+<div class="sourceCode" id="cb8"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>cos_series(n)</span></code></pre></div>
+<p><span class="math display">\[1 - \frac{\theta^{2}}{2} + \frac{\theta^{4}}{24} - \frac{\theta^{6}}{720} + \frac{\theta^{8}}{40320} + \mathcal{O}\left(\theta^{10}\right)\]</span></p>
+<p>Let’s compare these two series to that for <span class="math inline">\(e^{i \theta}\)</span>.</p>
+<div class="sourceCode" id="cb9"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> exp_series(n):</span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> sym.series(sym.exp(sym.I <span class="op">*</span> theta), n<span class="op">=</span>n)</span>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a>exp_series(n)</span></code></pre></div>
+<p><span class="math display">\[1 + i \theta - \frac{\theta^{2}}{2} - \frac{i \theta^{3}}{6} + \frac{\theta^{4}}{24} + \frac{i \theta^{5}}{120} - \frac{\theta^{6}}{720} - \frac{i \theta^{7}}{5040} + \frac{\theta^{8}}{40320} + \frac{i \theta^{9}}{362880} + \mathcal{O}\left(\theta^{10}\right)\]</span></p>
+<p>The key idea behind this proof of Euler’s formula is that the terms of this sum containing <span class="math inline">\(i\)</span> are identical (apart form the <span class="math inline">\(i\)</span>) to the terms of the Taylor series for <span class="math inline">\(\sin \theta\)</span>. Similary, the terms not containing <span class="math inline">\(i\)</span> are identical to the terms from the Taylor series of <span class="math inline">\(\cos \theta\)</span>.</p>
+<p>We can see this more clearly by asking <code>sympy</code> to collect the terms containing <span class="math inline">\(i\)</span>.</p>
+<div class="sourceCode" id="cb10"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a>sym.collect(exp_series(n), sym.I)</span></code></pre></div>
+<p><span class="math display">\[1 + i \left(\theta - \frac{\theta^{3}}{6} + \frac{\theta^{5}}{120} - \frac{\theta^{7}}{5040} + \frac{\theta^{9}}{362880} + \mathcal{O}\left(\theta^{10}\right)\right) - \frac{\theta^{2}}{2} + \frac{\theta^{4}}{24} - \frac{\theta^{6}}{720} + \frac{\theta^{8}}{40320} + \mathcal{O}\left(\theta^{10}\right)\]</span></p>
+<p>Odd placement of the leading one aside, we immediately recognize this expression as <span class="math inline">\(\sin \theta + i \cos \theta\)</span>.</p>
+<p>In addition to this visual inspection, <code>sympy</code> makes it fairly easy to verify that the Taylor series agree to a fairly large number of terms.</p>
+<div class="sourceCode" id="cb11"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a>N <span class="op">=</span> <span class="dv">100</span></span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a>sym.simplify(exp_series(N) <span class="op">-</span> (cos_series(N) <span class="op">+</span> sym.I <span class="op">*</span> sin_series(N)))</span></code></pre></div>
+<p><span class="math display">\[\mathcal{O}\left(\theta^{100}\right)\]</span></p>
+<p>So we see a bit more formally that Euler’s formula is quite likely to be true. The weasel work “likely” is necessary here because we really only checked that finitely many terms of the infinite Taylor series for <span class="math inline">\(e^{i \theta}\)</span> and <span class="math inline">\(\cos \theta + i \sin \theta\)</span> agree. Fortunately, armed with a bit of calculus knowledge, a pen, and some paper, we could verify by hand that all of the terms coincide, if we were so inclided.</p>
+<p>Discussion on <a href="https://news.ycombinator.com/item?id=7186878">Hacker News</a></p>

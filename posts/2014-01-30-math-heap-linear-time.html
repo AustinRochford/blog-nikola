@@ -1,0 +1,69 @@
+<meta name="title" content="The Mathematics of Building a Heap in Linear Time" />
+<meta name="tags" content="Math, Series, Data Structures" />
+<meta name="date" content="2014-01-30" />
+<meta name="has_math" content="true" /><p>A few days ago, the <a href="http://www.johndcook.com/">John D. Cook’s</a> excellent <span class="citation" data-cites="CompSciFact">[@CompSciFact]</span>(https://twitter.com/CompSciFact) put the following tweet in my Twitter feed.</p>
+<center>
+<blockquote class="twitter-tweet" lang="en">
+<p>
+Building a heap requires O(n) operations.
+</p>
+— Computer Science (<span class="citation" data-cites="CompSciFact">@CompSciFact</span>) <a href="https://twitter.com/CompSciFact/statuses/425670688327102464">January 21, 2014</a>
+</blockquote>
+</center>
+<p>This is one of my favorite data structure facts, which at first appears quite surprising, but after a bit of thought seems quite reasonable. The naive approach to building a binary heap from a list of elements, inserting each element and reheaping every time requires <span class="math inline">\(O(n \log n)\)</span> time. With this complexity, we may as well just sort the list. Fortunately, as per the tweet, an <span class="math inline">\(O(n)\)</span> algorithm for contructing the heap exists.</p>
+<p>This post won’t discuss the algorithm directly (<a href="http://en.wikipedia.org/wiki/Binary_heap#Building_a_heap">Wikipedia</a> does a fairly good job). Rather, we’ll explore see how to evaluate the series <span class="math display">\[
+\begin{align*}
+\sum_{k = 1}^\infty \frac{k}{2^k},
+\end{align*}
+\]</span> which appears in the proof that the algorithm has linear time complexity (again, consult Wikipedia for details). We evaluate these series by clever reindexing.</p>
+<p>The first step rather innocently factors out a factor of <span class="math inline">\(\frac{1}{2}\)</span> as follows:</p>
+<p><span class="math display">\[
+\begin{align*}
+\sum_{k = 1}^\infty \frac{k}{2^k}
+    &amp; = \frac{1}{2} \sum_{k = 1}^\infty \frac{k}{2^{k - 1}}
+\end{align*}
+\]</span></p>
+<p>We then reindex the right hand sum, so that <span class="math display">\[
+\begin{align*}
+\sum_{k = 1}^\infty \frac{k}{2^k}
+    &amp; = \frac{1}{2} \sum_{k = 1}^\infty \frac{k}{2^{k - 1}}
+      = \frac{1}{2} \sum_{k = 0}^\infty \frac{k + 1}{2^k}
+      = \frac{1}{2} \left( \sum_{k = 0}^\infty \frac{k}{2^k} + \sum_{k = 0}^\infty \frac{1}{2^k} \right).
+\end{align*}
+\]</span></p>
+<p>When <span class="math inline">\(k = 0\)</span>,</p>
+<p><span class="math display">\[
+\begin{align*}
+\frac{k}{2^k}
+    &amp; = \frac{0}{2^0}
+      = \frac{0}{1}
+      = 0,
+\end{align*}
+\]</span></p>
+<p>so the first <span class="math inline">\(k = 0\)</span> term of the series is zero, and</p>
+<p><span class="math display">\[
+\begin{align*}
+    \sum_{k = 0}^\infty \frac{k}{2^k}
+    &amp; = \sum_{k = 1}^\infty \frac{k}{2^k}.
+\end{align*}
+\]</span></p>
+<p>Therefore, after reindexing, we get that</p>
+<p><span class="math display">\[
+\begin{align*}
+\sum_{k = 1}^\infty \frac{k}{2^k}
+    &amp; = \frac{1}{2} \sum_{k = 1}^\infty \frac{k}{2^{k - 1}}
+      = \frac{1}{2} \sum_{k = 0}^\infty \frac{k + 1}{2^k}
+      = \frac{1}{2} \left( \sum_{k = 1}^\infty \frac{k}{2^k} + \sum_{k = 0}^\infty \frac{1}{2^k} \right).
+\end{align*}
+\]</span></p>
+<p>solving for the series in question, we get that</p>
+<p><span class="math display">\[
+\begin{align*}
+    \sum_{k = 1}^\infty \frac{k}{2^k}
+        &amp; = 2 \sum_{k = 0}^\infty \frac{1}{2^k}
+          = 2
+\end{align*}
+\]</span></p>
+<p>by the formula for summing a <a href="http://en.wikipedia.org/wiki/Geometric_series#Formula">geometric series</a>.</p>
+<p>Discussion on <a href="https://news.ycombinator.com/item?id=7157009">Hacker News</a></p>
+<script async src="//platform.twitter.com/widgets.js" charset="utf-8"></script>

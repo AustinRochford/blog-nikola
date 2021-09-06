@@ -1,0 +1,132 @@
+<meta name="title" content="Stein's Paradox and Empirical Bayes" />
+<meta name="tags" content="Paradox, Decision Theory, Bayesian Statistics, Examples" />
+<meta name="date" content="2013-11-30" />
+<meta name="has_math" content="true" /><p>In mathematical statistics, <a href="http://en.wikipedia.org/wiki/Stein%27s_example">Stein’s paradox</a> is an important example that shows that an intuitive estimator which is optimal in many senses (<a href="http://en.wikipedia.org/wiki/Maximum_likelihood_estimation">maximum likelihood</a>, <a href="http://en.wikipedia.org/wiki/Minimum-variance_unbiased_estimator">uniform minimum-variance unbiasedness</a>, <a href="http://en.wikipedia.org/wiki/Gauss%E2%80%93Markov_theorem">best linear unbiasedness</a>, etc.) is not optimal in the most formal, decision-theoretic sense.</p>
+<p>This paradox is typically presented from the perspective of frequentist statistics, and this is the perspective from which we present our initial analysis. After the initial discussion, we also present an <a href="http://en.wikipedia.org/wiki/Empirical_Bayes_method">empirical Bayesian</a> derivation of this estimator. This derivation larely explains the odd form of the estimator and justifies the phenomenon of <a href="http://en.wikipedia.org/wiki/Shrinkage_estimator">shrinkage estimators</a>, which, at least to me, have always seemed awkward to justify from the frequentist perpsective. I find the Bayesian perspective on this paradox quite compelling.</p>
+<h4 id="a-crash-course-in-decision-theory">A Crash Course in Decision Theory</h4>
+<p>At its most basic level, <a href="http://en.wikipedia.org/wiki/Statistical_decision_theory">statistical decision theory</a> is concerned with quantifying and comparing the effectiveness of various estimators, hypothesis tests, etc. A central concept in this theory is that of a <a href="http://en.wikipedia.org/wiki/Risk_function">risk function</a>, which is the expected value of the estimator’s error (<a href="http://en.wikipedia.org/wiki/Loss_function">the loss function</a>). The problem of measuring error appropriately (that is, the choice of an appropriate loss function) is both subtle and deep. In this post, we will only consider the most popular choice, <a href="http://en.wikipedia.org/wiki/Mean_squared_error">mean squared error</a>,</p>
+<p><span class="math display">\[
+\begin{align*}
+MSE(\theta, \hat{\theta})
+    &amp; = E_\theta \|\theta - \hat{\theta} \|^2.
+\end{align*}
+\]</span></p>
+<p>Here <span class="math inline">\(\theta\)</span> is the parameter we are estimating by <span class="math inline">\(\hat{\theta}\)</span>, and <span class="math inline">\(\| \cdot \|\)</span> is the Euclidean norm,</p>
+<p><span class="math display">\[
+\begin{align*}
+\|\vec{x}\|
+    &amp; = \sqrt{x_1^2 + \cdots + x_n^2},
+\end{align*}
+\]</span></p>
+<p>for <span class="math inline">\(\vec{x} = (x_1, \ldots x_n)\)</span>. Mean squared error is the most widely used risk function because of its simple geometric interpretation and <a href="http://en.wikipedia.org/wiki/Bias_of_an_estimator#Bias.2C_variance_and_mean_squared_error">convenient algebraic properties</a>.</p>
+<p>While a choice of risk function quantifies the average error of a given estimator, the concept of <a href="http://en.wikipedia.org/wiki/Admissible_decision_rule">admissibility</a> provides one framework for comparing different estimators of the same quantity. If <span class="math inline">\(\Theta\)</span> is the parameter space, we say that the estimator <span class="math inline">\(\hat{\theta}\)</span> dominates the estimator <span class="math inline">\(\hat{\eta}\)</span> if</p>
+<p><span class="math display">\[
+\begin{align*}
+MSE(\theta, \hat{\theta})
+    &amp; \leq MSE(\theta, \hat{\eta})
+\end{align*}
+\]</span></p>
+<p>for all <span class="math inline">\(\theta \in \Theta\)</span>, and</p>
+<p><span class="math display">\[
+\begin{align*}
+MSE(\theta_0, \hat{\theta})
+    &amp; &lt; MSE(\theta_0, \hat{\eta})
+\end{align*}
+\]</span></p>
+<p>for some <span class="math inline">\(\theta_0 \in \Theta\)</span>. An estimator is admissible if it is not dominated by any other estimator.</p>
+<p>While this definition may feel a bit awkard at first, consider the following example. Suppose that there are only three estimators of <span class="math inline">\(\theta\)</span>, and their mean squared errors are plotted below.</p>
+<center>
+<img src="/resources/stein/mses.png" />
+</center>
+<p>In this diagram, the red estimator dominates both of the other estimators and is admissible.</p>
+<h4 id="the-james-stein-estimator">The James-Stein Estimator</h4>
+<p>The <a href="http://en.wikipedia.org/wiki/James%E2%80%93Stein_estimator">James-Stein estimator</a> seeks to estimate the mean, <span class="math inline">\(\theta\)</span> of a <a href="http://en.wikipedia.org/wiki/Multivariate_normal_distribution">multivariate normal distribution</a>, <span class="math inline">\(N(\theta, \sigma^2 I)\)</span>. Here <span class="math inline">\(I\)</span> is the <span class="math inline">\(d \times d\)</span> identity matrix, <span class="math inline">\(\theta\)</span> is an <span class="math inline">\(d\)</span>-dimensional vector, and <span class="math inline">\(\sigma^2\)</span> is the known common variance of each component.</p>
+<p>If <span class="math inline">\(X_1 \ldots X_n \sim N(\theta, \sigma^2 I_d)\)</span>, the obvious estimator of <span class="math inline">\(\theta\)</span> is the sample mean, <span class="math inline">\(\bar{X} = \frac{1}{n} \sum_{i = 1}^n X_i\)</span>. This estimator has many nice properties: it is the <a href="http://en.wikipedia.org/wiki/Maximum_likelihood_estimation">maximum likelihood estimator</a> of <span class="math inline">\(\theta\)</span>, it is the <a href="http://en.wikipedia.org/wiki/Minimum-variance_unbiased_estimator">uniformly minimum-variance unbiased estimator</a> of <span class="math inline">\(\theta\)</span>, it is the <a href="http://en.wikipedia.org/wiki/Gauss%E2%80%93Markov_theorem">best linear unbiased estimator</a> of <span class="math inline">\(\theta\)</span>, it is an <a href="http://en.wikipedia.org/wiki/Efficient_estimator">efficient estimator</a> of <span class="math inline">\(\theta\)</span>. The James-Stein estimator, however, will show that desipte all of these useful properties, when <span class="math inline">\(d \geq 3\)</span>, the sample mean is an inadmissible estimator of <span class="math inline">\(\theta\)</span>.</p>
+<p>The <a href="http://en.wikipedia.org/wiki/James%E2%80%93Stein_estimator">James-Stein estimator</a> of <span class="math inline">\(\theta\)</span> for the same observations is defined as</p>
+<p><span class="math display">\[
+\begin{align*}
+\hat{\theta}_{JS}
+    &amp; = \left( 1 - \frac{(d - 2) \sigma^2}{n \|\bar{X}\|^2} \right) \bar{X}.
+\end{align*}
+\]</span></p>
+<p>While the definition of this estimator appears quite strange, it essentially operates by shrinking the sample mean towards zero. The qualifier “essentially” is necessary here, because it is possible, when <span class="math inline">\(n \| \bar{X} \|^2\)</span> is small relative to <span class="math inline">\((d - 2) \sigma^2\)</span>, that the coefficient on <span class="math inline">\(\bar{X}\)</span> may be smaller than <span class="math inline">\(-1\)</span>. At the end of our discussion, we will exploit this caveat to show that the James-Stein estimator itself is inadmissible.</p>
+<p>We will now prove that the sample mean is inadmissible by calculating the mean squared error of each of these estimators. Using the <a href="http://en.wikipedia.org/wiki/Bias_of_an_estimator#Bias.2C_variance_and_mean_squared_error">bias-variance decomposition</a>, we may write the mean squared error of an estimator as</p>
+<p><span class="math display">\[
+\begin{align*}
+MSE(\theta, \hat{\theta})
+    &amp; = \| E_\theta (\hat{\theta}) - \theta \|^2 + tr(Var(\hat{\theta})).
+\end{align*}
+\]</span></p>
+<p>We first work with the sample mean. Since this estimator is unbiased, the first term in the decomposition vanishes. It is <a href="http://en.wikipedia.org/wiki/Multivariate_normal_distribution#Affine_transformation">well known</a> that <span class="math inline">\(\bar{X} \sim N(\theta, \frac{\sigma^2}{n} I)\)</span>. Therefore, the mean squared error for the sample mean is</p>
+<p><span class="math display">\[
+\begin{align*}
+MSE(\theta, \bar{X})
+    &amp; = \frac{d \sigma^2}{n}.
+\end{align*}
+\]</span></p>
+<p>The mean squared error of the James-Stein estimator is given by</p>
+<p><span class="math display">\[
+\begin{align*}
+MSE(\theta, \hat{\theta}_{JS})
+    &amp; = \frac{d \sigma^2}{n} - \frac{(d - 2)^2 \sigma^4}{n^2} E_\theta \left( \frac{1}{\| \bar{X} \|^2} \right).
+\end{align*}
+\]</span></p>
+<p>Unfortunately, the derivation of this expression is too involved to reproduce here. For details of this derivation, consult Lehmann and Casella<a href="#fn1" class="footnote-ref" id="fnref1" role="doc-noteref"><sup>1</sup></a>.</p>
+<p>We see immediately that the first term of this expression is the mean squared error of the sample mean. Therefore, as long as <span class="math inline">\(E_\theta (\| \bar{X} \|^{-2})\)</span> is finite, the James-Stein estimator will dominate the sample mean. Note that since <span class="math inline">\(\theta = 0\)</span> will lead to the smallest sample mean on average, <span class="math inline">\(E_\theta (\| \bar{X} \|^{-2}) \leq E_0 (\| \bar{X} \|^{-2})\)</span>. When <span class="math inline">\(\theta = 0\)</span>, <span class="math inline">\(\| \bar{X} \|^{-2}\)</span> has an <a href="http://en.wikipedia.org/wiki/Inverse-chi-squared_distribution">inverse chi-squared distribution</a> with <span class="math inline">\(d\)</span> degrees of freedom. The mean of an inverse chi-squared random variable is finite if and only if there are at least three degrees of freedom, so we see that for <span class="math inline">\(d \geq 3\)</span>,</p>
+<p><span class="math display">\[
+\begin{align*}
+MSE(\theta, \hat{\theta}_{JS})
+    &amp; \leq \frac{d \sigma^2}{n} - \frac{(d - 2)^2 \sigma^4}{n^2} E_0 \left( \frac{1}{\| \bar{X} \|^2} \right)   \\
+    &amp; = \frac{d \sigma^2}{n} - \frac{(d - 2)^2 \sigma^4}{n^2} \left( \frac{1}{d - 2} \right)    \\
+    &amp; = \frac{d \sigma^2}{n} - \frac{(d - 2) \sigma^4}{n^2},
+\end{align*}
+\]</span></p>
+<p>so the James-Stein estimator dominates the sample mean, and the sample mean is therefore inadmissible.</p>
+<p>The natural question now is whether or not the James-Stein estimator is admissible; it is not. As we previously observed, when <span class="math inline">\(\| \bar{X} \|\)</span> is small enough, the coefficient in the James-Stein estimator may be smaller than <span class="math inline">\(-1\)</span>, and, in this case, it is not shrinking <span class="math inline">\(\bar{X}\)</span> towards zero. We may remedy this problem by defining a modified James-Stein estimator,</p>
+<p><span class="math display">\[
+\begin{align*}
+\hat{\theta}_{JS&#39;}
+    &amp; = \operatorname{max} \left\{ 0, 1 - \frac{(d - 2) \sigma^2}{n \|\bar{X}\|^2} \right\} \cdot \bar{X}.
+\end{align*}
+\]</span></p>
+<p>It can be shown that this estimator has smaller mean squared error than the James-Stein estimator. This modification amounts to estimating the mean as zero when <span class="math inline">\(\| \bar{X} \|\)</span> is small enough to cause a negative coefficient, which is reminiscent of <a href="http://en.wikipedia.org/wiki/Hodges%E2%80%99_estimator">Hodge’s estimator</a>. This modified James-Stein estimator is also not admissible, but we will not discuss why here.</p>
+<h4 id="empirical-bayes-and-the-james-stein-estimator">Empirical Bayes and the James-Stein Estimator</h4>
+<p>The benefits of shrinkage are an interesting topic, but not immediately obvious. To me, the derivation of the James-Stein estimator using the <a href="http://en.wikipedia.org/wiki/Empirical_Bayes_method">empirical Bayes method</a> illuminates this topic nicely and relates it to a fundamental tenet of Bayesian statistics.</p>
+<p>As before, we are attempting to estimate the mean of the distribution <span class="math inline">\(N(\theta, \sigma^2 I)\)</span> with known variance <span class="math inline">\(\sigma^2\)</span> from samples <span class="math inline">\(X_1, \ldots, X_n\)</span>. To do so, we place a <span class="math inline">\(N(0, \tau^2 I)\)</span> prior distribution on <span class="math inline">\(\theta\)</span>. Combining these prior and sampling distributions gives the posterior distribution</p>
+<p><span class="math display">\[
+\begin{align*}
+\theta | X_1, \ldots, X_n
+    &amp; \sim N \left( \frac{\tau^2}{\frac{\sigma^2}{n} + \tau^2} \cdot \bar{X}, \left(\frac{1}{\tau^2} + \frac{n}{\sigma^2}\right)^{-1} \right)
+\end{align*}
+\]</span></p>
+<p>So the <a href="http://en.wikipedia.org/wiki/Bayes_estimator">Bayes estimator</a> of <span class="math inline">\(\theta\)</span> is</p>
+<p><span class="math display">\[
+\begin{align*}
+\hat{\theta}_{Bayes}
+    &amp; = E(\theta | X_1, \ldots, X_n)
+      = \frac{\tau^2}{\frac{\sigma^2}{n} + \tau^2} \cdot \bar{X}.
+\end{align*}
+\]</span></p>
+<p>The value of <span class="math inline">\(\sigma^2\)</span> is known, but, in general, we do not know the value of <span class="math inline">\(\tau^2\)</span>. We will now estimate <span class="math inline">\(\tau^2\)</span> from the data <span class="math inline">\(X_1, \ldots, X_n\)</span>. This estimation of the hyperparameter <span class="math inline">\(\tau^2\)</span> from the data is what causes this approach to be empirical Bayesian, and not fully Bayesian. The difference between the fully Bayesian and empirical Bayesian approach is interesting both philosophically and decision-theoretically. Its practicality here is that it often allows us to more easily produce estimators that approximate fully Bayesian estimators with similar (though slightly worse) properties.</p>
+<p>There are many ways to approach this problem within the empirical Bayes framework. The James-Stein estimator arises from this situation when we find an unbiased estimator of the coefficient in the definition of <span class="math inline">\(\hat{\theta}_{Bayes}\)</span>. First, we note that the marginal distribution of <span class="math inline">\(\bar{X}\)</span> is <span class="math inline">\(N(0, (\frac{\sigma^2}{n} + \tau^2) I)\)</span>. We can use this fact to show that</p>
+<p><span class="math display">\[
+\begin{align*}
+\frac{\frac{\sigma^2}{n} + \tau^2}{\| \bar{X} \|^2}
+    &amp; \sim \textrm{Inv-}\chi^2 (d).
+\end{align*}
+\]</span></p>
+<p>Since the mean of an inverse chi-squared distributed random variables with <span class="math inline">\(d \geq 3\)</span> degrees of freedom is <span class="math inline">\(\frac{1}{d - 2}\)</span>, we get that</p>
+<p><span class="math display">\[
+\begin{align*}
+E \left(1 - \frac{(d - 2) \sigma^2}{n \| \bar{X} \|^2}\right)
+    &amp; = \frac{\tau^2}{\frac{\sigma^2}{n} + \tau^2}.
+\end{align*}
+\]</span></p>
+<p>We therefore see that the empirical Bayes method, combined with unbiased estimation yields the James-Stein estimator.</p>
+<p>To me, this derivation more clearly explains the phenomenon of shrinkage. Bayes estimators may often be seen as a weighted sum of the prior information, in this case, that the mean was likely to be close to zero, and the evidence, the observed values of <span class="math inline">\(X\)</span>. In this context, it makes much more sense that an estimator which shrinks its estimate toward zero seem well-justified.</p>
+<section class="footnotes" role="doc-endnotes">
+<hr />
+<ol>
+<li id="fn1" role="doc-endnote"><p>Lehmann, E. L.; Casella, G. (1998), <em>Theory of Point Estimation</em> (2nd ed.), Springer<a href="#fnref1" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+</ol>
+</section>

@@ -1,0 +1,1820 @@
+<meta name="title" content="NBA Foul Calls and Bayesian Item Response Theory" />
+<meta name="tags" content="NBA, Bayesian Statistics, PyMC3" />
+<meta name="date" content="2017-04-04" />
+<meta name="has_math" content="true" /><style>
+.dataframe * {border-color: #c0c0c0 !important;}
+.dataframe th{background: #eee;}
+.dataframe td{
+    background: #fff;
+    text-align: right; 
+    min-width:5em;
+}
+
+/* Format summary rows */
+.dataframe-summary-row tr:last-child,
+.dataframe-summary-col td:last-child{
+background: #eee;
+    font-weight: 500;
+}
+</style>
+<p>An improved version of this analysis is available <a href="/posts/2018-02-04-nba-irt-2.html">here</a>.</p>
+<p>(<strong>Author’s note</strong>: many thanks to Robert (<span class="citation" data-cites="atlhawksfanatic">[@atlhawksfanatic]</span>(https://twitter.com/atlhawksfanatic) on Twitter) for pointing out <a href="https://twitter.com/atlhawksfanatic/status/849685639796850689">some</a> <a href="https://twitter.com/atlhawksfanatic/status/849686015753302021">subtleties</a> in the data set that I had missed. This post has been revised in line with his feedback. Robert has a very interesting <a href="http://www.peachtreehoops.com/2017/2/17/14638288/nba-last-two-minute-reports-changing">post</a> about how last two minute refereeing has changed over the last three years; I highly recommend you read it.)</p>
+<p>I recently found a very interesting <a href="https://github.com/polygraph-cool/last-two-minute-report">data set</a> derived from the NBA’s <a href="http://official.nba.com/nba-last-two-minute-reports-archive/">Last Two Minute Report</a> by <a href="http://russellgoldenberg.com/">Russell Goldenberg</a> of <a href="https://pudding.cool/">The Pudding</a>. Since 2015, the NBA has released a report reviewing every call and non-call in the final two minutes of every NBA game where the teams were separated by five points or less with two minutes remaining. This data set has extracted each play from the NBA-distributed PDF and augmented it with information from <a href="https://basketball-reference.com/">Basketball Reference</a> to produce a convenient CSV. The Pudding has published two <a href="https://pudding.cool/2017/02/two-minute-report/">very</a> <a href="https://pudding.cool/2017/03/home-court/">interesting</a> visual essays using this data that you should definitely explore.</p>
+<p>The NBA is certainly marketed as a star-centric league, so this data set presents a fantastic opportunity to understand the extent to which the players involved in a decision impact whether or not a foul is called. We will also explore other factors related to foul calls.</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="op">%</span>matplotlib inline</span></code></pre></div>
+<div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> datetime</span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> warnings <span class="im">import</span> filterwarnings</span></code></pre></div>
+<div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> matplotlib <span class="im">import</span> pyplot <span class="im">as</span> plt</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> matplotlib.ticker <span class="im">import</span> FuncFormatter</span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> numpy <span class="im">as</span> np</span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> pandas <span class="im">as</span> pd</span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> pymc3 <span class="im">as</span> pm</span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> scipy.special <span class="im">import</span> expit</span>
+<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> seaborn <span class="im">as</span> sns</span></code></pre></div>
+<div class="sourceCode" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>blue, green, red, purple, gold, teal <span class="op">=</span> sns.color_palette()</span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>million_dollars_formatter <span class="op">=</span> FuncFormatter(<span class="kw">lambda</span> value, _: <span class="st">&#39;$</span><span class="sc">{:.1f}</span><span class="st">M&#39;</span>.<span class="bu">format</span>(value <span class="op">/</span> <span class="fl">1e6</span>))</span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>pct_formatter <span class="op">=</span> FuncFormatter(<span class="kw">lambda</span> prop, _: <span class="st">&quot;</span><span class="sc">{:.1%}</span><span class="st">&quot;</span>.<span class="bu">format</span>(prop))</span></code></pre></div>
+<div class="sourceCode" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>filterwarnings(<span class="st">&#39;ignore&#39;</span>, <span class="st">&#39;findfont&#39;</span>)</span></code></pre></div>
+<h2 id="loading-and-preprocessing-the-data">Loading and preprocessing the data</h2>
+<p>We begin by loading the data set from GitHub. For reproducibility, we load the data from the most recent commit as of the time this post was published.</p>
+<div class="sourceCode" id="cb6"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>DATA_URI <span class="op">=</span> <span class="st">&#39;https://raw.githubusercontent.com/polygraph-cool/last-two-minute-report/1b89b71df060add5538b70d391d7ad82a4c24db2/output/all_games.csv&#39;</span></span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>raw_df <span class="op">=</span> (pd.read_csv(DATA_URI,</span>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a>                      usecols<span class="op">=</span>[<span class="st">&#39;committing_player&#39;</span>, <span class="st">&#39;disadvantaged_player&#39;</span>,</span>
+<span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a>                               <span class="st">&#39;committing_team&#39;</span>, <span class="st">&#39;disadvantaged_team&#39;</span>,</span>
+<span id="cb6-6"><a href="#cb6-6" aria-hidden="true" tabindex="-1"></a>                               <span class="st">&#39;seconds_left&#39;</span>, <span class="st">&#39;review_decision&#39;</span>, <span class="st">&#39;date&#39;</span>],</span>
+<span id="cb6-7"><a href="#cb6-7" aria-hidden="true" tabindex="-1"></a>                      parse_dates<span class="op">=</span>[<span class="st">&#39;date&#39;</span>])</span>
+<span id="cb6-8"><a href="#cb6-8" aria-hidden="true" tabindex="-1"></a>            .where(<span class="kw">lambda</span> df: df.date <span class="op">&gt;=</span> datetime.datetime(<span class="dv">2016</span>, <span class="dv">10</span>, <span class="dv">25</span>))</span>
+<span id="cb6-9"><a href="#cb6-9" aria-hidden="true" tabindex="-1"></a>            .dropna(subset<span class="op">=</span>[<span class="st">&#39;date&#39;</span>])</span>
+<span id="cb6-10"><a href="#cb6-10" aria-hidden="true" tabindex="-1"></a>            .drop(<span class="st">&#39;date&#39;</span>, axis<span class="op">=</span><span class="dv">1</span>))</span>
+<span id="cb6-11"><a href="#cb6-11" aria-hidden="true" tabindex="-1"></a>raw_df[<span class="st">&#39;review_decision&#39;</span>] <span class="op">=</span> raw_df.review_decision.fillna(<span class="st">&quot;INC&quot;</span>)</span>
+<span id="cb6-12"><a href="#cb6-12" aria-hidden="true" tabindex="-1"></a>raw_df <span class="op">=</span> (raw_df.dropna()</span>
+<span id="cb6-13"><a href="#cb6-13" aria-hidden="true" tabindex="-1"></a>                .reset_index(drop<span class="op">=</span><span class="va">True</span>))</span></code></pre></div>
+<p>We restrict our attention to decisions from the <a href="https://en.wikipedia.org/wiki/2016%E2%80%9317_NBA_season">2016-2017 NBA season</a>, for which salary information is <a href="http://www.basketball-reference.com/contracts/players.html">readily available</a> from <a href="http://www.basketball-reference.com/">Basketball Reference</a>.</p>
+<div class="sourceCode" id="cb7"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a>raw_df.head()</span></code></pre></div>
+<div>
+<center>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th>
+</th>
+<th>
+seconds_left
+</th>
+<th>
+committing_player
+</th>
+<th>
+disadvantaged_player
+</th>
+<th>
+review_decision
+</th>
+<th>
+disadvantaged_team
+</th>
+<th>
+committing_team
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>
+0
+</th>
+<td>
+102.0
+</td>
+<td>
+Al-Farouq Aminu
+</td>
+<td>
+George Hill
+</td>
+<td>
+CNC
+</td>
+<td>
+UTA
+</td>
+<td>
+POR
+</td>
+</tr>
+<tr>
+<th>
+1
+</th>
+<td>
+98.0
+</td>
+<td>
+Boris Diaw
+</td>
+<td>
+Damian Lillard
+</td>
+<td>
+CC
+</td>
+<td>
+POR
+</td>
+<td>
+UTA
+</td>
+</tr>
+<tr>
+<th>
+2
+</th>
+<td>
+64.0
+</td>
+<td>
+Ed Davis
+</td>
+<td>
+George Hill
+</td>
+<td>
+CNC
+</td>
+<td>
+UTA
+</td>
+<td>
+POR
+</td>
+</tr>
+<tr>
+<th>
+3
+</th>
+<td>
+62.0
+</td>
+<td>
+Rudy Gobert
+</td>
+<td>
+CJ McCollum
+</td>
+<td>
+INC
+</td>
+<td>
+POR
+</td>
+<td>
+UTA
+</td>
+</tr>
+<tr>
+<th>
+4
+</th>
+<td>
+27.1
+</td>
+<td>
+CJ McCollum
+</td>
+<td>
+Rodney Hood
+</td>
+<td>
+CC
+</td>
+<td>
+UTA
+</td>
+<td>
+POR
+</td>
+</tr>
+</tbody>
+</table>
+</center>
+</div>
+<p><br /></p>
+<p>We have only loaded some of the data set’s columns; see the original CSV header for the rest.</p>
+<p>The response variable in our analysis is derived from <code>review_decision</code>, which contains information about whether the incident was a call or non-call and whether, upon post-game review, the NBA deemed the (non-)call correct or incorrect. Below we show the frequencies of each type of <code>review_decision</code>.</p>
+<div class="sourceCode" id="cb8"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>ax <span class="op">=</span> (raw_df.groupby(<span class="st">&#39;review_decision&#39;</span>)</span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>            .size()</span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>            .plot(kind<span class="op">=</span><span class="st">&#39;bar&#39;</span>))</span>
+<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="st">&quot;Frequency&quot;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/nba_irt/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_files/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_12_0.png" title="fig:" alt="png" />
+</center>
+<p>The possible values of <code>review_decision</code> are</p>
+<ul>
+<li><code>CC</code> for correct call,</li>
+<li><code>CNC</code> for correct non-call,</li>
+<li><code>IC</code> for incorrect call, and</li>
+<li><code>INC</code> for incorrect non-call.</li>
+</ul>
+<p>While <code>review_decision</code> decision provides information about both whether or not a foul was called and whether or not a foul was actually committed, this analysis will focus only on whether or not a foul was called. Including whether or not a foul was actually committed in this analysis introduces some subtleties that are best left to a future post.</p>
+<p>In this dataset, the “committing” player is the one that a foul would be called against, if a foul was called on the play, and the other player is “disadvantaged.”</p>
+<p>We now encode the data. Since the committing player on one play may be the disadvantaged player on another play, we <a href="http://pandas.pydata.org/pandas-docs/stable/generated/pandas.melt.html"><code>melt</code></a> the raw data frame to have one row per player-play combination so that we can encode the players in a way that is consistent across columns.</p>
+<div class="sourceCode" id="cb9"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a>PLAYER_MAP <span class="op">=</span> {</span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;Jose Juan Barea&quot;</span>: <span class="st">&quot;JJ Barea&quot;</span>,</span>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;Nene Hilario&quot;</span>: <span class="st">&quot;Nene&quot;</span>,</span>
+<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;Tim Hardaway&quot;</span>: <span class="st">&quot;Tim Hardaway Jr&quot;</span>,</span>
+<span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;James Ennis&quot;</span>: <span class="st">&quot;James Ennis III&quot;</span>,</span>
+<span id="cb9-6"><a href="#cb9-6" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;Kelly Oubre&quot;</span>: <span class="st">&quot;Kelly Oubre Jr&quot;</span>,</span>
+<span id="cb9-7"><a href="#cb9-7" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;Taurean Waller-Prince&quot;</span>: <span class="st">&quot;Taurean Prince&quot;</span>,</span>
+<span id="cb9-8"><a href="#cb9-8" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;Glenn Robinson&quot;</span>: <span class="st">&quot;Glenn Robinson III&quot;</span>,</span>
+<span id="cb9-9"><a href="#cb9-9" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;Otto Porter&quot;</span>: <span class="st">&quot;Otto Porter Jr&quot;</span></span>
+<span id="cb9-10"><a href="#cb9-10" aria-hidden="true" tabindex="-1"></a>}</span>
+<span id="cb9-11"><a href="#cb9-11" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb9-12"><a href="#cb9-12" aria-hidden="true" tabindex="-1"></a>TEAM_MAP <span class="op">=</span> {</span>
+<span id="cb9-13"><a href="#cb9-13" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;NKY&quot;</span>: <span class="st">&quot;NYK&quot;</span>,</span>
+<span id="cb9-14"><a href="#cb9-14" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;COS&quot;</span>: <span class="st">&quot;BOS&quot;</span>,</span>
+<span id="cb9-15"><a href="#cb9-15" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;SAT&quot;</span>: <span class="st">&quot;SAS&quot;</span></span>
+<span id="cb9-16"><a href="#cb9-16" aria-hidden="true" tabindex="-1"></a>}</span></code></pre></div>
+<div class="sourceCode" id="cb10"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a>long_df <span class="op">=</span> (pd.melt(</span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a>                (raw_df.reset_index(drop<span class="op">=</span><span class="va">True</span>)</span>
+<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a>                       .rename_axis(<span class="st">&#39;play_id&#39;</span>)</span>
+<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a>                       .reset_index()),</span>
+<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a>                id_vars<span class="op">=</span>[<span class="st">&#39;play_id&#39;</span>, <span class="st">&#39;review_decision&#39;</span>,</span>
+<span id="cb10-6"><a href="#cb10-6" aria-hidden="true" tabindex="-1"></a>                         <span class="st">&#39;committing_team&#39;</span>, <span class="st">&#39;disadvantaged_team&#39;</span>,</span>
+<span id="cb10-7"><a href="#cb10-7" aria-hidden="true" tabindex="-1"></a>                         <span class="st">&#39;seconds_left&#39;</span>],</span>
+<span id="cb10-8"><a href="#cb10-8" aria-hidden="true" tabindex="-1"></a>                value_vars<span class="op">=</span>[<span class="st">&#39;committing_player&#39;</span>, <span class="st">&#39;disadvantaged_player&#39;</span>],</span>
+<span id="cb10-9"><a href="#cb10-9" aria-hidden="true" tabindex="-1"></a>                var_name<span class="op">=</span><span class="st">&#39;player&#39;</span>, value_name<span class="op">=</span><span class="st">&#39;player_name_&#39;</span>)</span>
+<span id="cb10-10"><a href="#cb10-10" aria-hidden="true" tabindex="-1"></a>             <span class="co"># fix inconsistent player names</span></span>
+<span id="cb10-11"><a href="#cb10-11" aria-hidden="true" tabindex="-1"></a>             .assign(player_name<span class="op">=</span><span class="kw">lambda</span> df: (df.player_name_</span>
+<span id="cb10-12"><a href="#cb10-12" aria-hidden="true" tabindex="-1"></a>                                               .<span class="bu">str</span>.replace(<span class="st">&#39;\.&#39;</span>, <span class="st">&#39;&#39;</span>)</span>
+<span id="cb10-13"><a href="#cb10-13" aria-hidden="true" tabindex="-1"></a>                                               .<span class="bu">apply</span>(<span class="kw">lambda</span> name: PLAYER_MAP.get(name, name))))</span>
+<span id="cb10-14"><a href="#cb10-14" aria-hidden="true" tabindex="-1"></a>             .assign(team_<span class="op">=</span><span class="kw">lambda</span> df: (df.committing_team</span>
+<span id="cb10-15"><a href="#cb10-15" aria-hidden="true" tabindex="-1"></a>                                         .where(df.player <span class="op">==</span> <span class="st">&#39;committing_player&#39;</span>,</span>
+<span id="cb10-16"><a href="#cb10-16" aria-hidden="true" tabindex="-1"></a>                                                df.disadvantaged_team)))</span>
+<span id="cb10-17"><a href="#cb10-17" aria-hidden="true" tabindex="-1"></a>             <span class="co"># fix typos in team names</span></span>
+<span id="cb10-18"><a href="#cb10-18" aria-hidden="true" tabindex="-1"></a>             .assign(team<span class="op">=</span><span class="kw">lambda</span> df: df.team_.<span class="bu">apply</span>(<span class="kw">lambda</span> team: TEAM_MAP.get(team, team)))</span>
+<span id="cb10-19"><a href="#cb10-19" aria-hidden="true" tabindex="-1"></a>             .drop([<span class="st">&#39;committing_team&#39;</span>, <span class="st">&#39;disadvantaged_team&#39;</span>, <span class="st">&#39;team_&#39;</span>], axis<span class="op">=</span><span class="dv">1</span>))</span>
+<span id="cb10-20"><a href="#cb10-20" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb10-21"><a href="#cb10-21" aria-hidden="true" tabindex="-1"></a>long_df[<span class="st">&#39;player_id&#39;</span>], player_map <span class="op">=</span> long_df.player_name.factorize()</span></code></pre></div>
+<div class="sourceCode" id="cb11"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a>long_df.head()</span></code></pre></div>
+<div>
+<center>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th>
+</th>
+<th>
+play_id
+</th>
+<th>
+review_decision
+</th>
+<th>
+seconds_left
+</th>
+<th>
+player
+</th>
+<th>
+player_name_
+</th>
+<th>
+player_name
+</th>
+<th>
+team
+</th>
+<th>
+player_id
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>
+0
+</th>
+<td>
+0
+</td>
+<td>
+CNC
+</td>
+<td>
+102.0
+</td>
+<td>
+committing_player
+</td>
+<td>
+Al-Farouq Aminu
+</td>
+<td>
+Al-Farouq Aminu
+</td>
+<td>
+POR
+</td>
+<td>
+0
+</td>
+</tr>
+<tr>
+<th>
+1
+</th>
+<td>
+1
+</td>
+<td>
+CC
+</td>
+<td>
+98.0
+</td>
+<td>
+committing_player
+</td>
+<td>
+Boris Diaw
+</td>
+<td>
+Boris Diaw
+</td>
+<td>
+UTA
+</td>
+<td>
+1
+</td>
+</tr>
+<tr>
+<th>
+2
+</th>
+<td>
+2
+</td>
+<td>
+CNC
+</td>
+<td>
+64.0
+</td>
+<td>
+committing_player
+</td>
+<td>
+Ed Davis
+</td>
+<td>
+Ed Davis
+</td>
+<td>
+POR
+</td>
+<td>
+2
+</td>
+</tr>
+<tr>
+<th>
+3
+</th>
+<td>
+3
+</td>
+<td>
+INC
+</td>
+<td>
+62.0
+</td>
+<td>
+committing_player
+</td>
+<td>
+Rudy Gobert
+</td>
+<td>
+Rudy Gobert
+</td>
+<td>
+UTA
+</td>
+<td>
+3
+</td>
+</tr>
+<tr>
+<th>
+4
+</th>
+<td>
+4
+</td>
+<td>
+CC
+</td>
+<td>
+27.1
+</td>
+<td>
+committing_player
+</td>
+<td>
+CJ McCollum
+</td>
+<td>
+CJ McCollum
+</td>
+<td>
+POR
+</td>
+<td>
+4
+</td>
+</tr>
+</tbody>
+</table>
+</center>
+</div>
+<p><br /></p>
+<p>After encoding, we <a href="http://pandas.pydata.org/pandas-docs/stable/generated/pandas.pivot_table.html">pivot</a> back to a wide data frame with one row per play.</p>
+<div class="sourceCode" id="cb12"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a>df <span class="op">=</span> (long_df.pivot_table(index<span class="op">=</span>[<span class="st">&#39;play_id&#39;</span>, <span class="st">&#39;review_decision&#39;</span>, <span class="st">&#39;seconds_left&#39;</span>],</span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a>                          columns<span class="op">=</span><span class="st">&#39;player&#39;</span>, values<span class="op">=</span><span class="st">&#39;player_id&#39;</span>)</span>
+<span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a>             .rename(columns<span class="op">=</span>{</span>
+<span id="cb12-4"><a href="#cb12-4" aria-hidden="true" tabindex="-1"></a>                 <span class="st">&#39;committing_player&#39;</span>: <span class="st">&#39;committing_id&#39;</span>,</span>
+<span id="cb12-5"><a href="#cb12-5" aria-hidden="true" tabindex="-1"></a>                 <span class="st">&#39;disadvantaged_player&#39;</span>: <span class="st">&#39;disadvantaged_id&#39;</span></span>
+<span id="cb12-6"><a href="#cb12-6" aria-hidden="true" tabindex="-1"></a>             })</span>
+<span id="cb12-7"><a href="#cb12-7" aria-hidden="true" tabindex="-1"></a>             .rename_axis(<span class="st">&#39;&#39;</span>, axis<span class="op">=</span><span class="dv">1</span>)</span>
+<span id="cb12-8"><a href="#cb12-8" aria-hidden="true" tabindex="-1"></a>             .reset_index()</span>
+<span id="cb12-9"><a href="#cb12-9" aria-hidden="true" tabindex="-1"></a>             .assign(foul_called<span class="op">=</span><span class="kw">lambda</span> df: <span class="dv">1</span> <span class="op">*</span> (df.review_decision.isin([<span class="st">&#39;CC&#39;</span>, <span class="st">&#39;IC&#39;</span>])))</span>
+<span id="cb12-10"><a href="#cb12-10" aria-hidden="true" tabindex="-1"></a>             .drop([<span class="st">&#39;play_id&#39;</span>, <span class="st">&#39;review_decision&#39;</span>],</span>
+<span id="cb12-11"><a href="#cb12-11" aria-hidden="true" tabindex="-1"></a>                   axis<span class="op">=</span><span class="dv">1</span>))</span></code></pre></div>
+<p>In addition to encoding the players, we have include a column (<code>foul_called</code>) that indicates whether or not a foul was called on the play.</p>
+<div class="sourceCode" id="cb13"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a>df.head()</span></code></pre></div>
+<div>
+<center>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th>
+</th>
+<th>
+seconds_left
+</th>
+<th>
+committing_id
+</th>
+<th>
+disadvantaged_id
+</th>
+<th>
+foul_called
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>
+0
+</th>
+<td>
+102.0
+</td>
+<td>
+0
+</td>
+<td>
+300
+</td>
+<td>
+0
+</td>
+</tr>
+<tr>
+<th>
+1
+</th>
+<td>
+98.0
+</td>
+<td>
+1
+</td>
+<td>
+124
+</td>
+<td>
+1
+</td>
+</tr>
+<tr>
+<th>
+2
+</th>
+<td>
+64.0
+</td>
+<td>
+2
+</td>
+<td>
+300
+</td>
+<td>
+0
+</td>
+</tr>
+<tr>
+<th>
+3
+</th>
+<td>
+62.0
+</td>
+<td>
+3
+</td>
+<td>
+4
+</td>
+<td>
+0
+</td>
+</tr>
+<tr>
+<th>
+4
+</th>
+<td>
+27.1
+</td>
+<td>
+4
+</td>
+<td>
+6
+</td>
+<td>
+1
+</td>
+</tr>
+</tbody>
+</table>
+</center>
+</div>
+<p><br /></p>
+<p>In order to understand how foul calls vary systematically across players, we will use salary as a proxy for “star power.” The salary data we use was downloaded from <a href="http://www.basketball-reference.com/contracts/players.html">Basketball Reference</a>.</p>
+<div class="sourceCode" id="cb14"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a>SALARY_URI <span class="op">=</span> <span class="st">&#39;http://www.austinrochford.com/resources/nba_irt/2016_2017_salaries.csv&#39;</span></span>
+<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a>salary_df <span class="op">=</span> (pd.read_csv(SALARY_URI, skiprows<span class="op">=</span><span class="dv">1</span>,</span>
+<span id="cb14-4"><a href="#cb14-4" aria-hidden="true" tabindex="-1"></a>                         usecols<span class="op">=</span>[<span class="st">&#39;Player&#39;</span>, <span class="st">&#39;2016-17&#39;</span>])</span>
+<span id="cb14-5"><a href="#cb14-5" aria-hidden="true" tabindex="-1"></a>               .assign(player_name<span class="op">=</span><span class="kw">lambda</span> df: (df.Player</span>
+<span id="cb14-6"><a href="#cb14-6" aria-hidden="true" tabindex="-1"></a>                                                 .<span class="bu">str</span>.split(<span class="st">&#39;</span><span class="ch">\\</span><span class="st">&#39;</span>, expand<span class="op">=</span><span class="va">True</span>)[<span class="dv">0</span>]</span>
+<span id="cb14-7"><a href="#cb14-7" aria-hidden="true" tabindex="-1"></a>                                                 .<span class="bu">str</span>.replace(<span class="st">&#39;\.&#39;</span>, <span class="st">&#39;&#39;</span>)</span>
+<span id="cb14-8"><a href="#cb14-8" aria-hidden="true" tabindex="-1"></a>                                                 <span class="co"># fix inconsistent player names</span></span>
+<span id="cb14-9"><a href="#cb14-9" aria-hidden="true" tabindex="-1"></a>                                                 .<span class="bu">apply</span>(<span class="kw">lambda</span> name: PLAYER_MAP.get(name, name))),</span>
+<span id="cb14-10"><a href="#cb14-10" aria-hidden="true" tabindex="-1"></a>                       salary<span class="op">=</span><span class="kw">lambda</span> df: (df[<span class="st">&#39;2016-17&#39;</span>].<span class="bu">str</span></span>
+<span id="cb14-11"><a href="#cb14-11" aria-hidden="true" tabindex="-1"></a>                                                       .lstrip(<span class="st">&#39;$&#39;</span>)</span>
+<span id="cb14-12"><a href="#cb14-12" aria-hidden="true" tabindex="-1"></a>                                                       .astype(np.float64)))</span>
+<span id="cb14-13"><a href="#cb14-13" aria-hidden="true" tabindex="-1"></a>               .assign(log_salary<span class="op">=</span><span class="kw">lambda</span> df: np.log10(df.salary))</span>
+<span id="cb14-14"><a href="#cb14-14" aria-hidden="true" tabindex="-1"></a>               .assign(std_log_salary<span class="op">=</span><span class="kw">lambda</span> df: (df.log_salary <span class="op">-</span> df.log_salary.mean()) <span class="op">/</span> df.log_salary.std())</span>
+<span id="cb14-15"><a href="#cb14-15" aria-hidden="true" tabindex="-1"></a>               .drop([<span class="st">&#39;Player&#39;</span>, <span class="st">&#39;2016-17&#39;</span>], axis<span class="op">=</span><span class="dv">1</span>)</span>
+<span id="cb14-16"><a href="#cb14-16" aria-hidden="true" tabindex="-1"></a>               .groupby(<span class="st">&#39;player_name&#39;</span>)</span>
+<span id="cb14-17"><a href="#cb14-17" aria-hidden="true" tabindex="-1"></a>               .<span class="bu">max</span>()</span>
+<span id="cb14-18"><a href="#cb14-18" aria-hidden="true" tabindex="-1"></a>               .select(<span class="kw">lambda</span> name: name <span class="kw">in</span> player_map)</span>
+<span id="cb14-19"><a href="#cb14-19" aria-hidden="true" tabindex="-1"></a>               .assign(player_id<span class="op">=</span><span class="kw">lambda</span> df: (np.equal</span>
+<span id="cb14-20"><a href="#cb14-20" aria-hidden="true" tabindex="-1"></a>                                               .outer(player_map, df.index)</span>
+<span id="cb14-21"><a href="#cb14-21" aria-hidden="true" tabindex="-1"></a>                                               .argmax(axis<span class="op">=</span><span class="dv">0</span>)))</span>
+<span id="cb14-22"><a href="#cb14-22" aria-hidden="true" tabindex="-1"></a>               .reset_index()</span>
+<span id="cb14-23"><a href="#cb14-23" aria-hidden="true" tabindex="-1"></a>               .set_index(<span class="st">&#39;player_id&#39;</span>)</span>
+<span id="cb14-24"><a href="#cb14-24" aria-hidden="true" tabindex="-1"></a>               .sort_index())</span></code></pre></div>
+<p>Since NBA salaries span many orders of magnitude (LeBron James’ salary is just shy of $31M while the lowest paid player made just more than $200K) we will use log salaries, standardized to have mean zero and standard deviation one in our model.</p>
+<div class="sourceCode" id="cb15"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a>salary_df.head()</span></code></pre></div>
+<div>
+<center>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th>
+</th>
+<th>
+player_name
+</th>
+<th>
+salary
+</th>
+<th>
+log_salary
+</th>
+<th>
+std_log_salary
+</th>
+</tr>
+<tr>
+<th>
+player_id
+</th>
+<th>
+</th>
+<th>
+</th>
+<th>
+</th>
+<th>
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>
+0
+</th>
+<td>
+Al-Farouq Aminu
+</td>
+<td>
+7680965.0
+</td>
+<td>
+6.885416
+</td>
+<td>
+0.848869
+</td>
+</tr>
+<tr>
+<th>
+1
+</th>
+<td>
+Boris Diaw
+</td>
+<td>
+7000000.0
+</td>
+<td>
+6.845098
+</td>
+<td>
+0.797879
+</td>
+</tr>
+<tr>
+<th>
+2
+</th>
+<td>
+Ed Davis
+</td>
+<td>
+6666667.0
+</td>
+<td>
+6.823909
+</td>
+<td>
+0.771080
+</td>
+</tr>
+<tr>
+<th>
+3
+</th>
+<td>
+Rudy Gobert
+</td>
+<td>
+2121288.0
+</td>
+<td>
+6.326600
+</td>
+<td>
+0.142129
+</td>
+</tr>
+<tr>
+<th>
+4
+</th>
+<td>
+CJ McCollum
+</td>
+<td>
+3219579.0
+</td>
+<td>
+6.507799
+</td>
+<td>
+0.371293
+</td>
+</tr>
+</tbody>
+</table>
+</center>
+</div>
+<p><br /></p>
+<p>We also produce a dataframe associating players to teams, along with some useful per-player summaries.</p>
+<div class="sourceCode" id="cb16"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a>team_player_map <span class="op">=</span> (long_df.groupby(<span class="st">&#39;team&#39;</span>)</span>
+<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a>                          .player_id</span>
+<span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a>                          .<span class="bu">apply</span>(pd.Series.drop_duplicates)</span>
+<span id="cb16-4"><a href="#cb16-4" aria-hidden="true" tabindex="-1"></a>                          .reset_index(level<span class="op">=-</span><span class="dv">1</span>, drop<span class="op">=</span><span class="va">True</span>)</span>
+<span id="cb16-5"><a href="#cb16-5" aria-hidden="true" tabindex="-1"></a>                          .reset_index()</span>
+<span id="cb16-6"><a href="#cb16-6" aria-hidden="true" tabindex="-1"></a>                          .assign(name<span class="op">=</span><span class="kw">lambda</span> df: player_map[df.player_id],</span>
+<span id="cb16-7"><a href="#cb16-7" aria-hidden="true" tabindex="-1"></a>                                  disadvantaged_rate<span class="op">=</span><span class="kw">lambda</span> tpm_df: (df.groupby(<span class="st">&#39;disadvantaged_id&#39;</span>)</span>
+<span id="cb16-8"><a href="#cb16-8" aria-hidden="true" tabindex="-1"></a>                                                                       .foul_called</span>
+<span id="cb16-9"><a href="#cb16-9" aria-hidden="true" tabindex="-1"></a>                                                                       .mean()</span>
+<span id="cb16-10"><a href="#cb16-10" aria-hidden="true" tabindex="-1"></a>                                                                       .ix[tpm_df.player_id]</span>
+<span id="cb16-11"><a href="#cb16-11" aria-hidden="true" tabindex="-1"></a>                                                                       .values),</span>
+<span id="cb16-12"><a href="#cb16-12" aria-hidden="true" tabindex="-1"></a>                                  disadvantaged_plays<span class="op">=</span><span class="kw">lambda</span> tpm_df: (df.groupby(<span class="st">&#39;disadvantaged_id&#39;</span>)</span>
+<span id="cb16-13"><a href="#cb16-13" aria-hidden="true" tabindex="-1"></a>                                                                        .size()</span>
+<span id="cb16-14"><a href="#cb16-14" aria-hidden="true" tabindex="-1"></a>                                                                        .ix[tpm_df.player_id]</span>
+<span id="cb16-15"><a href="#cb16-15" aria-hidden="true" tabindex="-1"></a>                                                                        .values))</span>
+<span id="cb16-16"><a href="#cb16-16" aria-hidden="true" tabindex="-1"></a>                          .fillna(<span class="dv">0</span>))</span></code></pre></div>
+<div class="sourceCode" id="cb17"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a>team_player_map.head()</span></code></pre></div>
+<div>
+<center>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th>
+</th>
+<th>
+team
+</th>
+<th>
+player_id
+</th>
+<th>
+disadvantaged_plays
+</th>
+<th>
+disadvantaged_rate
+</th>
+<th>
+name
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>
+0
+</th>
+<td>
+ATL
+</td>
+<td>
+114
+</td>
+<td>
+8.0
+</td>
+<td>
+0.000000
+</td>
+<td>
+Kyle Korver
+</td>
+</tr>
+<tr>
+<th>
+1
+</th>
+<td>
+ATL
+</td>
+<td>
+115
+</td>
+<td>
+13.0
+</td>
+<td>
+0.538462
+</td>
+<td>
+Dwight Howard
+</td>
+</tr>
+<tr>
+<th>
+2
+</th>
+<td>
+ATL
+</td>
+<td>
+116
+</td>
+<td>
+44.0
+</td>
+<td>
+0.272727
+</td>
+<td>
+Paul Millsap
+</td>
+</tr>
+<tr>
+<th>
+3
+</th>
+<td>
+ATL
+</td>
+<td>
+117
+</td>
+<td>
+60.0
+</td>
+<td>
+0.283333
+</td>
+<td>
+Dennis Schroder
+</td>
+</tr>
+<tr>
+<th>
+4
+</th>
+<td>
+ATL
+</td>
+<td>
+181
+</td>
+<td>
+25.0
+</td>
+<td>
+0.200000
+</td>
+<td>
+Kent Bazemore
+</td>
+</tr>
+</tbody>
+</table>
+</center>
+</div>
+<p><br /></p>
+<h2 id="modeling">Modeling</h2>
+<p>Throughout this post, we will develop a series of models for understanding how foul calls vary across players, starting with a simple beta-Bernoulli model and working our way up to a hierachical <a href="https://en.wikipedia.org/wiki/Item_response_theory">item-response theory</a> regression model.</p>
+<p>Before building models, we must introduce a bit of notation. The index <span class="math inline">\(i\)</span> will correspond to a disadvantaged player and the index <span class="math inline">\(j\)</span> corresponds to a committing player. The index <span class="math inline">\(k\)</span> corresponds to a play. With this notation <span class="math inline">\(i(k)\)</span> and <span class="math inline">\(j(k)\)</span> are the index of the disadvantaged and committing player involved in play <span class="math inline">\(k\)</span>, respectively. The binary variable <span class="math inline">\(y_k\)</span> indicates whether or not a foul was called on play <span class="math inline">\(k\)</span>. All of our models use the likelihood</p>
+<p><span class="math display">\[y_k \sim \textrm{Bernoulli}(p_{i(k), j(k)}).\]</span></p>
+<p>Each model differs in its specification of the probability that a foul is called, <span class="math inline">\(p_{i, j}\)</span>.</p>
+<h3 id="beta-bernoulli-model">Beta-Bernoulli model</h3>
+<p>One of the simplest possible models for this data focuses only on the disadvantaged player, so <span class="math inline">\(p_{i, j} = p_i\)</span>, and places independent beta priors on each <span class="math inline">\(p_i\)</span>. For simplicity, we begin with uniform priors, <span class="math inline">\(p_i \sim \textrm{Beta}(1, 1).\)</span></p>
+<p>Even though this model is conjugate, we will use <a href="http://pymc-devs.github.io/pymc3/"><code>pymc3</code></a> to perform inference with it for consistency with subsequent, non-conjugate models.</p>
+<div class="sourceCode" id="cb18"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a>n_players <span class="op">=</span> player_map.size</span>
+<span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a>disadvantaged_id <span class="op">=</span> df.disadvantaged_id.values</span>
+<span id="cb18-3"><a href="#cb18-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb18-4"><a href="#cb18-4" aria-hidden="true" tabindex="-1"></a>foul_called <span class="op">=</span> df.foul_called.values</span>
+<span id="cb18-5"><a href="#cb18-5" aria-hidden="true" tabindex="-1"></a>obs_rate <span class="op">=</span> foul_called.mean()</span></code></pre></div>
+<div class="sourceCode" id="cb19"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> pm.Model() <span class="im">as</span> bb_model:</span>
+<span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a>    p <span class="op">=</span> pm.Beta(<span class="st">&#39;p&#39;</span>, <span class="fl">1.</span>, <span class="fl">1.</span>, shape<span class="op">=</span>n_players)</span>
+<span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb19-4"><a href="#cb19-4" aria-hidden="true" tabindex="-1"></a>    y <span class="op">=</span> pm.Bernoulli(<span class="st">&#39;y_obs&#39;</span>, p[disadvantaged_id],</span>
+<span id="cb19-5"><a href="#cb19-5" aria-hidden="true" tabindex="-1"></a>                     observed<span class="op">=</span>foul_called)</span></code></pre></div>
+<p>Throughout this post, we will use the <a href="https://arxiv.org/abs/1111.4246">no-U-turn sampler</a> for inference, tuning the sampler’s hyperparameters for the first two thousand samples and subsequently keeping the next two thousand samples for inference.</p>
+<div class="sourceCode" id="cb20"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a>N_TUNE <span class="op">=</span> <span class="dv">2000</span></span>
+<span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a>N_SAMPLES <span class="op">=</span> <span class="dv">2000</span></span>
+<span id="cb20-3"><a href="#cb20-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb20-4"><a href="#cb20-4" aria-hidden="true" tabindex="-1"></a>SEED <span class="op">=</span> <span class="dv">506421</span> <span class="co"># from random.org, for reproducibility</span></span></code></pre></div>
+<p>We now sample from the beta-Bernoulli model.</p>
+<div class="sourceCode" id="cb21"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> sample(model, n_tune, n_samples, seed):</span>
+<span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a>    <span class="cf">with</span> model:</span>
+<span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a>        full_trace <span class="op">=</span> pm.sample(n_tune <span class="op">+</span> n_samples, tune<span class="op">=</span>n_tune, random_seed<span class="op">=</span>seed)</span>
+<span id="cb21-4"><a href="#cb21-4" aria-hidden="true" tabindex="-1"></a>        </span>
+<span id="cb21-5"><a href="#cb21-5" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> full_trace[n_tune:]</span></code></pre></div>
+<div class="sourceCode" id="cb22"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb22-1"><a href="#cb22-1" aria-hidden="true" tabindex="-1"></a>bb_trace <span class="op">=</span> sample(bb_model, N_TUNE, N_SAMPLES, SEED)</span></code></pre></div>
+<pre><code>Auto-assigning NUTS sampler...
+Initializing NUTS using advi...
+  2%|▏         | 4793/200000 [00:02&lt;01:47, 1818.84it/s]Median ELBO converged.
+Finished [100%]: Average ELBO = -3,554.3
+
+100%|██████████| 4000/4000 [01:03&lt;00:00, 63.38it/s]</code></pre>
+<p>We use energy energy plots to diagnose possible problems with our samples.</p>
+<div class="sourceCode" id="cb24"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> energy_plot(trace):</span>
+<span id="cb24-2"><a href="#cb24-2" aria-hidden="true" tabindex="-1"></a>    energy <span class="op">=</span> trace[<span class="st">&#39;energy&#39;</span>]</span>
+<span id="cb24-3"><a href="#cb24-3" aria-hidden="true" tabindex="-1"></a>    energy_diff <span class="op">=</span> np.diff(energy)</span>
+<span id="cb24-4"><a href="#cb24-4" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb24-5"><a href="#cb24-5" aria-hidden="true" tabindex="-1"></a>    fig, ax <span class="op">=</span> plt.subplots(figsize<span class="op">=</span>(<span class="dv">8</span>, <span class="dv">6</span>))</span>
+<span id="cb24-6"><a href="#cb24-6" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb24-7"><a href="#cb24-7" aria-hidden="true" tabindex="-1"></a>    ax.hist(energy <span class="op">-</span> energy.mean(), bins<span class="op">=</span><span class="dv">30</span>,</span>
+<span id="cb24-8"><a href="#cb24-8" aria-hidden="true" tabindex="-1"></a>            lw<span class="op">=</span><span class="dv">0</span>, alpha<span class="op">=</span><span class="fl">0.5</span>,</span>
+<span id="cb24-9"><a href="#cb24-9" aria-hidden="true" tabindex="-1"></a>            label<span class="op">=</span><span class="st">&quot;Energy&quot;</span>)</span>
+<span id="cb24-10"><a href="#cb24-10" aria-hidden="true" tabindex="-1"></a>    ax.hist(energy_diff, bins<span class="op">=</span><span class="dv">30</span>,</span>
+<span id="cb24-11"><a href="#cb24-11" aria-hidden="true" tabindex="-1"></a>            lw<span class="op">=</span><span class="dv">0</span>, alpha<span class="op">=</span><span class="fl">0.5</span>,</span>
+<span id="cb24-12"><a href="#cb24-12" aria-hidden="true" tabindex="-1"></a>            label<span class="op">=</span><span class="st">&quot;Energy difference&quot;</span>)</span>
+<span id="cb24-13"><a href="#cb24-13" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb24-14"><a href="#cb24-14" aria-hidden="true" tabindex="-1"></a>    ax.set_xticks([])</span>
+<span id="cb24-15"><a href="#cb24-15" aria-hidden="true" tabindex="-1"></a>    ax.set_yticks([])</span>
+<span id="cb24-16"><a href="#cb24-16" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb24-17"><a href="#cb24-17" aria-hidden="true" tabindex="-1"></a>    ax.legend()</span></code></pre></div>
+<div class="sourceCode" id="cb25"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb25-1"><a href="#cb25-1" aria-hidden="true" tabindex="-1"></a>energy_plot(bb_trace)</span></code></pre></div>
+<center>
+<img src="/resources/nba_irt/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_files/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_38_0.png" title="fig:" alt="png" />
+</center>
+<p>Since the energy and energy difference distributions are quite similar, there is no indication from this plot of sampling issues. For an in-depth treatment of Hamiltonian Monte Carlo algorithms and convergence diagnostics, consult <a href="https://betanalpha.github.io/">Michael Betancourt</a>’s excellent paper <a href="https://arxiv.org/abs/1701.02434"><em>A Conceptual Introduction to Hamiltonian Monte Carlo</em></a>.</p>
+<p>We will use the <a href="http://www.stat.columbia.edu/~gelman/research/unpublished/loo_stan.pdf">widely applicable information criterion</a> (WAIC) and binned residuals to check and compare our models. WAIC is a Bayesian measure of out-of-sample predictive accuracy based on in-sample data that is quite closely related to [leave-one-out cross-validation](https://en.wikipedia.org/wiki/Cross-validation_(statistics%29#Leave-one-out_cross-validation). It attempts to improve upon known shortcomings of the widely-used <a href="https://en.wikipedia.org/wiki/Deviance_information_criterion">deviance information criterion</a>. (See <a href="http://www.stat.columbia.edu/~gelman/research/published/waic_understand3.pdf"><em>Understanding predictive information criteria for Bayesian models</em></a> for a review and comparison of various information criteria, including DIC and WAIC.) WAIC is easy to calculate with <code>pymc3</code>.</p>
+<div class="sourceCode" id="cb26"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb26-1"><a href="#cb26-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> get_waic_df(model, trace, name):</span>
+<span id="cb26-2"><a href="#cb26-2" aria-hidden="true" tabindex="-1"></a>    <span class="cf">with</span> model:</span>
+<span id="cb26-3"><a href="#cb26-3" aria-hidden="true" tabindex="-1"></a>        waic <span class="op">=</span> pm.waic(trace)</span>
+<span id="cb26-4"><a href="#cb26-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb26-5"><a href="#cb26-5" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> pd.DataFrame.from_records([waic], index<span class="op">=</span>[name], columns<span class="op">=</span>waic._fields)</span></code></pre></div>
+<div class="sourceCode" id="cb27"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a>waic_df <span class="op">=</span> get_waic_df(bb_model, bb_trace, <span class="st">&quot;Beta-Bernoulli&quot;</span>)</span></code></pre></div>
+<pre><code>/opt/conda/lib/python3.5/site-packages/pymc3/stats.py:145: UserWarning: For one or more samples the posterior variance of the
+        log predictive densities exceeds 0.4. This could be indication of
+        WAIC starting to fail see http://arxiv.org/abs/1507.04544 for details
+        
+  &quot;&quot;&quot;)</code></pre>
+<p>We see that the WAIC calculation indicates difficulties with the beta-Bernoulii model, which we will soon confirm.</p>
+<div class="sourceCode" id="cb29"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb29-1"><a href="#cb29-1" aria-hidden="true" tabindex="-1"></a>waic_df</span></code></pre></div>
+<div>
+<center>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th>
+</th>
+<th>
+WAIC
+</th>
+<th>
+WAIC_se
+</th>
+<th>
+p_WAIC
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>
+Beta-Bernoulli
+</th>
+<td>
+6021.491064
+</td>
+<td>
+66.23822
+</td>
+<td>
+238.488377
+</td>
+</tr>
+</tbody>
+</table>
+</center>
+</div>
+<p><br /></p>
+<p>In addition to the WAIC value, we get an estimate of its standard error (<code>WAIC_se</code>) and the number of effective parameters in the model (<code>p_WAIC</code>). The number of effective parameters is an indication of model complexity.</p>
+<p>The second diagnostic tool we use on our models are binned residuals, which show how well-calibrated the model’s predicted probabilities are. Intuitively, if our model predicts that an event has a 35% chance of occurring and we can observe many repetitions of that event, we would expect the event to actually occur about 35% of the time. If the observed occurrences of the event differ substantially from the predicted rate, we have reason to doubt the quality of our model. Since we generally can’t observe each event many times, we instead group events into bins by their predicted probability and check that the average predicted probability in each bin is close to the rate at which the events in that bin are observed.</p>
+<p>The binned predictions and residuals for the beta-Bernoulli model are shown below.</p>
+<div class="sourceCode" id="cb30"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb30-1"><a href="#cb30-1" aria-hidden="true" tabindex="-1"></a>BINS <span class="op">=</span> np.linspace(<span class="dv">0</span>, <span class="dv">1</span>, <span class="dv">11</span>)</span>
+<span id="cb30-2"><a href="#cb30-2" aria-hidden="true" tabindex="-1"></a>BINS_3D <span class="op">=</span> BINS[np.newaxis, np.newaxis]</span>
+<span id="cb30-3"><a href="#cb30-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb30-4"><a href="#cb30-4" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> binned_residuals(y, p):</span>
+<span id="cb30-5"><a href="#cb30-5" aria-hidden="true" tabindex="-1"></a>    p_3d <span class="op">=</span> p[..., np.newaxis]</span>
+<span id="cb30-6"><a href="#cb30-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb30-7"><a href="#cb30-7" aria-hidden="true" tabindex="-1"></a>    in_bin <span class="op">=</span> (BINS_3D[..., :<span class="op">-</span><span class="dv">1</span>] <span class="op">&lt;</span> p_3d) <span class="op">&amp;</span> (p_3d <span class="op">&lt;=</span> BINS_3D[..., <span class="dv">1</span>:])</span>
+<span id="cb30-8"><a href="#cb30-8" aria-hidden="true" tabindex="-1"></a>    bin_counts <span class="op">=</span> in_bin.<span class="bu">sum</span>(axis<span class="op">=</span>(<span class="dv">0</span>, <span class="dv">1</span>))</span>
+<span id="cb30-9"><a href="#cb30-9" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb30-10"><a href="#cb30-10" aria-hidden="true" tabindex="-1"></a>    p_mean <span class="op">=</span> (in_bin <span class="op">*</span> p_3d).<span class="bu">sum</span>(axis<span class="op">=</span>(<span class="dv">0</span>, <span class="dv">1</span>)) <span class="op">/</span> bin_counts</span>
+<span id="cb30-11"><a href="#cb30-11" aria-hidden="true" tabindex="-1"></a>    y_mean <span class="op">=</span> (in_bin <span class="op">*</span> y[np.newaxis, :, np.newaxis]).<span class="bu">sum</span>(axis<span class="op">=</span>(<span class="dv">0</span>, <span class="dv">1</span>)) <span class="op">/</span> bin_counts</span>
+<span id="cb30-12"><a href="#cb30-12" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb30-13"><a href="#cb30-13" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> y_mean, p_mean, bin_counts</span>
+<span id="cb30-14"><a href="#cb30-14" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb30-15"><a href="#cb30-15" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> binned_residual_plot(bin_obs, bin_p, bin_counts):</span>
+<span id="cb30-16"><a href="#cb30-16" aria-hidden="true" tabindex="-1"></a>    fig, (ax, resid_ax) <span class="op">=</span> plt.subplots(ncols<span class="op">=</span><span class="dv">2</span>, sharex<span class="op">=</span><span class="va">True</span>, figsize<span class="op">=</span>(<span class="dv">16</span>, <span class="dv">6</span>))</span>
+<span id="cb30-17"><a href="#cb30-17" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb30-18"><a href="#cb30-18" aria-hidden="true" tabindex="-1"></a>    ax.scatter(bin_p, bin_obs,</span>
+<span id="cb30-19"><a href="#cb30-19" aria-hidden="true" tabindex="-1"></a>               s<span class="op">=</span><span class="dv">300</span> <span class="op">*</span> np.sqrt(bin_counts <span class="op">/</span> bin_counts.<span class="bu">sum</span>()),</span>
+<span id="cb30-20"><a href="#cb30-20" aria-hidden="true" tabindex="-1"></a>               zorder<span class="op">=</span><span class="dv">5</span>)</span>
+<span id="cb30-21"><a href="#cb30-21" aria-hidden="true" tabindex="-1"></a>    ax.plot([<span class="dv">0</span>, <span class="dv">1</span>], [<span class="dv">0</span>, <span class="dv">1</span>], <span class="st">&#39;--&#39;</span>, c<span class="op">=</span><span class="st">&#39;k&#39;</span>)</span>
+<span id="cb30-22"><a href="#cb30-22" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb30-23"><a href="#cb30-23" aria-hidden="true" tabindex="-1"></a>    ax.set_xlim(<span class="dv">0</span>, <span class="dv">1</span>)</span>
+<span id="cb30-24"><a href="#cb30-24" aria-hidden="true" tabindex="-1"></a>    ax.set_xticks(np.linspace(<span class="dv">0</span>, <span class="dv">1</span>, <span class="dv">5</span>))</span>
+<span id="cb30-25"><a href="#cb30-25" aria-hidden="true" tabindex="-1"></a>    ax.xaxis.set_major_formatter(pct_formatter)</span>
+<span id="cb30-26"><a href="#cb30-26" aria-hidden="true" tabindex="-1"></a>    ax.set_xlabel(<span class="st">&quot;Mean $p$ (binned)&quot;</span>)</span>
+<span id="cb30-27"><a href="#cb30-27" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb30-28"><a href="#cb30-28" aria-hidden="true" tabindex="-1"></a>    ax.set_ylim(<span class="dv">0</span>, <span class="dv">1</span>)</span>
+<span id="cb30-29"><a href="#cb30-29" aria-hidden="true" tabindex="-1"></a>    ax.set_yticks(np.linspace(<span class="dv">0</span>, <span class="dv">1</span>, <span class="dv">5</span>))</span>
+<span id="cb30-30"><a href="#cb30-30" aria-hidden="true" tabindex="-1"></a>    ax.yaxis.set_major_formatter(pct_formatter)</span>
+<span id="cb30-31"><a href="#cb30-31" aria-hidden="true" tabindex="-1"></a>    ax.set_ylabel(<span class="st">&quot;Observed rate (binned)&quot;</span>)</span>
+<span id="cb30-32"><a href="#cb30-32" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb30-33"><a href="#cb30-33" aria-hidden="true" tabindex="-1"></a>    resid_ax.scatter(bin_p, bin_obs <span class="op">-</span> bin_p,</span>
+<span id="cb30-34"><a href="#cb30-34" aria-hidden="true" tabindex="-1"></a>                     s<span class="op">=</span><span class="dv">300</span> <span class="op">*</span> np.sqrt(bin_counts <span class="op">/</span> bin_counts.<span class="bu">sum</span>()),</span>
+<span id="cb30-35"><a href="#cb30-35" aria-hidden="true" tabindex="-1"></a>                     zorder<span class="op">=</span><span class="dv">5</span>)</span>
+<span id="cb30-36"><a href="#cb30-36" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb30-37"><a href="#cb30-37" aria-hidden="true" tabindex="-1"></a>    resid_ax.hlines(<span class="dv">0</span>, <span class="dv">0</span>, <span class="dv">1</span>, <span class="st">&#39;k&#39;</span>, <span class="st">&#39;--&#39;</span>)</span>
+<span id="cb30-38"><a href="#cb30-38" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb30-39"><a href="#cb30-39" aria-hidden="true" tabindex="-1"></a>    resid_ax.set_xlim(<span class="dv">0</span>, <span class="dv">1</span>)</span>
+<span id="cb30-40"><a href="#cb30-40" aria-hidden="true" tabindex="-1"></a>    resid_ax.set_xticks(np.linspace(<span class="dv">0</span>, <span class="dv">1</span>, <span class="dv">5</span>))</span>
+<span id="cb30-41"><a href="#cb30-41" aria-hidden="true" tabindex="-1"></a>    resid_ax.xaxis.set_major_formatter(pct_formatter)</span>
+<span id="cb30-42"><a href="#cb30-42" aria-hidden="true" tabindex="-1"></a>    resid_ax.set_xlabel(<span class="st">&quot;Mean $p$ (binned)&quot;</span>)</span>
+<span id="cb30-43"><a href="#cb30-43" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb30-44"><a href="#cb30-44" aria-hidden="true" tabindex="-1"></a>    resid_ax.yaxis.set_major_formatter(pct_formatter)</span>
+<span id="cb30-45"><a href="#cb30-45" aria-hidden="true" tabindex="-1"></a>    resid_ax.set_ylabel(<span class="st">&quot;Residual (binned)&quot;</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb31"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb31-1"><a href="#cb31-1" aria-hidden="true" tabindex="-1"></a>bin_obs, bin_p, bin_counts <span class="op">=</span> binned_residuals(foul_called, bb_trace[<span class="st">&#39;p&#39;</span>][:, disadvantaged_id])</span>
+<span id="cb31-2"><a href="#cb31-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb31-3"><a href="#cb31-3" aria-hidden="true" tabindex="-1"></a>binned_residual_plot(bin_obs, bin_p, bin_counts)</span></code></pre></div>
+<center>
+<img src="/resources/nba_irt/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_files/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_46_0.png" title="fig:" alt="png" />
+</center>
+<p>In these plots, the dashed black lines show how these quantities would be related, for a perfect model. The area of each point is proportional to the number of events whose predicted probability fell in the relevant bin. From these plots, we get further confirmation that our simple beta-Bernoulli model is quite unsatisfactory, as many binned residuals exceed 5% in absolute value.</p>
+<p>Below we plot the posterior mean and 90% credible interval for <span class="math inline">\(p\)</span> for each player in the data set (grouped by team, for legibility), along with the player’s observed foul called percentage when disadvantaged. The area of the point for observed foul called percentage is proportional to the number of plays in which the player was disadvantaged.</p>
+<div class="sourceCode" id="cb32"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb32-1"><a href="#cb32-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> to_param_df(player_df, trace, varnames):</span>
+<span id="cb32-2"><a href="#cb32-2" aria-hidden="true" tabindex="-1"></a>    df <span class="op">=</span> player_df</span>
+<span id="cb32-3"><a href="#cb32-3" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb32-4"><a href="#cb32-4" aria-hidden="true" tabindex="-1"></a>    <span class="cf">for</span> name <span class="kw">in</span> varnames:</span>
+<span id="cb32-5"><a href="#cb32-5" aria-hidden="true" tabindex="-1"></a>        mean <span class="op">=</span> trace[name].mean(axis<span class="op">=</span><span class="dv">0</span>)</span>
+<span id="cb32-6"><a href="#cb32-6" aria-hidden="true" tabindex="-1"></a>        low, high <span class="op">=</span> np.percentile(trace[name], [<span class="dv">5</span>, <span class="dv">95</span>], axis<span class="op">=</span><span class="dv">0</span>)</span>
+<span id="cb32-7"><a href="#cb32-7" aria-hidden="true" tabindex="-1"></a>        </span>
+<span id="cb32-8"><a href="#cb32-8" aria-hidden="true" tabindex="-1"></a>        df <span class="op">=</span> df.assign(<span class="op">**</span>{</span>
+<span id="cb32-9"><a href="#cb32-9" aria-hidden="true" tabindex="-1"></a>            <span class="st">&#39;</span><span class="sc">{}</span><span class="st">_mean&#39;</span>.<span class="bu">format</span>(name): mean[df.player_id],</span>
+<span id="cb32-10"><a href="#cb32-10" aria-hidden="true" tabindex="-1"></a>            <span class="st">&#39;</span><span class="sc">{}</span><span class="st">_low&#39;</span>.<span class="bu">format</span>(name): low[df.player_id],</span>
+<span id="cb32-11"><a href="#cb32-11" aria-hidden="true" tabindex="-1"></a>            <span class="st">&#39;</span><span class="sc">{}</span><span class="st">_high&#39;</span>.<span class="bu">format</span>(name): high[df.player_id]</span>
+<span id="cb32-12"><a href="#cb32-12" aria-hidden="true" tabindex="-1"></a>        })</span>
+<span id="cb32-13"><a href="#cb32-13" aria-hidden="true" tabindex="-1"></a>        </span>
+<span id="cb32-14"><a href="#cb32-14" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> df</span></code></pre></div>
+<div class="sourceCode" id="cb33"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb33-1"><a href="#cb33-1" aria-hidden="true" tabindex="-1"></a>bb_df <span class="op">=</span> to_param_df(team_player_map, bb_trace, [<span class="st">&#39;p&#39;</span>])</span></code></pre></div>
+<div class="sourceCode" id="cb34"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb34-1"><a href="#cb34-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> plot_params(mean, interval, names, ax<span class="op">=</span><span class="va">None</span>, <span class="op">**</span>kwargs):</span>
+<span id="cb34-2"><a href="#cb34-2" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> ax <span class="kw">is</span> <span class="va">None</span>:</span>
+<span id="cb34-3"><a href="#cb34-3" aria-hidden="true" tabindex="-1"></a>        fig, ax <span class="op">=</span> plt.subplots(figsize<span class="op">=</span>(<span class="dv">8</span>, <span class="dv">6</span>))</span>
+<span id="cb34-4"><a href="#cb34-4" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb34-5"><a href="#cb34-5" aria-hidden="true" tabindex="-1"></a>    n_players <span class="op">=</span> names.size</span>
+<span id="cb34-6"><a href="#cb34-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb34-7"><a href="#cb34-7" aria-hidden="true" tabindex="-1"></a>    ax.errorbar(mean, np.arange(n_players),</span>
+<span id="cb34-8"><a href="#cb34-8" aria-hidden="true" tabindex="-1"></a>                xerr<span class="op">=</span>np.<span class="bu">abs</span>(mean <span class="op">-</span> interval),</span>
+<span id="cb34-9"><a href="#cb34-9" aria-hidden="true" tabindex="-1"></a>                fmt<span class="op">=</span><span class="st">&#39;o&#39;</span>,</span>
+<span id="cb34-10"><a href="#cb34-10" aria-hidden="true" tabindex="-1"></a>                label<span class="op">=</span><span class="st">&quot;Mean with</span><span class="ch">\n</span><span class="st">90</span><span class="sc">% i</span><span class="st">nterval&quot;</span>)</span>
+<span id="cb34-11"><a href="#cb34-11" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb34-12"><a href="#cb34-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb34-13"><a href="#cb34-13" aria-hidden="true" tabindex="-1"></a>    ax.set_ylim(<span class="op">-</span><span class="dv">1</span>, n_players)</span>
+<span id="cb34-14"><a href="#cb34-14" aria-hidden="true" tabindex="-1"></a>    ax.set_yticks(np.arange(n_players))</span>
+<span id="cb34-15"><a href="#cb34-15" aria-hidden="true" tabindex="-1"></a>    ax.set_yticklabels(names)</span>
+<span id="cb34-16"><a href="#cb34-16" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb34-17"><a href="#cb34-17" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> ax</span>
+<span id="cb34-18"><a href="#cb34-18" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb34-19"><a href="#cb34-19" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> plot_p_params(rate, n_plays, league_mean, ax<span class="op">=</span><span class="va">None</span>, <span class="op">**</span>kwargs):</span>
+<span id="cb34-20"><a href="#cb34-20" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> ax <span class="kw">is</span> <span class="va">None</span>:</span>
+<span id="cb34-21"><a href="#cb34-21" aria-hidden="true" tabindex="-1"></a>        ax <span class="op">=</span> plt.gca()</span>
+<span id="cb34-22"><a href="#cb34-22" aria-hidden="true" tabindex="-1"></a>        </span>
+<span id="cb34-23"><a href="#cb34-23" aria-hidden="true" tabindex="-1"></a>    n_players <span class="op">=</span> rate.size</span>
+<span id="cb34-24"><a href="#cb34-24" aria-hidden="true" tabindex="-1"></a>        </span>
+<span id="cb34-25"><a href="#cb34-25" aria-hidden="true" tabindex="-1"></a>    ax.scatter(rate, np.arange(n_players),</span>
+<span id="cb34-26"><a href="#cb34-26" aria-hidden="true" tabindex="-1"></a>               c<span class="op">=</span><span class="st">&#39;k&#39;</span>, s<span class="op">=</span><span class="dv">20</span> <span class="op">*</span> np.sqrt(n_plays),</span>
+<span id="cb34-27"><a href="#cb34-27" aria-hidden="true" tabindex="-1"></a>               alpha<span class="op">=</span><span class="fl">0.5</span>, zorder<span class="op">=</span><span class="dv">5</span>,</span>
+<span id="cb34-28"><a href="#cb34-28" aria-hidden="true" tabindex="-1"></a>               label<span class="op">=</span><span class="st">&quot;Observed&quot;</span>)</span>
+<span id="cb34-29"><a href="#cb34-29" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb34-30"><a href="#cb34-30" aria-hidden="true" tabindex="-1"></a>    ax.vlines(league_mean, <span class="op">-</span><span class="dv">1</span>, n_players,</span>
+<span id="cb34-31"><a href="#cb34-31" aria-hidden="true" tabindex="-1"></a>              <span class="st">&#39;k&#39;</span>, <span class="st">&#39;--&#39;</span>,</span>
+<span id="cb34-32"><a href="#cb34-32" aria-hidden="true" tabindex="-1"></a>              label<span class="op">=</span><span class="st">&quot;League average&quot;</span>)</span>
+<span id="cb34-33"><a href="#cb34-33" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb34-34"><a href="#cb34-34" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> plot_p_helper(mean, low, high, rate, n_plays, names, league_mean<span class="op">=</span><span class="va">None</span>, ax<span class="op">=</span><span class="va">None</span>, <span class="op">**</span>kwargs):</span>
+<span id="cb34-35"><a href="#cb34-35" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> ax <span class="kw">is</span> <span class="va">None</span>:</span>
+<span id="cb34-36"><a href="#cb34-36" aria-hidden="true" tabindex="-1"></a>        ax <span class="op">=</span> plt.gca()</span>
+<span id="cb34-37"><a href="#cb34-37" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb34-38"><a href="#cb34-38" aria-hidden="true" tabindex="-1"></a>    mean <span class="op">=</span> mean.values</span>
+<span id="cb34-39"><a href="#cb34-39" aria-hidden="true" tabindex="-1"></a>    rate <span class="op">=</span> rate.values</span>
+<span id="cb34-40"><a href="#cb34-40" aria-hidden="true" tabindex="-1"></a>    n_plays <span class="op">=</span> n_plays.values</span>
+<span id="cb34-41"><a href="#cb34-41" aria-hidden="true" tabindex="-1"></a>    names <span class="op">=</span> names.values</span>
+<span id="cb34-42"><a href="#cb34-42" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb34-43"><a href="#cb34-43" aria-hidden="true" tabindex="-1"></a>    argsorted_ix <span class="op">=</span> mean.argsort()</span>
+<span id="cb34-44"><a href="#cb34-44" aria-hidden="true" tabindex="-1"></a>    interval <span class="op">=</span> np.row_stack([low, high])</span>
+<span id="cb34-45"><a href="#cb34-45" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb34-46"><a href="#cb34-46" aria-hidden="true" tabindex="-1"></a>    plot_params(mean[argsorted_ix], interval[:, argsorted_ix], names[argsorted_ix],</span>
+<span id="cb34-47"><a href="#cb34-47" aria-hidden="true" tabindex="-1"></a>                ax<span class="op">=</span>ax, <span class="op">**</span>kwargs)</span>
+<span id="cb34-48"><a href="#cb34-48" aria-hidden="true" tabindex="-1"></a>    plot_p_params(rate[argsorted_ix], n_plays[argsorted_ix], league_mean,</span>
+<span id="cb34-49"><a href="#cb34-49" aria-hidden="true" tabindex="-1"></a>                  ax<span class="op">=</span>ax, <span class="op">**</span>kwargs)</span></code></pre></div>
+<div class="sourceCode" id="cb35"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb35-1"><a href="#cb35-1" aria-hidden="true" tabindex="-1"></a>grid <span class="op">=</span> sns.FacetGrid(bb_df, col<span class="op">=</span><span class="st">&#39;team&#39;</span>, col_wrap<span class="op">=</span><span class="dv">2</span>,</span>
+<span id="cb35-2"><a href="#cb35-2" aria-hidden="true" tabindex="-1"></a>                     sharey<span class="op">=</span><span class="va">False</span>,</span>
+<span id="cb35-3"><a href="#cb35-3" aria-hidden="true" tabindex="-1"></a>                     size<span class="op">=</span><span class="dv">4</span>, aspect<span class="op">=</span><span class="fl">1.5</span>)</span>
+<span id="cb35-4"><a href="#cb35-4" aria-hidden="true" tabindex="-1"></a>grid.<span class="bu">map</span>(plot_p_helper,</span>
+<span id="cb35-5"><a href="#cb35-5" aria-hidden="true" tabindex="-1"></a>         <span class="st">&#39;p_mean&#39;</span>, <span class="st">&#39;p_low&#39;</span>, <span class="st">&#39;p_high&#39;</span>,</span>
+<span id="cb35-6"><a href="#cb35-6" aria-hidden="true" tabindex="-1"></a>         <span class="st">&#39;disadvantaged_rate&#39;</span>, <span class="st">&#39;disadvantaged_plays&#39;</span>, <span class="st">&#39;name&#39;</span>,</span>
+<span id="cb35-7"><a href="#cb35-7" aria-hidden="true" tabindex="-1"></a>         league_mean<span class="op">=</span>obs_rate)<span class="op">;</span></span>
+<span id="cb35-8"><a href="#cb35-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb35-9"><a href="#cb35-9" aria-hidden="true" tabindex="-1"></a>grid.set_axis_labels(<span class="vs">r&quot;$p$&quot;</span>, <span class="st">&quot;Player&quot;</span>)<span class="op">;</span></span>
+<span id="cb35-10"><a href="#cb35-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb35-11"><a href="#cb35-11" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> ax <span class="kw">in</span> grid.axes:</span>
+<span id="cb35-12"><a href="#cb35-12" aria-hidden="true" tabindex="-1"></a>    ax.set_xticks(np.linspace(<span class="dv">0</span>, <span class="dv">1</span>, <span class="dv">5</span>))<span class="op">;</span></span>
+<span id="cb35-13"><a href="#cb35-13" aria-hidden="true" tabindex="-1"></a>    ax.set_xticklabels(ax.get_xticklabels(), visible<span class="op">=</span><span class="va">True</span>)</span>
+<span id="cb35-14"><a href="#cb35-14" aria-hidden="true" tabindex="-1"></a>    ax.xaxis.set_major_formatter(pct_formatter)<span class="op">;</span></span>
+<span id="cb35-15"><a href="#cb35-15" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb35-16"><a href="#cb35-16" aria-hidden="true" tabindex="-1"></a>grid.fig.tight_layout()<span class="op">;</span></span>
+<span id="cb35-17"><a href="#cb35-17" aria-hidden="true" tabindex="-1"></a>grid.add_legend()<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/nba_irt/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_files/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_51_0.png" title="fig:" alt="png" />
+</center>
+<p>These plots reveal an undesirable property of this model and its inferences. Since the prior distribution on <span class="math inline">\(p_i\)</span> is uniform on the interval <span class="math inline">\([0, 1]\)</span>, all posterior estimates of <span class="math inline">\(p_i\)</span> are pulled towards the prior expected value of 50%. This phenomenon is known as shrinkage. In extreme cases of players that were never disadvantaged, the posterior estimate of <span class="math inline">\(p_i\)</span> is quite close to 50%. For these players, the league average foul call rate would seem to be a much more reasonable estimate of <span class="math inline">\(p_i\)</span> than 50%. The league average foul call rate is shown as a dotted black line on the charts above.</p>
+<p>There are several possible modifications of the beta-Bernoulli model that can cause shrinkage toward the league average. Perhaps the most straightforward is the <a href="https://en.wikipedia.org/wiki/Empirical_Bayes_method">empirical Bayesian method</a> that sets the parameters of the prior distribution on <span class="math inline">\(p_i\)</span> using the observed data. In this framework, there are many methods of choosing prior hyperparameters that make the prior expected value equal to the league average, therefore causing shrinkage toward the league average. We do not use empirical Bayesian methods in this post as they make it cumbersome to build the more complex models we want to use to understand the relationship between salary and foul calls. Empirical Bayesian methods are, however, an approximation to the fully hierachical models we begin building in the next section.</p>
+<h3 id="hierarchical-logistic-normal-model">Hierarchical logistic-normal model</h3>
+<p>A hierarchical <a href="https://en.wikipedia.org/wiki/Logit-normal_distribution">logistic-normal</a> model addresses some of the shortcomings of the beta-Bernoulli model. For simplicity, this model focuses exclusively on the disadvantaged player and assumes that the <a href="https://en.wikipedia.org/wiki/Logit">log-odds</a> of a foul call for a given disadvantaged player are normally distributed. That is,</p>
+<p><span class="math display">\[
+\begin{align*}
+\log \left(\frac{p_i}{1 - p_i}\right) &amp;
+    \sim N(\mu, \sigma^2) \\
+\eta_{k}
+    &amp; = \log \left(\frac{p_{i(k)}}{1 - p_{i(k)}}\right),
+\end{align*}\]</span></p>
+<p>which is equivalent to</p>
+<p><span class="math display">\[p_{i(k)} = \frac{1}{1 + \exp(-\eta_k)}.\]</span></p>
+<p>We address the beta-Bernoulli model’s shrinkage problem by placing a normal hyperprior distribution on <span class="math inline">\(\mu\)</span>, <span class="math inline">\(\mu \sim N(0, 100).\)</span> This shared hyperprior makes this model hierarchical. To complete the specification of this model, we place a half-<a href="https://en.wikipedia.org/wiki/Cauchy_distribution">Cauchy</a> prior on <span class="math inline">\(\sigma\)</span>, <span class="math inline">\(\sigma \sim \textrm{HalfCauchy}(2.5)\)</span>.</p>
+<div class="sourceCode" id="cb36"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb36-1"><a href="#cb36-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> pm.Model() <span class="im">as</span> ln_model:</span>
+<span id="cb36-2"><a href="#cb36-2" aria-hidden="true" tabindex="-1"></a>    μ <span class="op">=</span> pm.Normal(<span class="st">&#39;μ&#39;</span>, <span class="fl">0.</span>, <span class="fl">10.</span>)</span>
+<span id="cb36-3"><a href="#cb36-3" aria-hidden="true" tabindex="-1"></a>    Δ <span class="op">=</span> pm.Normal(<span class="st">&#39;Δ&#39;</span>, <span class="fl">0.</span>, <span class="fl">1.</span>, shape<span class="op">=</span>n_players)</span>
+<span id="cb36-4"><a href="#cb36-4" aria-hidden="true" tabindex="-1"></a>    σ <span class="op">=</span> pm.HalfCauchy(<span class="st">&#39;σ&#39;</span>, <span class="fl">2.5</span>)</span>
+<span id="cb36-5"><a href="#cb36-5" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb36-6"><a href="#cb36-6" aria-hidden="true" tabindex="-1"></a>    p_player <span class="op">=</span> pm.Deterministic(<span class="st">&#39;p_player&#39;</span>, pm.math.sigmoid(μ <span class="op">+</span> Δ <span class="op">*</span> σ))</span>
+<span id="cb36-7"><a href="#cb36-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb36-8"><a href="#cb36-8" aria-hidden="true" tabindex="-1"></a>    η <span class="op">=</span> μ <span class="op">+</span> Δ[disadvantaged_id] <span class="op">*</span> σ</span>
+<span id="cb36-9"><a href="#cb36-9" aria-hidden="true" tabindex="-1"></a>    p <span class="op">=</span> pm.Deterministic(<span class="st">&#39;p&#39;</span>, pm.math.sigmoid(η))</span>
+<span id="cb36-10"><a href="#cb36-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb36-11"><a href="#cb36-11" aria-hidden="true" tabindex="-1"></a>    y <span class="op">=</span> pm.Bernoulli(<span class="st">&#39;y_obs&#39;</span>, p, observed<span class="op">=</span>foul_called)</span></code></pre></div>
+<p>Throughout this post we use an <a href="http://twiecki.github.io/blog/2017/02/08/bayesian-hierchical-non-centered/">offset parameterization</a> for hierarchical models that significantly improves sampling efficiency. We now sample from this model.</p>
+<div class="sourceCode" id="cb37"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb37-1"><a href="#cb37-1" aria-hidden="true" tabindex="-1"></a>ln_trace <span class="op">=</span> sample(ln_model, N_TUNE, N_SAMPLES, SEED)</span></code></pre></div>
+<pre><code>Auto-assigning NUTS sampler...
+Initializing NUTS using advi...
+  9%|▊         | 17001/200000 [00:12&lt;02:13, 1372.87it/s]Median ELBO converged.
+Finished [100%]: Average ELBO = -3,520.3
+
+100%|██████████| 4000/4000 [02:27&lt;00:00, 65.27it/s]</code></pre>
+<p>The energy plot for this model gives no cause for concern.</p>
+<div class="sourceCode" id="cb39"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb39-1"><a href="#cb39-1" aria-hidden="true" tabindex="-1"></a>energy_plot(ln_trace)</span></code></pre></div>
+<center>
+<img src="/resources/nba_irt/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_files/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_58_0.png" title="fig:" alt="png" />
+</center>
+<p>We now calculate the WAIC of the logistic-normal model, and compare it to that of the beta-Bernoulli model.</p>
+<div class="sourceCode" id="cb40"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb40-1"><a href="#cb40-1" aria-hidden="true" tabindex="-1"></a>waic_df <span class="op">=</span> waic_df.append(get_waic_df(ln_model, ln_trace, <span class="st">&quot;Logistic-normal&quot;</span>))</span></code></pre></div>
+<div class="sourceCode" id="cb41"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb41-1"><a href="#cb41-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> waic_plot(waic_df):</span>
+<span id="cb41-2"><a href="#cb41-2" aria-hidden="true" tabindex="-1"></a>    fig, (waic_ax, p_ax) <span class="op">=</span> plt.subplots(ncols<span class="op">=</span><span class="dv">2</span>, sharex<span class="op">=</span><span class="va">True</span>, figsize<span class="op">=</span>(<span class="dv">16</span>, <span class="dv">6</span>))</span>
+<span id="cb41-3"><a href="#cb41-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb41-4"><a href="#cb41-4" aria-hidden="true" tabindex="-1"></a>    waic_x <span class="op">=</span> np.arange(waic_df.shape[<span class="dv">0</span>])</span>
+<span id="cb41-5"><a href="#cb41-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb41-6"><a href="#cb41-6" aria-hidden="true" tabindex="-1"></a>    waic_ax.errorbar(waic_x, waic_df.WAIC,</span>
+<span id="cb41-7"><a href="#cb41-7" aria-hidden="true" tabindex="-1"></a>                     yerr<span class="op">=</span>waic_df.WAIC_se,</span>
+<span id="cb41-8"><a href="#cb41-8" aria-hidden="true" tabindex="-1"></a>                     fmt<span class="op">=</span><span class="st">&#39;o&#39;</span>)</span>
+<span id="cb41-9"><a href="#cb41-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb41-10"><a href="#cb41-10" aria-hidden="true" tabindex="-1"></a>    waic_ax.set_xticks(waic_x)</span>
+<span id="cb41-11"><a href="#cb41-11" aria-hidden="true" tabindex="-1"></a>    waic_ax.xaxis.grid(<span class="va">False</span>)</span>
+<span id="cb41-12"><a href="#cb41-12" aria-hidden="true" tabindex="-1"></a>    waic_ax.set_xticklabels(waic_df.index)</span>
+<span id="cb41-13"><a href="#cb41-13" aria-hidden="true" tabindex="-1"></a>    waic_ax.set_xlabel(<span class="st">&quot;Model&quot;</span>)</span>
+<span id="cb41-14"><a href="#cb41-14" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb41-15"><a href="#cb41-15" aria-hidden="true" tabindex="-1"></a>    waic_ax.set_ylabel(<span class="st">&quot;WAIC&quot;</span>)</span>
+<span id="cb41-16"><a href="#cb41-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb41-17"><a href="#cb41-17" aria-hidden="true" tabindex="-1"></a>    p_ax.bar(waic_x, waic_df.p_WAIC)</span>
+<span id="cb41-18"><a href="#cb41-18" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb41-19"><a href="#cb41-19" aria-hidden="true" tabindex="-1"></a>    p_ax.xaxis.grid(<span class="va">False</span>)</span>
+<span id="cb41-20"><a href="#cb41-20" aria-hidden="true" tabindex="-1"></a>    p_ax.set_xlabel(<span class="st">&quot;Model&quot;</span>)</span>
+<span id="cb41-21"><a href="#cb41-21" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb41-22"><a href="#cb41-22" aria-hidden="true" tabindex="-1"></a>    p_ax.set_ylabel(<span class="st">&quot;Effective number</span><span class="ch">\n</span><span class="st">of parameters&quot;</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb42"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb42-1"><a href="#cb42-1" aria-hidden="true" tabindex="-1"></a>waic_plot(waic_df)</span></code></pre></div>
+<center>
+<img src="/resources/nba_irt/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_files/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_62_0.png" title="fig:" alt="png" />
+</center>
+<p>The left-hand plot above shows that the logistic-normal model is a significant improvement in WAIC over the beta-Bernoulli model, which is unsurprising. The right-hand plot shows that the logistic-normal model has roughly 20% the number of effective parameters as the beta-Bernoulli model. This reduction is due to the partial pooling effect of the hierarchical prior. The hyperprior on <span class="math inline">\(\mu\)</span> causes observations for one player to impact the estimate of <span class="math inline">\(p_i\)</span> for all players; this sharing of information across players is responsible for the large decrease in the number of effective parameters.</p>
+<p>Finally, we examine the binned residuals for the logistic-normal model.</p>
+<div class="sourceCode" id="cb43"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb43-1"><a href="#cb43-1" aria-hidden="true" tabindex="-1"></a>bin_obs, bin_p, bin_counts <span class="op">=</span> binned_residuals(foul_called, ln_trace[<span class="st">&#39;p&#39;</span>])</span>
+<span id="cb43-2"><a href="#cb43-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb43-3"><a href="#cb43-3" aria-hidden="true" tabindex="-1"></a>binned_residual_plot(bin_obs, bin_p, bin_counts)</span></code></pre></div>
+<center>
+<img src="/resources/nba_irt/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_files/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_64_0.png" title="fig:" alt="png" />
+</center>
+<p>These binned residuals are much smaller than those of the beta-Bernoulli model, which is further confirmation that the logistic-normal model is preferable.</p>
+<p>Below we plot the posterior distribution of <span class="math inline">\(\operatorname{logit}^{-1}(\mu)\)</span>, and we see that the observed foul call rate of approximately 25.1% lies within its 90% interval.</p>
+<div class="sourceCode" id="cb44"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb44-1"><a href="#cb44-1" aria-hidden="true" tabindex="-1"></a>ax, <span class="op">=</span> pm.plot_posterior(ln_trace, [<span class="st">&#39;μ&#39;</span>],</span>
+<span id="cb44-2"><a href="#cb44-2" aria-hidden="true" tabindex="-1"></a>                        alpha_level<span class="op">=</span><span class="fl">0.1</span>, transform<span class="op">=</span>expit, ref_val<span class="op">=</span>obs_rate,</span>
+<span id="cb44-3"><a href="#cb44-3" aria-hidden="true" tabindex="-1"></a>                        lw<span class="op">=</span><span class="fl">0.</span>, alpha<span class="op">=</span><span class="fl">0.75</span>)</span>
+<span id="cb44-4"><a href="#cb44-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb44-5"><a href="#cb44-5" aria-hidden="true" tabindex="-1"></a>ax.xaxis.set_major_formatter(pct_formatter)<span class="op">;</span></span>
+<span id="cb44-6"><a href="#cb44-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb44-7"><a href="#cb44-7" aria-hidden="true" tabindex="-1"></a>ax.set_title(<span class="vs">r&quot;$\operatorname</span><span class="sc">{logit}</span><span class="vs">^{-1}(\mu)$&quot;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/nba_irt/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_files/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_67_0.png" title="fig:" alt="png" />
+</center>
+<p>With this posterior for <span class="math inline">\(\operatorname{logit}^{-1}(\mu)\)</span>, we see the desired posterior shrinkage of each <span class="math inline">\(p_i\)</span> toward the observed foul call rate.</p>
+<div class="sourceCode" id="cb45"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb45-1"><a href="#cb45-1" aria-hidden="true" tabindex="-1"></a>ln_df <span class="op">=</span> to_param_df(team_player_map, ln_trace, [<span class="st">&#39;p&#39;</span>])</span></code></pre></div>
+<div class="sourceCode" id="cb46"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb46-1"><a href="#cb46-1" aria-hidden="true" tabindex="-1"></a>grid <span class="op">=</span> sns.FacetGrid(ln_df, col<span class="op">=</span><span class="st">&#39;team&#39;</span>, col_wrap<span class="op">=</span><span class="dv">2</span>,</span>
+<span id="cb46-2"><a href="#cb46-2" aria-hidden="true" tabindex="-1"></a>                     sharey<span class="op">=</span><span class="va">False</span>,</span>
+<span id="cb46-3"><a href="#cb46-3" aria-hidden="true" tabindex="-1"></a>                     size<span class="op">=</span><span class="dv">4</span>, aspect<span class="op">=</span><span class="fl">1.5</span>)</span>
+<span id="cb46-4"><a href="#cb46-4" aria-hidden="true" tabindex="-1"></a>grid.<span class="bu">map</span>(plot_p_helper,</span>
+<span id="cb46-5"><a href="#cb46-5" aria-hidden="true" tabindex="-1"></a>         <span class="st">&#39;p_mean&#39;</span>, <span class="st">&#39;p_low&#39;</span>, <span class="st">&#39;p_high&#39;</span>,</span>
+<span id="cb46-6"><a href="#cb46-6" aria-hidden="true" tabindex="-1"></a>         <span class="st">&#39;disadvantaged_rate&#39;</span>, <span class="st">&#39;disadvantaged_plays&#39;</span>, <span class="st">&#39;name&#39;</span>,</span>
+<span id="cb46-7"><a href="#cb46-7" aria-hidden="true" tabindex="-1"></a>         league_mean<span class="op">=</span>obs_rate)<span class="op">;</span></span>
+<span id="cb46-8"><a href="#cb46-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb46-9"><a href="#cb46-9" aria-hidden="true" tabindex="-1"></a>grid.set_axis_labels(<span class="vs">r&quot;$p$&quot;</span>, <span class="st">&quot;Player&quot;</span>)<span class="op">;</span></span>
+<span id="cb46-10"><a href="#cb46-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb46-11"><a href="#cb46-11" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> ax <span class="kw">in</span> grid.axes:</span>
+<span id="cb46-12"><a href="#cb46-12" aria-hidden="true" tabindex="-1"></a>    ax.set_xticks(np.linspace(<span class="dv">0</span>, <span class="dv">1</span>, <span class="dv">5</span>))<span class="op">;</span></span>
+<span id="cb46-13"><a href="#cb46-13" aria-hidden="true" tabindex="-1"></a>    ax.set_xticklabels(ax.get_xticklabels(), visible<span class="op">=</span><span class="va">True</span>)</span>
+<span id="cb46-14"><a href="#cb46-14" aria-hidden="true" tabindex="-1"></a>    ax.xaxis.set_major_formatter(pct_formatter)<span class="op">;</span></span>
+<span id="cb46-15"><a href="#cb46-15" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb46-16"><a href="#cb46-16" aria-hidden="true" tabindex="-1"></a>grid.fig.tight_layout()<span class="op">;</span></span>
+<span id="cb46-17"><a href="#cb46-17" aria-hidden="true" tabindex="-1"></a>grid.add_legend()<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/nba_irt/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_files/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_70_0.png" title="fig:" alt="png" />
+</center>
+<p>The inferences in these plots are markedly different from those of the beta-Bernoulli model. Most strikingly, we see that estimates have been shrunk towards the league average foul call rate, and that players that were never disadvantaged have posterior foul call probabilities quite close to that rate. As a consequence of this more reasonable shrinkage, the range of values taken by the posterior <span class="math inline">\(p_i\)</span> estimates is much smaller for the logistic-normal model than for the beta-Bernoulli model. Below we plot the top- and bottom-ten players by <span class="math inline">\(p_i\)</span>.</p>
+<div class="sourceCode" id="cb47"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb47-1"><a href="#cb47-1" aria-hidden="true" tabindex="-1"></a>fig, (top_ax, bottom_ax) <span class="op">=</span> plt.subplots(nrows<span class="op">=</span><span class="dv">2</span>, sharex<span class="op">=</span><span class="va">True</span>, figsize<span class="op">=</span>(<span class="dv">8</span>, <span class="dv">10</span>))</span>
+<span id="cb47-2"><a href="#cb47-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb47-3"><a href="#cb47-3" aria-hidden="true" tabindex="-1"></a>by_p <span class="op">=</span> (ln_df.drop_duplicates([<span class="st">&#39;player_id&#39;</span>])</span>
+<span id="cb47-4"><a href="#cb47-4" aria-hidden="true" tabindex="-1"></a>             .sort_values(<span class="st">&#39;p_mean&#39;</span>))</span>
+<span id="cb47-5"><a href="#cb47-5" aria-hidden="true" tabindex="-1"></a>p_top <span class="op">=</span> by_p.iloc[<span class="op">-</span><span class="dv">10</span>:]</span>
+<span id="cb47-6"><a href="#cb47-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb47-7"><a href="#cb47-7" aria-hidden="true" tabindex="-1"></a>plot_params(p_top.p_mean.values, p_top[[<span class="st">&#39;p_low&#39;</span>, <span class="st">&#39;p_high&#39;</span>]].values.T,</span>
+<span id="cb47-8"><a href="#cb47-8" aria-hidden="true" tabindex="-1"></a>            p_top.name.values,</span>
+<span id="cb47-9"><a href="#cb47-9" aria-hidden="true" tabindex="-1"></a>            ax<span class="op">=</span>top_ax)<span class="op">;</span></span>
+<span id="cb47-10"><a href="#cb47-10" aria-hidden="true" tabindex="-1"></a>top_ax.vlines(obs_rate, <span class="op">-</span><span class="dv">1</span>, <span class="dv">10</span>,</span>
+<span id="cb47-11"><a href="#cb47-11" aria-hidden="true" tabindex="-1"></a>              <span class="st">&#39;k&#39;</span>, <span class="st">&#39;--&#39;</span>,</span>
+<span id="cb47-12"><a href="#cb47-12" aria-hidden="true" tabindex="-1"></a>              label<span class="op">=</span><span class="vs">r&quot;League average&quot;</span>)<span class="op">;</span></span>
+<span id="cb47-13"><a href="#cb47-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb47-14"><a href="#cb47-14" aria-hidden="true" tabindex="-1"></a>top_ax.xaxis.set_major_formatter(pct_formatter)<span class="op">;</span></span>
+<span id="cb47-15"><a href="#cb47-15" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb47-16"><a href="#cb47-16" aria-hidden="true" tabindex="-1"></a>top_ax.set_ylabel(<span class="st">&quot;Player&quot;</span>)<span class="op">;</span></span>
+<span id="cb47-17"><a href="#cb47-17" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb47-18"><a href="#cb47-18" aria-hidden="true" tabindex="-1"></a>top_ax.set_title(<span class="st">&quot;Top ten&quot;</span>)<span class="op">;</span></span>
+<span id="cb47-19"><a href="#cb47-19" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb47-20"><a href="#cb47-20" aria-hidden="true" tabindex="-1"></a>p_bottom <span class="op">=</span> by_p.iloc[:<span class="dv">10</span>]</span>
+<span id="cb47-21"><a href="#cb47-21" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb47-22"><a href="#cb47-22" aria-hidden="true" tabindex="-1"></a>plot_params(p_bottom.p_mean.values, p_bottom[[<span class="st">&#39;p_low&#39;</span>, <span class="st">&#39;p_high&#39;</span>]].values.T,</span>
+<span id="cb47-23"><a href="#cb47-23" aria-hidden="true" tabindex="-1"></a>            p_bottom.name.values,</span>
+<span id="cb47-24"><a href="#cb47-24" aria-hidden="true" tabindex="-1"></a>            ax<span class="op">=</span>bottom_ax)<span class="op">;</span></span>
+<span id="cb47-25"><a href="#cb47-25" aria-hidden="true" tabindex="-1"></a>bottom_ax.vlines(obs_rate, <span class="op">-</span><span class="dv">1</span>, <span class="dv">10</span>,</span>
+<span id="cb47-26"><a href="#cb47-26" aria-hidden="true" tabindex="-1"></a>                 <span class="st">&#39;k&#39;</span>, <span class="st">&#39;--&#39;</span>,</span>
+<span id="cb47-27"><a href="#cb47-27" aria-hidden="true" tabindex="-1"></a>                 label<span class="op">=</span><span class="vs">r&quot;League average&quot;</span>)<span class="op">;</span></span>
+<span id="cb47-28"><a href="#cb47-28" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb47-29"><a href="#cb47-29" aria-hidden="true" tabindex="-1"></a>bottom_ax.xaxis.set_major_formatter(pct_formatter)<span class="op">;</span></span>
+<span id="cb47-30"><a href="#cb47-30" aria-hidden="true" tabindex="-1"></a>bottom_ax.set_xlabel(<span class="vs">r&quot;$p$&quot;</span>)<span class="op">;</span></span>
+<span id="cb47-31"><a href="#cb47-31" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb47-32"><a href="#cb47-32" aria-hidden="true" tabindex="-1"></a>bottom_ax.set_ylabel(<span class="st">&quot;Player&quot;</span>)<span class="op">;</span></span>
+<span id="cb47-33"><a href="#cb47-33" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb47-34"><a href="#cb47-34" aria-hidden="true" tabindex="-1"></a>fig.tight_layout()<span class="op">;</span></span>
+<span id="cb47-35"><a href="#cb47-35" aria-hidden="true" tabindex="-1"></a>bottom_ax.legend(loc<span class="op">=</span><span class="dv">1</span>)<span class="op">;</span></span>
+<span id="cb47-36"><a href="#cb47-36" aria-hidden="true" tabindex="-1"></a>bottom_ax.set_title(<span class="st">&quot;Bottom ten&quot;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/nba_irt/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_files/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_72_0.png" title="fig:" alt="png" />
+</center>
+<h3 id="item-response-rasch-model">Item-response (Rasch) model</h3>
+<p>The hierarchical logistic-normal model is certainly an improvement over the beta-Bernoulli model, but both of these models have focused solely on the disadvantaged player. It seems quite important to understand the contribution of not just the disadvantaged player, but also of the committing player in each play to the probability of a foul call. <a href="https://en.wikipedia.org/wiki/Item_response_theory">Item-response theory</a> (IRT) provides generalizations the logistic-normal model that can account for the influence of both players involved in a play. IRT originated in psychometrics as a way to simultaneously measure individual aptitude and question difficulty based on test-response data, and has subsequently found many other applications. We use IRT to model foul calls by considering disadvantaged players as analagous to test takers and committing players as analagous to questions. Specifically, we will use the <a href="https://en.wikipedia.org/wiki/Rasch_model">Rasch model</a> for the probability <span class="math inline">\(p_{i, j}\)</span>, that a foul is called on a play where player <span class="math inline">\(i\)</span> is disadvantaged by committing player <span class="math inline">\(j\)</span>. This model posits that each player has a latent ability, <span class="math inline">\(\theta_i\)</span>, that governs how often fouls are called when they are disadvantaged and a latent difficulty <span class="math inline">\(b_j\)</span> that governs how often fouls are not called when they are committing. The probability that a foul is called on a play where player <span class="math inline">\(i\)</span> is disadvantaged and player <span class="math inline">\(j\)</span> is committing is then a function of the difference between the corresponding latent ability and difficulty parameters,</p>
+<p><span class="math display">\[
+\begin{align*}
+\eta_k
+    &amp; = \theta_{i(k)} - b_{j(k)} \\
+p_k
+    &amp; = \frac{1}{1 + \exp(-\eta_k)}.
+\end{align*}
+\]</span></p>
+<p>In this model, a player with a large value of <span class="math inline">\(\theta_i\)</span> is more likely to get a foul called when they are disadvantaged, and a player with a large value of <span class="math inline">\(b_j\)</span> is less likely to have a foul called when they are committing. If <span class="math inline">\(\theta_{i(k)} = b_{j(k)}\)</span>, there is a 50% chance a foul is called on that play.</p>
+<p>To complete the specification of this model, we place priors on <span class="math inline">\(\theta_i\)</span> and <span class="math inline">\(b_j\)</span>. Similarly to <span class="math inline">\(\eta\)</span> in the logistic-normal model, we place a hierarchical normal prior on <span class="math inline">\(\theta_i\)</span>,</p>
+<p><span class="math display">\[
+\begin{align*}
+\mu_{\theta}
+    &amp; \sim N(0, 100) \\
+\sigma_{\theta}
+    &amp; \sim \textrm{HalfCauchy}(2.5) \\
+\theta_i
+    &amp; \sim N(\mu_{\theta}, \sigma^2_{\theta}).
+\end{align*}
+\]</span></p>
+<div class="sourceCode" id="cb48"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb48-1"><a href="#cb48-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> pm.Model() <span class="im">as</span> rasch_model:</span>
+<span id="cb48-2"><a href="#cb48-2" aria-hidden="true" tabindex="-1"></a>    μ_θ <span class="op">=</span> pm.Normal(<span class="st">&#39;μ_θ&#39;</span>, <span class="fl">0.</span>, <span class="fl">10.</span>)</span>
+<span id="cb48-3"><a href="#cb48-3" aria-hidden="true" tabindex="-1"></a>    Δ_θ <span class="op">=</span> pm.Normal(<span class="st">&#39;Δ_θ&#39;</span>, <span class="fl">0.</span>, <span class="fl">1.</span>, shape<span class="op">=</span>n_players)</span>
+<span id="cb48-4"><a href="#cb48-4" aria-hidden="true" tabindex="-1"></a>    σ_θ <span class="op">=</span> pm.HalfCauchy(<span class="st">&#39;σ_θ&#39;</span>, <span class="fl">2.5</span>)</span>
+<span id="cb48-5"><a href="#cb48-5" aria-hidden="true" tabindex="-1"></a>    θ <span class="op">=</span> pm.Deterministic(<span class="st">&#39;θ&#39;</span>, μ_θ <span class="op">+</span> Δ_θ <span class="op">*</span> σ_θ)</span></code></pre></div>
+<p>We also place a hierarchical normal prior on <span class="math inline">\(b_j\)</span>, though this prior must be subtley different from that on <span class="math inline">\(\theta_i\)</span>. Since <span class="math inline">\(\theta_i\)</span> and <span class="math inline">\(b_j\)</span> are latent variables, there is no natural scale on which they should be measured. If each <span class="math inline">\(\theta_i\)</span> and <span class="math inline">\(b_j\)</span> are shifted by the same amount, say <span class="math inline">\(\delta\)</span>, the likelihood does not change. That is, if <span class="math inline">\(\tilde{\theta}_i = \theta_i + \delta\)</span> and <span class="math inline">\(\tilde{b}_j = b_j + \delta\)</span>, then</p>
+<p><span class="math display">\[
+\tilde{\eta}_{i, j} = \tilde{\theta}_i - \tilde{b}_j
+    = \theta_i + \delta - (b_j + \delta)
+    = \theta_i - b_j
+    = \eta_{i, j}.
+\]</span></p>
+<p>Therefore, if we allow <span class="math inline">\(\theta_i\)</span> and <span class="math inline">\(\beta_j\)</span> to be shifted by arbitrary amounts, the Rasch model is not <a href="https://en.wikipedia.org/wiki/Identifiability">identified</a>. We identify the Rasch model by constraining the mean of the hyperprior on <span class="math inline">\(b_j\)</span> to be zero,</p>
+<p><span class="math display">\[
+\begin{align*}
+\sigma_b
+    &amp; \sim \textrm{HalfCauchy}(2.5) \\
+b_j
+    &amp; \sim N(0, \sigma^2_b).
+\end{align*}
+\]</span></p>
+<div class="sourceCode" id="cb49"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb49-1"><a href="#cb49-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> rasch_model:</span>
+<span id="cb49-2"><a href="#cb49-2" aria-hidden="true" tabindex="-1"></a>    Δ_b <span class="op">=</span> pm.Normal(<span class="st">&#39;Δ_b&#39;</span>, <span class="fl">0.</span>, <span class="fl">1.</span>, shape<span class="op">=</span>n_players)</span>
+<span id="cb49-3"><a href="#cb49-3" aria-hidden="true" tabindex="-1"></a>    σ_b <span class="op">=</span> pm.HalfCauchy(<span class="st">&#39;σ_b&#39;</span>, <span class="fl">2.5</span>)</span>
+<span id="cb49-4"><a href="#cb49-4" aria-hidden="true" tabindex="-1"></a>    b <span class="op">=</span> pm.Deterministic(<span class="st">&#39;b&#39;</span>, Δ_b <span class="op">*</span> σ_b)</span></code></pre></div>
+<p>We now specify the Rasch model’s likelihood and sample from it.</p>
+<div class="sourceCode" id="cb50"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb50-1"><a href="#cb50-1" aria-hidden="true" tabindex="-1"></a>committing_id <span class="op">=</span> df.committing_id.values</span></code></pre></div>
+<div class="sourceCode" id="cb51"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb51-1"><a href="#cb51-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> rasch_model:</span>
+<span id="cb51-2"><a href="#cb51-2" aria-hidden="true" tabindex="-1"></a>    η <span class="op">=</span> θ[disadvantaged_id] <span class="op">-</span> b[committing_id]</span>
+<span id="cb51-3"><a href="#cb51-3" aria-hidden="true" tabindex="-1"></a>    p <span class="op">=</span> pm.Deterministic(<span class="st">&#39;p&#39;</span>, pm.math.sigmoid(η))</span>
+<span id="cb51-4"><a href="#cb51-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb51-5"><a href="#cb51-5" aria-hidden="true" tabindex="-1"></a>    y <span class="op">=</span> pm.Bernoulli(<span class="st">&#39;y_obs&#39;</span>, p, observed<span class="op">=</span>foul_called)</span></code></pre></div>
+<div class="sourceCode" id="cb52"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb52-1"><a href="#cb52-1" aria-hidden="true" tabindex="-1"></a>rasch_trace <span class="op">=</span> sample(rasch_model, N_TUNE, N_SAMPLES, SEED)</span></code></pre></div>
+<pre><code>Auto-assigning NUTS sampler...
+Initializing NUTS using advi...
+Average ELBO = -3,729.5:  11%|█▏        | 22583/200000 [00:19&lt;02:33, 1156.17it/s]Median ELBO converged.
+Finished [100%]: Average ELBO = -3,037.1
+
+100%|██████████| 4000/4000 [02:01&lt;00:00, 32.81it/s]</code></pre>
+<p>Again, the energy plot for this model gives no cause for concern.</p>
+<div class="sourceCode" id="cb54"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb54-1"><a href="#cb54-1" aria-hidden="true" tabindex="-1"></a>energy_plot(rasch_trace)</span></code></pre></div>
+<center>
+<img src="/resources/nba_irt/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_files/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_82_0.png" title="fig:" alt="png" />
+</center>
+<p>Below we show the WAIC of our three models.</p>
+<div class="sourceCode" id="cb55"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb55-1"><a href="#cb55-1" aria-hidden="true" tabindex="-1"></a>waic_df <span class="op">=</span> waic_df.append(get_waic_df(rasch_model, rasch_trace, <span class="st">&quot;Rasch&quot;</span>))</span></code></pre></div>
+<div class="sourceCode" id="cb56"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb56-1"><a href="#cb56-1" aria-hidden="true" tabindex="-1"></a>waic_plot(waic_df)</span></code></pre></div>
+<center>
+<img src="/resources/nba_irt/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_files/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_85_0.png" title="fig:" alt="png" />
+</center>
+<p>The Rasch model represents a moderate WAIC improvement over the logistic-normal model, and unsurprisingly has many more effective parameters (since it added a nominal parameter, <span class="math inline">\(b_j\)</span>, per player).</p>
+<p>The Rasch model also has reasonable binned residuals, with very few events having residuals above 5%.</p>
+<div class="sourceCode" id="cb57"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb57-1"><a href="#cb57-1" aria-hidden="true" tabindex="-1"></a>bin_obs, bin_p, bin_counts <span class="op">=</span> binned_residuals(foul_called, rasch_trace[<span class="st">&#39;p&#39;</span>])</span>
+<span id="cb57-2"><a href="#cb57-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb57-3"><a href="#cb57-3" aria-hidden="true" tabindex="-1"></a>binned_residual_plot(bin_obs, bin_p, bin_counts)</span></code></pre></div>
+<center>
+<img src="/resources/nba_irt/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_files/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_87_0.png" title="fig:" alt="png" />
+</center>
+<p>For the Rasch model (and subsequent models), we switch from visualizing the per-player call probabilities to the latent parameters <span class="math inline">\(\theta_i\)</span> and <span class="math inline">\(b_j\)</span>.</p>
+<div class="sourceCode" id="cb58"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb58-1"><a href="#cb58-1" aria-hidden="true" tabindex="-1"></a>μ_θ_mean <span class="op">=</span> rasch_trace[<span class="st">&#39;μ_θ&#39;</span>].mean()</span>
+<span id="cb58-2"><a href="#cb58-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb58-3"><a href="#cb58-3" aria-hidden="true" tabindex="-1"></a>rasch_df <span class="op">=</span> to_param_df(team_player_map, rasch_trace, [<span class="st">&#39;θ&#39;</span>, <span class="st">&#39;b&#39;</span>])</span></code></pre></div>
+<div class="sourceCode" id="cb59"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb59-1"><a href="#cb59-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> plot_params_helper(mean, low, high, names, league_mean<span class="op">=</span><span class="va">None</span>, league_mean_name<span class="op">=</span><span class="va">None</span>, ax<span class="op">=</span><span class="va">None</span>, <span class="op">**</span>kwargs):</span>
+<span id="cb59-2"><a href="#cb59-2" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> ax <span class="kw">is</span> <span class="va">None</span>:</span>
+<span id="cb59-3"><a href="#cb59-3" aria-hidden="true" tabindex="-1"></a>        ax <span class="op">=</span> plt.gca()</span>
+<span id="cb59-4"><a href="#cb59-4" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb59-5"><a href="#cb59-5" aria-hidden="true" tabindex="-1"></a>    mean <span class="op">=</span> mean.values</span>
+<span id="cb59-6"><a href="#cb59-6" aria-hidden="true" tabindex="-1"></a>    names <span class="op">=</span> names.values</span>
+<span id="cb59-7"><a href="#cb59-7" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb59-8"><a href="#cb59-8" aria-hidden="true" tabindex="-1"></a>    argsorted_ix <span class="op">=</span> mean.argsort()</span>
+<span id="cb59-9"><a href="#cb59-9" aria-hidden="true" tabindex="-1"></a>    interval <span class="op">=</span> np.row_stack([low, high])</span>
+<span id="cb59-10"><a href="#cb59-10" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb59-11"><a href="#cb59-11" aria-hidden="true" tabindex="-1"></a>    plot_params(mean[argsorted_ix], interval[:, argsorted_ix], names[argsorted_ix],</span>
+<span id="cb59-12"><a href="#cb59-12" aria-hidden="true" tabindex="-1"></a>                ax<span class="op">=</span>ax, <span class="op">**</span>kwargs)</span>
+<span id="cb59-13"><a href="#cb59-13" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb59-14"><a href="#cb59-14" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> league_mean <span class="kw">is</span> <span class="kw">not</span> <span class="va">None</span>:</span>
+<span id="cb59-15"><a href="#cb59-15" aria-hidden="true" tabindex="-1"></a>        ax.vlines(league_mean, <span class="op">-</span><span class="dv">1</span>, names.size,</span>
+<span id="cb59-16"><a href="#cb59-16" aria-hidden="true" tabindex="-1"></a>                  <span class="st">&#39;k&#39;</span>, <span class="st">&#39;--&#39;</span>,</span>
+<span id="cb59-17"><a href="#cb59-17" aria-hidden="true" tabindex="-1"></a>                  label<span class="op">=</span>league_mean_name)</span></code></pre></div>
+<div class="sourceCode" id="cb60"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb60-1"><a href="#cb60-1" aria-hidden="true" tabindex="-1"></a>grid <span class="op">=</span> sns.FacetGrid(rasch_df, col<span class="op">=</span><span class="st">&#39;team&#39;</span>, col_wrap<span class="op">=</span><span class="dv">2</span>,</span>
+<span id="cb60-2"><a href="#cb60-2" aria-hidden="true" tabindex="-1"></a>                     sharey<span class="op">=</span><span class="va">False</span>,</span>
+<span id="cb60-3"><a href="#cb60-3" aria-hidden="true" tabindex="-1"></a>                     size<span class="op">=</span><span class="dv">4</span>, aspect<span class="op">=</span><span class="fl">1.5</span>)</span>
+<span id="cb60-4"><a href="#cb60-4" aria-hidden="true" tabindex="-1"></a>grid.<span class="bu">map</span>(plot_params_helper,</span>
+<span id="cb60-5"><a href="#cb60-5" aria-hidden="true" tabindex="-1"></a>         <span class="st">&#39;θ_mean&#39;</span>, <span class="st">&#39;θ_low&#39;</span>, <span class="st">&#39;θ_high&#39;</span>, <span class="st">&#39;name&#39;</span>,</span>
+<span id="cb60-6"><a href="#cb60-6" aria-hidden="true" tabindex="-1"></a>         league_mean<span class="op">=</span>μ_θ_mean,</span>
+<span id="cb60-7"><a href="#cb60-7" aria-hidden="true" tabindex="-1"></a>         league_mean_name<span class="op">=</span><span class="vs">r&quot;$\mu_{\theta}$&quot;</span>)<span class="op">;</span></span>
+<span id="cb60-8"><a href="#cb60-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb60-9"><a href="#cb60-9" aria-hidden="true" tabindex="-1"></a>grid.set_axis_labels(<span class="vs">r&quot;$\theta$&quot;</span>, <span class="st">&quot;Player&quot;</span>)<span class="op">;</span></span>
+<span id="cb60-10"><a href="#cb60-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb60-11"><a href="#cb60-11" aria-hidden="true" tabindex="-1"></a>grid.fig.tight_layout()<span class="op">;</span></span>
+<span id="cb60-12"><a href="#cb60-12" aria-hidden="true" tabindex="-1"></a>grid.add_legend()<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/nba_irt/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_files/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_91_0.png" title="fig:" alt="png" />
+</center>
+<div class="sourceCode" id="cb61"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb61-1"><a href="#cb61-1" aria-hidden="true" tabindex="-1"></a>grid <span class="op">=</span> sns.FacetGrid(rasch_df, col<span class="op">=</span><span class="st">&#39;team&#39;</span>, col_wrap<span class="op">=</span><span class="dv">2</span>,</span>
+<span id="cb61-2"><a href="#cb61-2" aria-hidden="true" tabindex="-1"></a>                     sharey<span class="op">=</span><span class="va">False</span>,</span>
+<span id="cb61-3"><a href="#cb61-3" aria-hidden="true" tabindex="-1"></a>                     size<span class="op">=</span><span class="dv">4</span>, aspect<span class="op">=</span><span class="fl">1.5</span>)</span>
+<span id="cb61-4"><a href="#cb61-4" aria-hidden="true" tabindex="-1"></a>grid.<span class="bu">map</span>(plot_params_helper,</span>
+<span id="cb61-5"><a href="#cb61-5" aria-hidden="true" tabindex="-1"></a>         <span class="st">&#39;b_mean&#39;</span>, <span class="st">&#39;b_low&#39;</span>, <span class="st">&#39;b_high&#39;</span>, <span class="st">&#39;name&#39;</span>,</span>
+<span id="cb61-6"><a href="#cb61-6" aria-hidden="true" tabindex="-1"></a>         league_mean<span class="op">=</span><span class="fl">0.</span>)<span class="op">;</span></span>
+<span id="cb61-7"><a href="#cb61-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb61-8"><a href="#cb61-8" aria-hidden="true" tabindex="-1"></a>grid.set_axis_labels(<span class="vs">r&quot;$b$&quot;</span>, <span class="st">&quot;Player&quot;</span>)<span class="op">;</span></span>
+<span id="cb61-9"><a href="#cb61-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb61-10"><a href="#cb61-10" aria-hidden="true" tabindex="-1"></a>grid.fig.tight_layout()<span class="op">;</span></span>
+<span id="cb61-11"><a href="#cb61-11" aria-hidden="true" tabindex="-1"></a>grid.add_legend()<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/nba_irt/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_files/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_92_0.png" title="fig:" alt="png" />
+</center>
+<p>Though these plots are voluminuous and therefore difficult to interpret precisely, a few trends are evident. The first is that there is more variation in the committing skill (<span class="math inline">\(b_j\)</span>) than in disadvantaged skill (<span class="math inline">\(\theta_i\)</span>). This difference is confirmed in the following histograms of the posterior expected values of <span class="math inline">\(\theta_i\)</span> and <span class="math inline">\(b_j\)</span>.</p>
+<div class="sourceCode" id="cb62"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb62-1"><a href="#cb62-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> plot_latent_distributions(θ, b):</span>
+<span id="cb62-2"><a href="#cb62-2" aria-hidden="true" tabindex="-1"></a>    fig, (θ_ax, b_ax) <span class="op">=</span> plt.subplots(nrows<span class="op">=</span><span class="dv">2</span>, sharex<span class="op">=</span><span class="va">True</span>, figsize<span class="op">=</span>(<span class="dv">8</span>, <span class="dv">6</span>))</span>
+<span id="cb62-3"><a href="#cb62-3" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb62-4"><a href="#cb62-4" aria-hidden="true" tabindex="-1"></a>    bins <span class="op">=</span> np.linspace(<span class="fl">0.9</span> <span class="op">*</span> <span class="bu">min</span>(θ.<span class="bu">min</span>(), b.<span class="bu">min</span>()),</span>
+<span id="cb62-5"><a href="#cb62-5" aria-hidden="true" tabindex="-1"></a>                       <span class="fl">1.1</span> <span class="op">*</span> <span class="bu">max</span>(θ.<span class="bu">max</span>(), b.<span class="bu">max</span>()),</span>
+<span id="cb62-6"><a href="#cb62-6" aria-hidden="true" tabindex="-1"></a>                       <span class="dv">75</span>)</span>
+<span id="cb62-7"><a href="#cb62-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb62-8"><a href="#cb62-8" aria-hidden="true" tabindex="-1"></a>    θ_ax.hist(θ, bins<span class="op">=</span>bins,</span>
+<span id="cb62-9"><a href="#cb62-9" aria-hidden="true" tabindex="-1"></a>              alpha<span class="op">=</span><span class="fl">0.75</span>)</span>
+<span id="cb62-10"><a href="#cb62-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb62-11"><a href="#cb62-11" aria-hidden="true" tabindex="-1"></a>    θ_ax.xaxis.set_label_position(<span class="st">&#39;top&#39;</span>) </span>
+<span id="cb62-12"><a href="#cb62-12" aria-hidden="true" tabindex="-1"></a>    θ_ax.set_xlabel(<span class="vs">r&quot;Posterior expected $\theta$&quot;</span>)</span>
+<span id="cb62-13"><a href="#cb62-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb62-14"><a href="#cb62-14" aria-hidden="true" tabindex="-1"></a>    θ_ax.set_yticks([])</span>
+<span id="cb62-15"><a href="#cb62-15" aria-hidden="true" tabindex="-1"></a>    θ_ax.set_ylabel(<span class="st">&quot;Frequency&quot;</span>)</span>
+<span id="cb62-16"><a href="#cb62-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb62-17"><a href="#cb62-17" aria-hidden="true" tabindex="-1"></a>    b_ax.hist(b, bins<span class="op">=</span>bins,</span>
+<span id="cb62-18"><a href="#cb62-18" aria-hidden="true" tabindex="-1"></a>              color<span class="op">=</span>green, alpha<span class="op">=</span><span class="fl">0.75</span>)</span>
+<span id="cb62-19"><a href="#cb62-19" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb62-20"><a href="#cb62-20" aria-hidden="true" tabindex="-1"></a>    b_ax.xaxis.tick_top()</span>
+<span id="cb62-21"><a href="#cb62-21" aria-hidden="true" tabindex="-1"></a>    b_ax.set_xlabel(<span class="vs">r&quot;Posterior expected $b$&quot;</span>)</span>
+<span id="cb62-22"><a href="#cb62-22" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb62-23"><a href="#cb62-23" aria-hidden="true" tabindex="-1"></a>    b_ax.set_yticks([])</span>
+<span id="cb62-24"><a href="#cb62-24" aria-hidden="true" tabindex="-1"></a>    b_ax.invert_yaxis()</span>
+<span id="cb62-25"><a href="#cb62-25" aria-hidden="true" tabindex="-1"></a>    b_ax.set_ylabel(<span class="st">&quot;Frequency&quot;</span>)</span>
+<span id="cb62-26"><a href="#cb62-26" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb62-27"><a href="#cb62-27" aria-hidden="true" tabindex="-1"></a>    fig.tight_layout()</span></code></pre></div>
+<div class="sourceCode" id="cb63"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb63-1"><a href="#cb63-1" aria-hidden="true" tabindex="-1"></a>plot_latent_distributions(rasch_df.θ_mean, rasch_df.b_mean)</span></code></pre></div>
+<center>
+<img src="/resources/nba_irt/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_files/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_95_0.png" title="fig:" alt="png" />
+</center>
+<p>The following plots show the top and bottom ten players in terms of both <span class="math inline">\(\theta_i\)</span> and <span class="math inline">\(b_j\)</span>.</p>
+<div class="sourceCode" id="cb64"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb64-1"><a href="#cb64-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> top_10_plot(trace_df, μ_θ<span class="op">=</span><span class="dv">0</span>):</span>
+<span id="cb64-2"><a href="#cb64-2" aria-hidden="true" tabindex="-1"></a>    fig <span class="op">=</span> plt.figure(figsize<span class="op">=</span>(<span class="dv">16</span>, <span class="dv">10</span>))</span>
+<span id="cb64-3"><a href="#cb64-3" aria-hidden="true" tabindex="-1"></a>    θ_top_ax <span class="op">=</span> fig.add_subplot(<span class="dv">221</span>)</span>
+<span id="cb64-4"><a href="#cb64-4" aria-hidden="true" tabindex="-1"></a>    b_top_ax <span class="op">=</span> fig.add_subplot(<span class="dv">222</span>)</span>
+<span id="cb64-5"><a href="#cb64-5" aria-hidden="true" tabindex="-1"></a>    θ_bottom_ax <span class="op">=</span> fig.add_subplot(<span class="dv">223</span>, sharex<span class="op">=</span>θ_top_ax)</span>
+<span id="cb64-6"><a href="#cb64-6" aria-hidden="true" tabindex="-1"></a>    b_bottom_ax <span class="op">=</span> fig.add_subplot(<span class="dv">224</span>, sharex<span class="op">=</span>b_top_ax)</span>
+<span id="cb64-7"><a href="#cb64-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb64-8"><a href="#cb64-8" aria-hidden="true" tabindex="-1"></a>    <span class="co"># necessary for players that have been on more than one team</span></span>
+<span id="cb64-9"><a href="#cb64-9" aria-hidden="true" tabindex="-1"></a>    trace_df <span class="op">=</span> trace_df.drop_duplicates([<span class="st">&#39;player_id&#39;</span>])</span>
+<span id="cb64-10"><a href="#cb64-10" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb64-11"><a href="#cb64-11" aria-hidden="true" tabindex="-1"></a>    by_θ <span class="op">=</span> trace_df.sort_values(<span class="st">&#39;θ_mean&#39;</span>)</span>
+<span id="cb64-12"><a href="#cb64-12" aria-hidden="true" tabindex="-1"></a>    θ_top <span class="op">=</span> by_θ.iloc[<span class="op">-</span><span class="dv">10</span>:]</span>
+<span id="cb64-13"><a href="#cb64-13" aria-hidden="true" tabindex="-1"></a>    θ_bottom <span class="op">=</span> by_θ.iloc[:<span class="dv">10</span>]</span>
+<span id="cb64-14"><a href="#cb64-14" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb64-15"><a href="#cb64-15" aria-hidden="true" tabindex="-1"></a>    plot_params(θ_top.θ_mean.values, θ_top[[<span class="st">&#39;θ_low&#39;</span>, <span class="st">&#39;θ_high&#39;</span>]].values.T,</span>
+<span id="cb64-16"><a href="#cb64-16" aria-hidden="true" tabindex="-1"></a>                θ_top.name.values,</span>
+<span id="cb64-17"><a href="#cb64-17" aria-hidden="true" tabindex="-1"></a>                ax<span class="op">=</span>θ_top_ax)</span>
+<span id="cb64-18"><a href="#cb64-18" aria-hidden="true" tabindex="-1"></a>    θ_top_ax.vlines(μ_θ, <span class="op">-</span><span class="dv">1</span>, <span class="dv">10</span>,</span>
+<span id="cb64-19"><a href="#cb64-19" aria-hidden="true" tabindex="-1"></a>                    <span class="st">&#39;k&#39;</span>, <span class="st">&#39;--&#39;</span>,</span>
+<span id="cb64-20"><a href="#cb64-20" aria-hidden="true" tabindex="-1"></a>                    label<span class="op">=</span>(<span class="vs">r&quot;$\mu_{\theta}$&quot;</span> <span class="cf">if</span> μ_θ <span class="op">!=</span> <span class="dv">0</span> <span class="cf">else</span> <span class="st">&quot;League average&quot;</span>))</span>
+<span id="cb64-21"><a href="#cb64-21" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb64-22"><a href="#cb64-22" aria-hidden="true" tabindex="-1"></a>    plt.setp(θ_top_ax.get_xticklabels(), visible<span class="op">=</span><span class="va">False</span>)</span>
+<span id="cb64-23"><a href="#cb64-23" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb64-24"><a href="#cb64-24" aria-hidden="true" tabindex="-1"></a>    θ_top_ax.set_ylabel(<span class="st">&quot;Player&quot;</span>)</span>
+<span id="cb64-25"><a href="#cb64-25" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb64-26"><a href="#cb64-26" aria-hidden="true" tabindex="-1"></a>    θ_top_ax.legend(loc<span class="op">=</span><span class="dv">2</span>)</span>
+<span id="cb64-27"><a href="#cb64-27" aria-hidden="true" tabindex="-1"></a>    θ_top_ax.set_title(<span class="st">&quot;Top ten&quot;</span>)</span>
+<span id="cb64-28"><a href="#cb64-28" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb64-29"><a href="#cb64-29" aria-hidden="true" tabindex="-1"></a>    plot_params(θ_bottom.θ_mean.values, θ_bottom[[<span class="st">&#39;θ_low&#39;</span>, <span class="st">&#39;θ_high&#39;</span>]].values.T,</span>
+<span id="cb64-30"><a href="#cb64-30" aria-hidden="true" tabindex="-1"></a>                θ_bottom.name.values,</span>
+<span id="cb64-31"><a href="#cb64-31" aria-hidden="true" tabindex="-1"></a>                ax<span class="op">=</span>θ_bottom_ax)</span>
+<span id="cb64-32"><a href="#cb64-32" aria-hidden="true" tabindex="-1"></a>    θ_bottom_ax.vlines(μ_θ, <span class="op">-</span><span class="dv">1</span>, <span class="dv">10</span>,</span>
+<span id="cb64-33"><a href="#cb64-33" aria-hidden="true" tabindex="-1"></a>                       <span class="st">&#39;k&#39;</span>, <span class="st">&#39;--&#39;</span>,</span>
+<span id="cb64-34"><a href="#cb64-34" aria-hidden="true" tabindex="-1"></a>                       label<span class="op">=</span>(<span class="vs">r&quot;$\mu_{\theta}$&quot;</span> <span class="cf">if</span> μ_θ <span class="op">!=</span> <span class="dv">0</span> <span class="cf">else</span> <span class="st">&quot;League average&quot;</span>))</span>
+<span id="cb64-35"><a href="#cb64-35" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb64-36"><a href="#cb64-36" aria-hidden="true" tabindex="-1"></a>    θ_bottom_ax.set_xlabel(<span class="vs">r&quot;$\theta$&quot;</span>)</span>
+<span id="cb64-37"><a href="#cb64-37" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb64-38"><a href="#cb64-38" aria-hidden="true" tabindex="-1"></a>    θ_bottom_ax.set_ylabel(<span class="st">&quot;Player&quot;</span>)</span>
+<span id="cb64-39"><a href="#cb64-39" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb64-40"><a href="#cb64-40" aria-hidden="true" tabindex="-1"></a>    θ_bottom_ax.set_title(<span class="st">&quot;Bottom ten&quot;</span>)</span>
+<span id="cb64-41"><a href="#cb64-41" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb64-42"><a href="#cb64-42" aria-hidden="true" tabindex="-1"></a>    by_b <span class="op">=</span> trace_df.sort_values(<span class="st">&#39;b_mean&#39;</span>)</span>
+<span id="cb64-43"><a href="#cb64-43" aria-hidden="true" tabindex="-1"></a>    b_top <span class="op">=</span> by_b.iloc[<span class="op">-</span><span class="dv">10</span>:]</span>
+<span id="cb64-44"><a href="#cb64-44" aria-hidden="true" tabindex="-1"></a>    b_bottom <span class="op">=</span> by_b.iloc[:<span class="dv">10</span>]</span>
+<span id="cb64-45"><a href="#cb64-45" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb64-46"><a href="#cb64-46" aria-hidden="true" tabindex="-1"></a>    plot_params(b_top.b_mean.values, b_top[[<span class="st">&#39;b_low&#39;</span>, <span class="st">&#39;b_high&#39;</span>]].values.T,</span>
+<span id="cb64-47"><a href="#cb64-47" aria-hidden="true" tabindex="-1"></a>                b_top.name.values,</span>
+<span id="cb64-48"><a href="#cb64-48" aria-hidden="true" tabindex="-1"></a>                ax<span class="op">=</span>b_top_ax)</span>
+<span id="cb64-49"><a href="#cb64-49" aria-hidden="true" tabindex="-1"></a>    b_top_ax.vlines(<span class="dv">0</span>, <span class="op">-</span><span class="dv">1</span>, <span class="dv">10</span>,</span>
+<span id="cb64-50"><a href="#cb64-50" aria-hidden="true" tabindex="-1"></a>                    <span class="st">&#39;k&#39;</span>, <span class="st">&#39;--&#39;</span>,</span>
+<span id="cb64-51"><a href="#cb64-51" aria-hidden="true" tabindex="-1"></a>                    label<span class="op">=</span><span class="st">&quot;League average&quot;</span>)<span class="op">;</span></span>
+<span id="cb64-52"><a href="#cb64-52" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb64-53"><a href="#cb64-53" aria-hidden="true" tabindex="-1"></a>    plt.setp(b_top_ax.get_xticklabels(), visible<span class="op">=</span><span class="va">False</span>)</span>
+<span id="cb64-54"><a href="#cb64-54" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb64-55"><a href="#cb64-55" aria-hidden="true" tabindex="-1"></a>    b_top_ax.legend(loc<span class="op">=</span><span class="dv">2</span>)</span>
+<span id="cb64-56"><a href="#cb64-56" aria-hidden="true" tabindex="-1"></a>    b_top_ax.set_title(<span class="st">&quot;Top ten&quot;</span>)</span>
+<span id="cb64-57"><a href="#cb64-57" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb64-58"><a href="#cb64-58" aria-hidden="true" tabindex="-1"></a>    b_bottom_player_id <span class="op">=</span> b.argsort()[:<span class="dv">10</span>]</span>
+<span id="cb64-59"><a href="#cb64-59" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb64-60"><a href="#cb64-60" aria-hidden="true" tabindex="-1"></a>    plot_params(b_bottom.b_mean.values, b_bottom[[<span class="st">&#39;b_low&#39;</span>, <span class="st">&#39;b_high&#39;</span>]].values.T,</span>
+<span id="cb64-61"><a href="#cb64-61" aria-hidden="true" tabindex="-1"></a>                b_bottom.name.values,</span>
+<span id="cb64-62"><a href="#cb64-62" aria-hidden="true" tabindex="-1"></a>                ax<span class="op">=</span>b_bottom_ax)</span>
+<span id="cb64-63"><a href="#cb64-63" aria-hidden="true" tabindex="-1"></a>    b_bottom_ax.vlines(<span class="dv">0</span>, <span class="op">-</span><span class="dv">1</span>, <span class="dv">10</span>,</span>
+<span id="cb64-64"><a href="#cb64-64" aria-hidden="true" tabindex="-1"></a>                       <span class="st">&#39;k&#39;</span>, <span class="st">&#39;--&#39;</span>)</span>
+<span id="cb64-65"><a href="#cb64-65" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb64-66"><a href="#cb64-66" aria-hidden="true" tabindex="-1"></a>    b_bottom_ax.set_xlabel(<span class="vs">r&quot;$b$&quot;</span>)</span>
+<span id="cb64-67"><a href="#cb64-67" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb64-68"><a href="#cb64-68" aria-hidden="true" tabindex="-1"></a>    b_bottom_ax.set_title(<span class="st">&quot;Bottom ten&quot;</span>)</span>
+<span id="cb64-69"><a href="#cb64-69" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb64-70"><a href="#cb64-70" aria-hidden="true" tabindex="-1"></a>    fig.tight_layout()</span></code></pre></div>
+<div class="sourceCode" id="cb65"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb65-1"><a href="#cb65-1" aria-hidden="true" tabindex="-1"></a>top_10_plot(rasch_df, μ_θ<span class="op">=</span>μ_θ_mean)</span></code></pre></div>
+<center>
+<img src="/resources/nba_irt/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_files/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_98_0.png" title="fig:" alt="png" />
+</center>
+<p>We focus first on <span class="math inline">\(\theta_i\)</span>. Interestingly, the top-ten players for the Rasch model contains many more top-tier stars than the logistic-normal model, including John Wall, Russell Westbrook, and LeBron James. Turning to <span class="math inline">\(b\)</span>, it is interesting that the while the top and bottom ten players contain many recognizable names (LaMarcus Aldridge, Harrison Barnes, Kawhi Leonard, and Ricky Rubio) the only truly top-tier player present is Anthony Davis.</p>
+<h3 id="time-remaining-model">Time remaining model</h3>
+<p>As basketball fans know, there are many factors other than the players involved that influence foul calls. Very often, sufficiently close NBA games end with intentional fouls, as the losing team attempts to stop the clock and force another offensive possesion. Therefore, we expect to see in increase in the foul call probability as the game nears its conclusion.</p>
+<div class="sourceCode" id="cb66"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb66-1"><a href="#cb66-1" aria-hidden="true" tabindex="-1"></a>n_sec <span class="op">=</span> <span class="dv">121</span></span>
+<span id="cb66-2"><a href="#cb66-2" aria-hidden="true" tabindex="-1"></a>sec <span class="op">=</span> (df.seconds_left</span>
+<span id="cb66-3"><a href="#cb66-3" aria-hidden="true" tabindex="-1"></a>         .<span class="bu">round</span>(<span class="dv">0</span>)</span>
+<span id="cb66-4"><a href="#cb66-4" aria-hidden="true" tabindex="-1"></a>         .values</span>
+<span id="cb66-5"><a href="#cb66-5" aria-hidden="true" tabindex="-1"></a>         .astype(np.int64))</span></code></pre></div>
+<div class="sourceCode" id="cb67"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb67-1"><a href="#cb67-1" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plt.subplots(figsize<span class="op">=</span>(<span class="dv">8</span>, <span class="dv">6</span>))</span>
+<span id="cb67-2"><a href="#cb67-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb67-3"><a href="#cb67-3" aria-hidden="true" tabindex="-1"></a>(df.groupby(sec)</span>
+<span id="cb67-4"><a href="#cb67-4" aria-hidden="true" tabindex="-1"></a>   .foul_called</span>
+<span id="cb67-5"><a href="#cb67-5" aria-hidden="true" tabindex="-1"></a>   .mean()</span>
+<span id="cb67-6"><a href="#cb67-6" aria-hidden="true" tabindex="-1"></a>   .plot(c<span class="op">=</span><span class="st">&#39;k&#39;</span>, label<span class="op">=</span><span class="st">&quot;Observed foul call rate&quot;</span>, ax<span class="op">=</span>ax))<span class="op">;</span></span>
+<span id="cb67-7"><a href="#cb67-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb67-8"><a href="#cb67-8" aria-hidden="true" tabindex="-1"></a>ax.set_xticks(np.linspace(<span class="dv">0</span>, <span class="dv">120</span>, <span class="dv">5</span>))<span class="op">;</span></span>
+<span id="cb67-9"><a href="#cb67-9" aria-hidden="true" tabindex="-1"></a>ax.invert_xaxis()<span class="op">;</span></span>
+<span id="cb67-10"><a href="#cb67-10" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="st">&quot;Seconds remaining in game&quot;</span>)<span class="op">;</span></span>
+<span id="cb67-11"><a href="#cb67-11" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb67-12"><a href="#cb67-12" aria-hidden="true" tabindex="-1"></a>ax.yaxis.set_major_formatter(pct_formatter)<span class="op">;</span></span>
+<span id="cb67-13"><a href="#cb67-13" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="st">&quot;Probability foul is called&quot;</span>)<span class="op">;</span></span>
+<span id="cb67-14"><a href="#cb67-14" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb67-15"><a href="#cb67-15" aria-hidden="true" tabindex="-1"></a>ax.legend(loc<span class="op">=</span><span class="dv">2</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/nba_irt/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_files/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_102_0.png" title="fig:" alt="png" />
+</center>
+<p>The plot above confirms this expectation, which we can use to improve our latent skill model. If <span class="math inline">\(t \in \{0, 1, \ldots, 120\}\)</span> is the number of seconds remaining in the game, we model the latent contribution of <span class="math inline">\(t\)</span> to the logodds that a foul is called with a <a href="https://en.wikipedia.org/wiki/Random_walk#Gaussian_random_walk">Gaussian random walk</a>,</p>
+<p><span class="math display">\[
+\begin{align*}
+\lambda_0
+    &amp; \sim N(0, 100) \\
+\lambda_t
+    &amp; \sim N(\lambda_{t - 1}, \tau^{-1}_{\lambda}) \\
+\tau_{\lambda}
+    &amp; \sim \textrm{Exp}(10^{-4}).
+\end{align*}
+\]</span></p>
+<p>This prior allows us to flexibly model the shape of the curve shown above. If <span class="math inline">\(t(k)\)</span> is the number of seconds remaining during the <span class="math inline">\(k\)</span>-th play, we incorporate <span class="math inline">\(\lambda_{t(k)}\)</span> into our model with</p>
+<p><span class="math display">\[\eta_k = \lambda_{t(k)} + \theta_{i(k)} - b_{j(k)}.\]</span></p>
+<p>This model is not identified until we constrain the mean of <span class="math inline">\(\theta\)</span> to be zero, for reasons similar to those discussed above for the Rasch model.</p>
+<div class="sourceCode" id="cb68"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb68-1"><a href="#cb68-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> pm.Model() <span class="im">as</span> time_model:</span>
+<span id="cb68-2"><a href="#cb68-2" aria-hidden="true" tabindex="-1"></a>    τ_λ <span class="op">=</span> pm.Exponential(<span class="st">&#39;τ_λ&#39;</span>, <span class="fl">1e-4</span>)</span>
+<span id="cb68-3"><a href="#cb68-3" aria-hidden="true" tabindex="-1"></a>    λ <span class="op">=</span> pm.GaussianRandomWalk(<span class="st">&#39;λ&#39;</span>, tau<span class="op">=</span>τ_λ,</span>
+<span id="cb68-4"><a href="#cb68-4" aria-hidden="true" tabindex="-1"></a>                              init<span class="op">=</span>pm.Normal.dist(<span class="fl">0.</span>, <span class="fl">10.</span>),</span>
+<span id="cb68-5"><a href="#cb68-5" aria-hidden="true" tabindex="-1"></a>                              shape<span class="op">=</span>n_sec)</span>
+<span id="cb68-6"><a href="#cb68-6" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb68-7"><a href="#cb68-7" aria-hidden="true" tabindex="-1"></a>    Δ_θ <span class="op">=</span> pm.Normal(<span class="st">&#39;Δ_θ&#39;</span>, <span class="fl">0.</span>, <span class="fl">1.</span>, shape<span class="op">=</span>n_players)</span>
+<span id="cb68-8"><a href="#cb68-8" aria-hidden="true" tabindex="-1"></a>    σ_θ <span class="op">=</span> pm.HalfCauchy(<span class="st">&#39;σ_θ&#39;</span>, <span class="fl">2.5</span>)</span>
+<span id="cb68-9"><a href="#cb68-9" aria-hidden="true" tabindex="-1"></a>    θ <span class="op">=</span> pm.Deterministic(<span class="st">&#39;θ&#39;</span>, Δ_θ <span class="op">*</span> σ_θ)</span>
+<span id="cb68-10"><a href="#cb68-10" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb68-11"><a href="#cb68-11" aria-hidden="true" tabindex="-1"></a>    Δ_b <span class="op">=</span> pm.Normal(<span class="st">&#39;Δ_b&#39;</span>, <span class="fl">0.</span>, <span class="fl">1.</span>, shape<span class="op">=</span>n_players)</span>
+<span id="cb68-12"><a href="#cb68-12" aria-hidden="true" tabindex="-1"></a>    σ_b <span class="op">=</span> pm.HalfCauchy(<span class="st">&#39;σ_b&#39;</span>, <span class="fl">2.5</span>)</span>
+<span id="cb68-13"><a href="#cb68-13" aria-hidden="true" tabindex="-1"></a>    b <span class="op">=</span> pm.Deterministic(<span class="st">&#39;b&#39;</span>, Δ_b <span class="op">*</span> σ_b)</span>
+<span id="cb68-14"><a href="#cb68-14" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb68-15"><a href="#cb68-15" aria-hidden="true" tabindex="-1"></a>    η <span class="op">=</span> λ[sec] <span class="op">+</span> θ[disadvantaged_id] <span class="op">-</span> b[committing_id]</span>
+<span id="cb68-16"><a href="#cb68-16" aria-hidden="true" tabindex="-1"></a>    p <span class="op">=</span> pm.Deterministic(<span class="st">&#39;p&#39;</span>, pm.math.sigmoid(η))</span>
+<span id="cb68-17"><a href="#cb68-17" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb68-18"><a href="#cb68-18" aria-hidden="true" tabindex="-1"></a>    y <span class="op">=</span> pm.Bernoulli(<span class="st">&#39;y_obs&#39;</span>, p, observed<span class="op">=</span>foul_called)</span></code></pre></div>
+<p>We now sample from the model.</p>
+<div class="sourceCode" id="cb69"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb69-1"><a href="#cb69-1" aria-hidden="true" tabindex="-1"></a>time_trace <span class="op">=</span> sample(time_model, N_TUNE, N_SAMPLES, SEED)</span></code></pre></div>
+<pre><code>Auto-assigning NUTS sampler...
+Initializing NUTS using advi...
+Average ELBO = -1.0533e+05:  15%|█▌        | 30300/200000 [00:31&lt;02:52, 982.03it/s] Median ELBO converged.
+Finished [100%]: Average ELBO = -3,104.5
+
+100%|██████████| 4000/4000 [03:10&lt;00:00, 20.99it/s]</code></pre>
+<p>The energy plot for this model is worse than the previous ones, but not too bad.</p>
+<div class="sourceCode" id="cb71"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb71-1"><a href="#cb71-1" aria-hidden="true" tabindex="-1"></a>energy_plot(time_trace)</span></code></pre></div>
+<center>
+<img src="/resources/nba_irt/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_files/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_108_0.png" title="fig:" alt="png" />
+</center>
+<div class="sourceCode" id="cb72"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb72-1"><a href="#cb72-1" aria-hidden="true" tabindex="-1"></a>waic_df <span class="op">=</span> waic_df.append(get_waic_df(time_model, time_trace, <span class="st">&quot;Time&quot;</span>))</span></code></pre></div>
+<div class="sourceCode" id="cb73"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb73-1"><a href="#cb73-1" aria-hidden="true" tabindex="-1"></a>waic_plot(waic_df)</span></code></pre></div>
+<center>
+<img src="/resources/nba_irt/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_files/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_110_0.png" title="fig:" alt="png" />
+</center>
+<p>We see that the time remaining model represents an appreciable improvement over the Rasch model in terms of WAIC.</p>
+<div class="sourceCode" id="cb74"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb74-1"><a href="#cb74-1" aria-hidden="true" tabindex="-1"></a>bin_obs, bin_p, bin_counts <span class="op">=</span> binned_residuals(foul_called, time_trace[<span class="st">&#39;p&#39;</span>])</span>
+<span id="cb74-2"><a href="#cb74-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb74-3"><a href="#cb74-3" aria-hidden="true" tabindex="-1"></a>binned_residual_plot(bin_obs, bin_p, bin_counts)</span></code></pre></div>
+<center>
+<img src="/resources/nba_irt/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_files/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_112_0.png" title="fig:" alt="png" />
+</center>
+<p>The binned residuals for this model also look quite good, with very few samples appreciably exceeding a 1% difference.</p>
+<p>We now compare the distribtuions of <span class="math inline">\(\theta_i\)</span> and <span class="math inline">\(b_j\)</span> for this model with those for the Rasch model.</p>
+<div class="sourceCode" id="cb75"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb75-1"><a href="#cb75-1" aria-hidden="true" tabindex="-1"></a>time_df <span class="op">=</span> to_param_df(team_player_map, time_trace, [<span class="st">&#39;θ&#39;</span>, <span class="st">&#39;b&#39;</span>])</span></code></pre></div>
+<div class="sourceCode" id="cb76"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb76-1"><a href="#cb76-1" aria-hidden="true" tabindex="-1"></a>plot_latent_distributions(time_df.θ_mean, time_df.b_mean)</span></code></pre></div>
+<center>
+<img src="/resources/nba_irt/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_files/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_115_0.png" title="fig:" alt="png" />
+</center>
+<p>The effect of constraining the mean of <span class="math inline">\(\theta\)</span> to be zero is immediately apparent. Also, the variation in <span class="math inline">\(\theta\)</span> remains lower than the variation than <span class="math inline">\(b\)</span> in this model. We also see that the top- and bottom-ten players by <span class="math inline">\(\theta\)</span>- and <span class="math inline">\(b\)</span>-value remain largely unchanged from the Rasch model.</p>
+<div class="sourceCode" id="cb77"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb77-1"><a href="#cb77-1" aria-hidden="true" tabindex="-1"></a>top_10_plot(time_df)</span></code></pre></div>
+<center>
+<img src="/resources/nba_irt/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_files/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_117_0.png" title="fig:" alt="png" />
+</center>
+<p>Basketball fans may find it amusing that under this model, Dwight Howard has joined the top-ten in terms of <span class="math inline">\(\theta\)</span> and Ricky Rubio is no longer the worst player in terms of <span class="math inline">\(b\)</span>.</p>
+<p>While this model has not done much to change the rank-ordering of the most- and least-skilled players, it does enable us to plot per-player foul probabilities over time, as below.</p>
+<div class="sourceCode" id="cb78"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb78-1"><a href="#cb78-1" aria-hidden="true" tabindex="-1"></a>fig, (θ_ax, b_ax) <span class="op">=</span> plt.subplots(ncols<span class="op">=</span><span class="dv">2</span>, sharex<span class="op">=</span><span class="va">True</span>, sharey<span class="op">=</span><span class="va">True</span>, figsize<span class="op">=</span>(<span class="dv">16</span>, <span class="dv">6</span>))</span>
+<span id="cb78-2"><a href="#cb78-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb78-3"><a href="#cb78-3" aria-hidden="true" tabindex="-1"></a>(df.groupby(sec)</span>
+<span id="cb78-4"><a href="#cb78-4" aria-hidden="true" tabindex="-1"></a>   .foul_called</span>
+<span id="cb78-5"><a href="#cb78-5" aria-hidden="true" tabindex="-1"></a>   .mean()</span>
+<span id="cb78-6"><a href="#cb78-6" aria-hidden="true" tabindex="-1"></a>   .plot(c<span class="op">=</span><span class="st">&#39;k&#39;</span>, alpha<span class="op">=</span><span class="fl">0.5</span>,</span>
+<span id="cb78-7"><a href="#cb78-7" aria-hidden="true" tabindex="-1"></a>         label<span class="op">=</span><span class="st">&quot;Observed foul call rate&quot;</span>,</span>
+<span id="cb78-8"><a href="#cb78-8" aria-hidden="true" tabindex="-1"></a>         ax<span class="op">=</span>θ_ax))<span class="op">;</span></span>
+<span id="cb78-9"><a href="#cb78-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb78-10"><a href="#cb78-10" aria-hidden="true" tabindex="-1"></a>plot_sec <span class="op">=</span> np.arange(n_sec)</span>
+<span id="cb78-11"><a href="#cb78-11" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb78-12"><a href="#cb78-12" aria-hidden="true" tabindex="-1"></a>θ_ax.plot(plot_sec, expit(time_trace[<span class="st">&#39;λ&#39;</span>].mean(axis<span class="op">=</span><span class="dv">0</span>)),</span>
+<span id="cb78-13"><a href="#cb78-13" aria-hidden="true" tabindex="-1"></a>          c<span class="op">=</span><span class="st">&#39;k&#39;</span>,</span>
+<span id="cb78-14"><a href="#cb78-14" aria-hidden="true" tabindex="-1"></a>          label<span class="op">=</span><span class="st">&quot;Average player&quot;</span>)<span class="op">;</span></span>
+<span id="cb78-15"><a href="#cb78-15" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb78-16"><a href="#cb78-16" aria-hidden="true" tabindex="-1"></a>θ_best_id <span class="op">=</span> time_df.ix[time_df.θ_mean.idxmax()].player_id</span>
+<span id="cb78-17"><a href="#cb78-17" aria-hidden="true" tabindex="-1"></a>θ_ax.plot(plot_sec, expit(time_trace[<span class="st">&#39;θ&#39;</span>][:, θ_best_id].mean(axis<span class="op">=</span><span class="dv">0</span>) <span class="op">\</span></span>
+<span id="cb78-18"><a href="#cb78-18" aria-hidden="true" tabindex="-1"></a>                          <span class="op">+</span> time_trace[<span class="st">&#39;λ&#39;</span>].mean(axis<span class="op">=</span><span class="dv">0</span>)),</span>
+<span id="cb78-19"><a href="#cb78-19" aria-hidden="true" tabindex="-1"></a>          label<span class="op">=</span>player_map[θ_best_id])<span class="op">;</span></span>
+<span id="cb78-20"><a href="#cb78-20" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb78-21"><a href="#cb78-21" aria-hidden="true" tabindex="-1"></a>θ_worst_id <span class="op">=</span> time_df.ix[time_df.θ_mean.idxmin()].player_id</span>
+<span id="cb78-22"><a href="#cb78-22" aria-hidden="true" tabindex="-1"></a>θ_ax.plot(plot_sec, expit(time_trace[<span class="st">&#39;θ&#39;</span>][:, θ_worst_id].mean(axis<span class="op">=</span><span class="dv">0</span>) <span class="op">\</span></span>
+<span id="cb78-23"><a href="#cb78-23" aria-hidden="true" tabindex="-1"></a>                          <span class="op">+</span> time_trace[<span class="st">&#39;λ&#39;</span>].mean(axis<span class="op">=</span><span class="dv">0</span>)),</span>
+<span id="cb78-24"><a href="#cb78-24" aria-hidden="true" tabindex="-1"></a>          label<span class="op">=</span>player_map[θ_worst_id])<span class="op">;</span></span>
+<span id="cb78-25"><a href="#cb78-25" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb78-26"><a href="#cb78-26" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb78-27"><a href="#cb78-27" aria-hidden="true" tabindex="-1"></a>θ_ax.set_xticks(np.linspace(<span class="dv">0</span>, <span class="dv">120</span>, <span class="dv">5</span>))<span class="op">;</span></span>
+<span id="cb78-28"><a href="#cb78-28" aria-hidden="true" tabindex="-1"></a>θ_ax.invert_xaxis()<span class="op">;</span></span>
+<span id="cb78-29"><a href="#cb78-29" aria-hidden="true" tabindex="-1"></a>θ_ax.set_xlabel(<span class="st">&quot;Seconds remaining in game&quot;</span>)<span class="op">;</span></span>
+<span id="cb78-30"><a href="#cb78-30" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb78-31"><a href="#cb78-31" aria-hidden="true" tabindex="-1"></a>θ_ax.yaxis.set_major_formatter(pct_formatter)<span class="op">;</span></span>
+<span id="cb78-32"><a href="#cb78-32" aria-hidden="true" tabindex="-1"></a>θ_ax.set_ylabel(<span class="st">&quot;Probability foul is called</span><span class="ch">\n</span><span class="st">against average opposing player&quot;</span>)<span class="op">;</span></span>
+<span id="cb78-33"><a href="#cb78-33" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb78-34"><a href="#cb78-34" aria-hidden="true" tabindex="-1"></a>θ_ax.legend(loc<span class="op">=</span><span class="dv">2</span>)<span class="op">;</span></span>
+<span id="cb78-35"><a href="#cb78-35" aria-hidden="true" tabindex="-1"></a>θ_ax.set_title(<span class="vs">r&quot;Disadvantaged player ($\theta$)&quot;</span>)<span class="op">;</span></span>
+<span id="cb78-36"><a href="#cb78-36" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb78-37"><a href="#cb78-37" aria-hidden="true" tabindex="-1"></a>(df.groupby(sec)</span>
+<span id="cb78-38"><a href="#cb78-38" aria-hidden="true" tabindex="-1"></a>   .foul_called</span>
+<span id="cb78-39"><a href="#cb78-39" aria-hidden="true" tabindex="-1"></a>   .mean()</span>
+<span id="cb78-40"><a href="#cb78-40" aria-hidden="true" tabindex="-1"></a>   .plot(c<span class="op">=</span><span class="st">&#39;k&#39;</span>, alpha<span class="op">=</span><span class="fl">0.5</span>,</span>
+<span id="cb78-41"><a href="#cb78-41" aria-hidden="true" tabindex="-1"></a>         label<span class="op">=</span><span class="st">&quot;Observed foul call rate&quot;</span>,</span>
+<span id="cb78-42"><a href="#cb78-42" aria-hidden="true" tabindex="-1"></a>         ax<span class="op">=</span>b_ax))<span class="op">;</span></span>
+<span id="cb78-43"><a href="#cb78-43" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb78-44"><a href="#cb78-44" aria-hidden="true" tabindex="-1"></a>plot_sec <span class="op">=</span> np.arange(n_sec)</span>
+<span id="cb78-45"><a href="#cb78-45" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb78-46"><a href="#cb78-46" aria-hidden="true" tabindex="-1"></a>b_ax.plot(plot_sec, expit(time_trace[<span class="st">&#39;λ&#39;</span>].mean(axis<span class="op">=</span><span class="dv">0</span>)),</span>
+<span id="cb78-47"><a href="#cb78-47" aria-hidden="true" tabindex="-1"></a>          c<span class="op">=</span><span class="st">&#39;k&#39;</span>,</span>
+<span id="cb78-48"><a href="#cb78-48" aria-hidden="true" tabindex="-1"></a>          label<span class="op">=</span><span class="st">&quot;Average player&quot;</span>)<span class="op">;</span></span>
+<span id="cb78-49"><a href="#cb78-49" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb78-50"><a href="#cb78-50" aria-hidden="true" tabindex="-1"></a>b_best_id <span class="op">=</span> time_df.ix[time_df.b_mean.idxmax()].player_id</span>
+<span id="cb78-51"><a href="#cb78-51" aria-hidden="true" tabindex="-1"></a>b_ax.plot(plot_sec, expit(<span class="op">-</span>time_trace[<span class="st">&#39;b&#39;</span>][:, b_best_id].mean(axis<span class="op">=</span><span class="dv">0</span>) <span class="op">\</span></span>
+<span id="cb78-52"><a href="#cb78-52" aria-hidden="true" tabindex="-1"></a>                          <span class="op">+</span> time_trace[<span class="st">&#39;λ&#39;</span>].mean(axis<span class="op">=</span><span class="dv">0</span>)),</span>
+<span id="cb78-53"><a href="#cb78-53" aria-hidden="true" tabindex="-1"></a>          label<span class="op">=</span>player_map[b_best_id])<span class="op">;</span></span>
+<span id="cb78-54"><a href="#cb78-54" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb78-55"><a href="#cb78-55" aria-hidden="true" tabindex="-1"></a>b_worst_id <span class="op">=</span> time_df.ix[time_df.b_mean.idxmin()].player_id</span>
+<span id="cb78-56"><a href="#cb78-56" aria-hidden="true" tabindex="-1"></a>b_ax.plot(plot_sec, expit(<span class="op">-</span>time_trace[<span class="st">&#39;b&#39;</span>][:, b_worst_id].mean(axis<span class="op">=</span><span class="dv">0</span>) <span class="op">\</span></span>
+<span id="cb78-57"><a href="#cb78-57" aria-hidden="true" tabindex="-1"></a>                          <span class="op">+</span> time_trace[<span class="st">&#39;λ&#39;</span>].mean(axis<span class="op">=</span><span class="dv">0</span>)),</span>
+<span id="cb78-58"><a href="#cb78-58" aria-hidden="true" tabindex="-1"></a>          label<span class="op">=</span>player_map[b_worst_id])<span class="op">;</span></span>
+<span id="cb78-59"><a href="#cb78-59" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb78-60"><a href="#cb78-60" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb78-61"><a href="#cb78-61" aria-hidden="true" tabindex="-1"></a>b_ax.set_xticks(np.linspace(<span class="dv">0</span>, <span class="dv">120</span>, <span class="dv">5</span>))<span class="op">;</span></span>
+<span id="cb78-62"><a href="#cb78-62" aria-hidden="true" tabindex="-1"></a>b_ax.invert_xaxis()<span class="op">;</span></span>
+<span id="cb78-63"><a href="#cb78-63" aria-hidden="true" tabindex="-1"></a>b_ax.set_xlabel(<span class="st">&quot;Seconds remaining in game&quot;</span>)<span class="op">;</span></span>
+<span id="cb78-64"><a href="#cb78-64" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb78-65"><a href="#cb78-65" aria-hidden="true" tabindex="-1"></a>b_ax.legend(loc<span class="op">=</span><span class="dv">2</span>)<span class="op">;</span></span>
+<span id="cb78-66"><a href="#cb78-66" aria-hidden="true" tabindex="-1"></a>b_ax.set_title(<span class="vs">r&quot;Committing player ($b$)&quot;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/nba_irt/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_files/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_119_0.png" title="fig:" alt="png" />
+</center>
+<p>Here we have plotted the probability of a foul call while being opposed by an average player (for both <span class="math inline">\(\theta\)</span> and <span class="math inline">\(b\)</span>), along with the probability curves for the players with the highest and lowest <span class="math inline">\(\theta\)</span> and <span class="math inline">\(b\)</span>, respectively. While these plots are quite interesting, one weakness of our model is that the difference between each player’s curve and the league average is constant over time. It would be an interesting and useful to extend this model to allow player offsets to vary over time. Additonally, it would be interesting to understand the influence of the score on the foul-called rate as the game nears its end. It seems quite likely that the winning team is much less likely to commit fouls while the losing team is much more likely to to commit intentional fouls in close games.</p>
+<p>We now plot the per-player values of <span class="math inline">\(\theta_i\)</span> and <span class="math inline">\(b_j\)</span> under this model.</p>
+<div class="sourceCode" id="cb79"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb79-1"><a href="#cb79-1" aria-hidden="true" tabindex="-1"></a>grid <span class="op">=</span> sns.FacetGrid(time_df, col<span class="op">=</span><span class="st">&#39;team&#39;</span>, col_wrap<span class="op">=</span><span class="dv">2</span>,</span>
+<span id="cb79-2"><a href="#cb79-2" aria-hidden="true" tabindex="-1"></a>                     sharey<span class="op">=</span><span class="va">False</span>,</span>
+<span id="cb79-3"><a href="#cb79-3" aria-hidden="true" tabindex="-1"></a>                     size<span class="op">=</span><span class="dv">4</span>, aspect<span class="op">=</span><span class="fl">1.5</span>)</span>
+<span id="cb79-4"><a href="#cb79-4" aria-hidden="true" tabindex="-1"></a>grid.<span class="bu">map</span>(plot_params_helper,</span>
+<span id="cb79-5"><a href="#cb79-5" aria-hidden="true" tabindex="-1"></a>         <span class="st">&#39;θ_mean&#39;</span>, <span class="st">&#39;θ_low&#39;</span>, <span class="st">&#39;θ_high&#39;</span>, <span class="st">&#39;name&#39;</span>,</span>
+<span id="cb79-6"><a href="#cb79-6" aria-hidden="true" tabindex="-1"></a>         league_mean<span class="op">=</span><span class="fl">0.</span>,</span>
+<span id="cb79-7"><a href="#cb79-7" aria-hidden="true" tabindex="-1"></a>         league_mean_name<span class="op">=</span><span class="st">&quot;League average&quot;</span>)<span class="op">;</span></span>
+<span id="cb79-8"><a href="#cb79-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb79-9"><a href="#cb79-9" aria-hidden="true" tabindex="-1"></a>grid.set_axis_labels(<span class="vs">r&quot;$\theta$&quot;</span>, <span class="st">&quot;Player&quot;</span>)<span class="op">;</span></span>
+<span id="cb79-10"><a href="#cb79-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb79-11"><a href="#cb79-11" aria-hidden="true" tabindex="-1"></a>grid.fig.tight_layout()<span class="op">;</span></span>
+<span id="cb79-12"><a href="#cb79-12" aria-hidden="true" tabindex="-1"></a>grid.add_legend()<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/nba_irt/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_files/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_121_0.png" title="fig:" alt="png" />
+</center>
+<div class="sourceCode" id="cb80"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb80-1"><a href="#cb80-1" aria-hidden="true" tabindex="-1"></a>grid <span class="op">=</span> sns.FacetGrid(time_df, col<span class="op">=</span><span class="st">&#39;team&#39;</span>, col_wrap<span class="op">=</span><span class="dv">2</span>,</span>
+<span id="cb80-2"><a href="#cb80-2" aria-hidden="true" tabindex="-1"></a>                     sharey<span class="op">=</span><span class="va">False</span>,</span>
+<span id="cb80-3"><a href="#cb80-3" aria-hidden="true" tabindex="-1"></a>                     size<span class="op">=</span><span class="dv">4</span>, aspect<span class="op">=</span><span class="fl">1.5</span>)</span>
+<span id="cb80-4"><a href="#cb80-4" aria-hidden="true" tabindex="-1"></a>grid.<span class="bu">map</span>(plot_params_helper,</span>
+<span id="cb80-5"><a href="#cb80-5" aria-hidden="true" tabindex="-1"></a>         <span class="st">&#39;b_mean&#39;</span>, <span class="st">&#39;b_low&#39;</span>, <span class="st">&#39;b_high&#39;</span>, <span class="st">&#39;name&#39;</span>,</span>
+<span id="cb80-6"><a href="#cb80-6" aria-hidden="true" tabindex="-1"></a>         league_mean<span class="op">=</span><span class="fl">0.</span>,</span>
+<span id="cb80-7"><a href="#cb80-7" aria-hidden="true" tabindex="-1"></a>         league_mean_name<span class="op">=</span><span class="st">&quot;League average&quot;</span>)<span class="op">;</span></span>
+<span id="cb80-8"><a href="#cb80-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb80-9"><a href="#cb80-9" aria-hidden="true" tabindex="-1"></a>grid.set_axis_labels(<span class="vs">r&quot;$b$&quot;</span>, <span class="st">&quot;Player&quot;</span>)<span class="op">;</span></span>
+<span id="cb80-10"><a href="#cb80-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb80-11"><a href="#cb80-11" aria-hidden="true" tabindex="-1"></a>grid.fig.tight_layout()<span class="op">;</span></span>
+<span id="cb80-12"><a href="#cb80-12" aria-hidden="true" tabindex="-1"></a>grid.add_legend()<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/nba_irt/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_files/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_122_0.png" title="fig:" alt="png" />
+</center>
+<h3 id="salary-model">Salary model</h3>
+<p>Our final model uses salary as a proxy for “star power” to explore its influence on foul calls. We also (somewhat naively) impute missing salaries to the (log) league average.</p>
+<div class="sourceCode" id="cb81"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb81-1"><a href="#cb81-1" aria-hidden="true" tabindex="-1"></a>std_log_salary <span class="op">=</span> (salary_df.ix[np.arange(n_players)]</span>
+<span id="cb81-2"><a href="#cb81-2" aria-hidden="true" tabindex="-1"></a>                           .std_log_salary</span>
+<span id="cb81-3"><a href="#cb81-3" aria-hidden="true" tabindex="-1"></a>                           .fillna(<span class="dv">0</span>)</span>
+<span id="cb81-4"><a href="#cb81-4" aria-hidden="true" tabindex="-1"></a>                           .values)</span></code></pre></div>
+<p>With <span class="math inline">\(s_i\)</span> denoting the <span class="math inline">\(i\)</span>-the player’s standardized log salary, our model becomes</p>
+<p><span class="math display">\[
+\begin{align*}
+\theta_i
+    &amp; = \theta_{0, i} + \delta_{\theta} \cdot s_i \\
+b_j
+    &amp; = b_{0, j} + \delta_b \cdot s_j \\
+\eta_k
+    &amp; = \lambda_{t(k)} + \theta_{i(k)} - b_{j(k)}.
+\end{align*}
+\]</span></p>
+<p>In this model, each player’s <span class="math inline">\(\theta_i\)</span> and <span class="math inline">\(b_j\)</span> parameters are linear functions of their standardized log salary, with (hierarchical) varying intercepts. The varying intercepts <span class="math inline">\(\theta_{0, i}\)</span> and <span class="math inline">\(b_{0, j}\)</span> are endowed with the same hierarchical normal priors as <span class="math inline">\(\theta_i\)</span> and <span class="math inline">\(b_j\)</span> had in the previous model. We place normal priors, <span class="math inline">\(\delta_{\theta} \sim N(0, 100)\)</span> and <span class="math inline">\(\delta_b \sim N(0, 100)\)</span>, on the salary coefficients.</p>
+<div class="sourceCode" id="cb82"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb82-1"><a href="#cb82-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> pm.Model() <span class="im">as</span> salary_model:</span>
+<span id="cb82-2"><a href="#cb82-2" aria-hidden="true" tabindex="-1"></a>    τ_λ <span class="op">=</span> pm.Exponential(<span class="st">&#39;τ_λ&#39;</span>, <span class="fl">1e-4</span>)</span>
+<span id="cb82-3"><a href="#cb82-3" aria-hidden="true" tabindex="-1"></a>    λ <span class="op">=</span> pm.GaussianRandomWalk(<span class="st">&#39;λ&#39;</span>, tau<span class="op">=</span>τ_λ,</span>
+<span id="cb82-4"><a href="#cb82-4" aria-hidden="true" tabindex="-1"></a>                              init<span class="op">=</span>pm.Normal.dist(<span class="fl">0.</span>, <span class="fl">10.</span>),</span>
+<span id="cb82-5"><a href="#cb82-5" aria-hidden="true" tabindex="-1"></a>                              shape<span class="op">=</span>n_sec)</span>
+<span id="cb82-6"><a href="#cb82-6" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb82-7"><a href="#cb82-7" aria-hidden="true" tabindex="-1"></a>    Δ_θ<span class="dv">0</span> <span class="op">=</span> pm.Normal(<span class="st">&#39;Δ_θ0&#39;</span>, <span class="fl">0.</span>, <span class="fl">1.</span>, shape<span class="op">=</span>n_players)</span>
+<span id="cb82-8"><a href="#cb82-8" aria-hidden="true" tabindex="-1"></a>    σ_θ<span class="dv">0</span> <span class="op">=</span> pm.HalfCauchy(<span class="st">&#39;σ_θ0&#39;</span>, <span class="fl">2.5</span>)</span>
+<span id="cb82-9"><a href="#cb82-9" aria-hidden="true" tabindex="-1"></a>    θ<span class="dv">0</span> <span class="op">=</span> pm.Deterministic(<span class="st">&#39;θ0&#39;</span>, Δ_θ<span class="dv">0</span> <span class="op">*</span> σ_θ<span class="dv">0</span>)</span>
+<span id="cb82-10"><a href="#cb82-10" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb82-11"><a href="#cb82-11" aria-hidden="true" tabindex="-1"></a>    δ_θ <span class="op">=</span> pm.Normal(<span class="st">&#39;δ_θ&#39;</span>, <span class="fl">0.</span>, <span class="fl">10.</span>)</span>
+<span id="cb82-12"><a href="#cb82-12" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb82-13"><a href="#cb82-13" aria-hidden="true" tabindex="-1"></a>    θ <span class="op">=</span> pm.Deterministic(<span class="st">&#39;θ&#39;</span>, θ<span class="dv">0</span> <span class="op">+</span> δ_θ <span class="op">*</span> std_log_salary)</span>
+<span id="cb82-14"><a href="#cb82-14" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb82-15"><a href="#cb82-15" aria-hidden="true" tabindex="-1"></a>    Δ_b0 <span class="op">=</span> pm.Normal(<span class="st">&#39;Δ_b0&#39;</span>, <span class="fl">0.</span>, <span class="fl">1.</span>, shape<span class="op">=</span>n_players)</span>
+<span id="cb82-16"><a href="#cb82-16" aria-hidden="true" tabindex="-1"></a>    σ_b0 <span class="op">=</span> pm.HalfCauchy(<span class="st">&#39;σ_b0&#39;</span>, <span class="fl">2.5</span>)</span>
+<span id="cb82-17"><a href="#cb82-17" aria-hidden="true" tabindex="-1"></a>    b0 <span class="op">=</span> pm.Deterministic(<span class="st">&#39;b0&#39;</span>, Δ_b0 <span class="op">*</span> σ_b0)</span>
+<span id="cb82-18"><a href="#cb82-18" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb82-19"><a href="#cb82-19" aria-hidden="true" tabindex="-1"></a>    δ_b <span class="op">=</span> pm.Normal(<span class="st">&#39;δ_b&#39;</span>, <span class="fl">0.</span>, <span class="fl">10.</span>)</span>
+<span id="cb82-20"><a href="#cb82-20" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb82-21"><a href="#cb82-21" aria-hidden="true" tabindex="-1"></a>    b <span class="op">=</span> pm.Deterministic(<span class="st">&#39;b&#39;</span>, b0 <span class="op">+</span> δ_b <span class="op">*</span> std_log_salary)</span>
+<span id="cb82-22"><a href="#cb82-22" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb82-23"><a href="#cb82-23" aria-hidden="true" tabindex="-1"></a>    η <span class="op">=</span> λ[sec] <span class="op">+</span> θ[disadvantaged_id] <span class="op">-</span> b[committing_id]</span>
+<span id="cb82-24"><a href="#cb82-24" aria-hidden="true" tabindex="-1"></a>    p <span class="op">=</span> pm.Deterministic(<span class="st">&#39;p&#39;</span>, pm.math.sigmoid(η))</span>
+<span id="cb82-25"><a href="#cb82-25" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb82-26"><a href="#cb82-26" aria-hidden="true" tabindex="-1"></a>    y <span class="op">=</span> pm.Bernoulli(<span class="st">&#39;y_obs&#39;</span>, p, observed<span class="op">=</span>foul_called)</span></code></pre></div>
+<div class="sourceCode" id="cb83"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb83-1"><a href="#cb83-1" aria-hidden="true" tabindex="-1"></a>salary_trace <span class="op">=</span> sample(salary_model, N_TUNE, N_SAMPLES, SEED)</span></code></pre></div>
+<pre><code>Auto-assigning NUTS sampler...
+Initializing NUTS using advi...
+Average ELBO = -1.0244e+05:  15%|█▌        | 30998/200000 [00:32&lt;02:57, 952.52it/s]Median ELBO converged.
+Finished [100%]: Average ELBO = -2,995.3
+
+100%|██████████| 4000/4000 [03:45&lt;00:00, 17.76it/s]</code></pre>
+<p>The energy plot for this model looks a bit worse than that for the time remaining model.</p>
+<div class="sourceCode" id="cb85"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb85-1"><a href="#cb85-1" aria-hidden="true" tabindex="-1"></a>energy_plot(salary_trace)</span></code></pre></div>
+<center>
+<img src="/resources/nba_irt/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_files/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_129_0.png" title="fig:" alt="png" />
+</center>
+<p>The salary model also appears to be a slight improvement over the time remaining model in terms of WAIC.</p>
+<div class="sourceCode" id="cb86"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb86-1"><a href="#cb86-1" aria-hidden="true" tabindex="-1"></a>waic_df <span class="op">=</span> waic_df.append(get_waic_df(salary_model, salary_trace, <span class="st">&quot;Salary&quot;</span>))</span></code></pre></div>
+<div class="sourceCode" id="cb87"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb87-1"><a href="#cb87-1" aria-hidden="true" tabindex="-1"></a>waic_plot(waic_df)</span></code></pre></div>
+<center>
+<img src="/resources/nba_irt/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_files/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_132_0.png" title="fig:" alt="png" />
+</center>
+<p>The binned residuals continue to look good for this model.</p>
+<div class="sourceCode" id="cb88"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb88-1"><a href="#cb88-1" aria-hidden="true" tabindex="-1"></a>bin_obs, bin_p, bin_counts <span class="op">=</span> binned_residuals(foul_called, salary_trace[<span class="st">&#39;p&#39;</span>])</span>
+<span id="cb88-2"><a href="#cb88-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb88-3"><a href="#cb88-3" aria-hidden="true" tabindex="-1"></a>binned_residual_plot(bin_obs, bin_p, bin_counts)</span></code></pre></div>
+<center>
+<img src="/resources/nba_irt/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_files/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_134_0.png" title="fig:" alt="png" />
+</center>
+<p>Based on the posterior distributions of <span class="math inline">\(\delta_{\theta}\)</span> and <span class="math inline">\(\delta_b\)</span>, we expect to see a fairly strong relationship between a player’s (standardized log) salary and their latent skill parameters.</p>
+<div class="sourceCode" id="cb89"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb89-1"><a href="#cb89-1" aria-hidden="true" tabindex="-1"></a>pm.plot_posterior(salary_trace, [<span class="st">&#39;δ_θ&#39;</span>, <span class="st">&#39;δ_b&#39;</span>],</span>
+<span id="cb89-2"><a href="#cb89-2" aria-hidden="true" tabindex="-1"></a>                  lw<span class="op">=</span><span class="fl">0.</span>, alpha<span class="op">=</span><span class="fl">0.75</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/nba_irt/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_files/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_136_0.png" title="fig:" alt="png" />
+</center>
+<p>The following plots confirm this relationship.</p>
+<div class="sourceCode" id="cb90"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb90-1"><a href="#cb90-1" aria-hidden="true" tabindex="-1"></a>salary_df_ <span class="op">=</span> to_param_df(team_player_map, salary_trace, [<span class="st">&#39;θ&#39;</span>, <span class="st">&#39;θ0&#39;</span>, <span class="st">&#39;b&#39;</span>, <span class="st">&#39;b0&#39;</span>])</span></code></pre></div>
+<div class="sourceCode" id="cb91"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb91-1"><a href="#cb91-1" aria-hidden="true" tabindex="-1"></a>fig, (θ_ax, b_ax) <span class="op">=</span> plt.subplots(ncols<span class="op">=</span><span class="dv">2</span>, sharex<span class="op">=</span><span class="va">True</span>, figsize<span class="op">=</span>(<span class="dv">16</span>, <span class="dv">6</span>))</span>
+<span id="cb91-2"><a href="#cb91-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb91-3"><a href="#cb91-3" aria-hidden="true" tabindex="-1"></a>salary <span class="op">=</span> (salary_df.ix[np.arange(n_players)]</span>
+<span id="cb91-4"><a href="#cb91-4" aria-hidden="true" tabindex="-1"></a>                   .salary</span>
+<span id="cb91-5"><a href="#cb91-5" aria-hidden="true" tabindex="-1"></a>                   .fillna(salary_df.salary.mean())</span>
+<span id="cb91-6"><a href="#cb91-6" aria-hidden="true" tabindex="-1"></a>                   .values)</span>
+<span id="cb91-7"><a href="#cb91-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb91-8"><a href="#cb91-8" aria-hidden="true" tabindex="-1"></a>θ_ax.scatter(salary[salary_df_.player_id], salary_df_.θ_mean,</span>
+<span id="cb91-9"><a href="#cb91-9" aria-hidden="true" tabindex="-1"></a>             alpha<span class="op">=</span><span class="fl">0.75</span>)<span class="op">;</span></span>
+<span id="cb91-10"><a href="#cb91-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb91-11"><a href="#cb91-11" aria-hidden="true" tabindex="-1"></a>θ_ax.xaxis.set_major_formatter(million_dollars_formatter)<span class="op">;</span></span>
+<span id="cb91-12"><a href="#cb91-12" aria-hidden="true" tabindex="-1"></a>θ_ax.set_xlabel(<span class="st">&quot;Salary&quot;</span>)<span class="op">;</span></span>
+<span id="cb91-13"><a href="#cb91-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb91-14"><a href="#cb91-14" aria-hidden="true" tabindex="-1"></a>θ_ax.set_ylabel(<span class="vs">r&quot;$\theta$&quot;</span>)<span class="op">;</span></span>
+<span id="cb91-15"><a href="#cb91-15" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb91-16"><a href="#cb91-16" aria-hidden="true" tabindex="-1"></a>b_ax.scatter(salary[salary_df_.player_id], salary_df_.b_mean,</span>
+<span id="cb91-17"><a href="#cb91-17" aria-hidden="true" tabindex="-1"></a>             alpha<span class="op">=</span><span class="fl">0.75</span>)<span class="op">;</span></span>
+<span id="cb91-18"><a href="#cb91-18" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb91-19"><a href="#cb91-19" aria-hidden="true" tabindex="-1"></a>b_ax.xaxis.set_major_formatter(million_dollars_formatter)<span class="op">;</span></span>
+<span id="cb91-20"><a href="#cb91-20" aria-hidden="true" tabindex="-1"></a>b_ax.set_xlabel(<span class="st">&quot;Salary&quot;</span>)<span class="op">;</span></span>
+<span id="cb91-21"><a href="#cb91-21" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb91-22"><a href="#cb91-22" aria-hidden="true" tabindex="-1"></a>b_ax.set_ylabel(<span class="vs">r&quot;$b$&quot;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/nba_irt/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_files/NBA%20Foul%20Calls%20and%20Bayesian%20Item%20Response%20Theory_139_0.png" title="fig:" alt="png" />
+</center>
+<p>It is important to note here that these relationships are descriptive, not causal. Our original intent was to use salary as a proxy for the difficult-to-quantify notion of “star power.” These plots suggest that the probability of getting a foul called when disadvanted and not called when committing are both positively related to salary, and therefore (a bit more dubiously) star power.</p>
+<p>Importantly, <span class="math inline">\(\theta_i\)</span> and <span class="math inline">\(b_j\)</span> should no longer be interpreted directly as measuring latent skill, which is presumably intrinsic to a player and not directly dependent on their salary. In fact, it seems at plausible that NBA scouts, front offices, players, and agents would be somewhat able to appreciate these latent skills, place a value on them, and thereby price them into contracts. It would be interesting future work to refine this model to give an <a href="https://en.wikipedia.org/wiki/Econometrics">econometric</a> answer to this question.</p>
+<p>Since we shouldn’t interpret <span class="math inline">\(\theta_i\)</span> and <span class="math inline">\(b_j\)</span> as measures of latent skill in this model, we will not plot their per-player distributions.</p>
+<h2 id="conclusion">Conclusion</h2>
+<p>We set out to explore the relationship between players involved in a play and the probability that a foul is called, along with other factors related to that probability. Through a series of progressively more complex Bayesian item-response models, we have seen that</p>
+<ol type="1">
+<li>foul call probability does vary appreciably across both disadvantaged and committing player,</li>
+<li>there is more variation in the latent skill of the committing player to avoid a foul call than there is in the variation in the latent skill of the disadvantaged player to draw a foul call,</li>
+<li>the amount of time remaining in the game is strongly related to the probability of a foul call, and</li>
+<li>there is a positive relationship between player salary and the probability that a foul is called when they are disadvantaged and not called when they are committing. With a bit of a leap, we can say that the probability a foul is called is at least loosely related to the “star power” of the players involved.</li>
+</ol>
+<p>In this post we have only scratched the surface of Bayesian item-response theory. For a more in-depth treatment, consult <a href="http://www.springer.com/us/book/9781441907417"><em>Bayesian Item Response Modeling</em></a>.</p>
+<p>This is is available as a Jupyter notebook <a href="https://gist.github.com/AustinRochford/d1eb474ad4802e1b9edc790c4a9d2e0d">here</a>.</p>

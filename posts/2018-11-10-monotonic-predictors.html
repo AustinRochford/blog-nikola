@@ -1,0 +1,903 @@
+<meta name="title" content="Monotonic Effects in PyMC3" />
+<meta name="tags" content="PyMC3, Bayesian Statistics, Papers" />
+<meta name="date" content="2018-11-10" />
+<meta name="has_math" content="true" /><style>
+.dataframe * {border-color: #c0c0c0 !important;}
+.dataframe th{background: #eee;}
+.dataframe td{
+    background: #fff;
+    text-align: right; 
+    min-width:5em;
+}
+
+/* Format summary rows */
+.dataframe-summary-row tr:last-child,
+.dataframe-summary-col td:last-child{
+background: #eee;
+    font-weight: 500;
+}
+</style>
+<p>Last week I came across the following tweet from <a href="https://www.uni-muenster.de/PsyIFP/AEHolling/de/personen/buerkner.html">Paul Bürkner</a> about a paper he coauthored about including ordinal predictors in Bayesian regression models, and I thought the approach was very clever.</p>
+<center>
+<blockquote class="twitter-tweet" data-lang="en">
+<p lang="en" dir="ltr">
+Have you ever wondered how to handle ordinal predictors in your regression models? We propose a simple and intuitive method that is readily available via <a href="https://twitter.com/hashtag/brms?src=hash&amp;ref_src=twsrc%5Etfw">#brms</a> and <a href="https://twitter.com/mcmc_stan?ref_src=twsrc%5Etfw"><span class="citation" data-cites="mcmc_stan">@mcmc_stan</span></a>: <a href="https://t.co/dKg4AphvsG">https://t.co/dKg4AphvsG</a>
+</p>
+— Paul Bürkner (<span class="citation" data-cites="paulbuerkner">@paulbuerkner</span>) <a href="https://twitter.com/paulbuerkner/status/1058394076863754240?ref_src=twsrc%5Etfw">November 2, 2018</a>
+</blockquote>
+<script async src="https://platform.twitter.com/widgets.js" charset="utf-8"></script>
+</center>
+<p>The code in the paper uses <a href="https://github.com/paul-buerkner/brms"><code>brms</code></a> and <a href="http://mc-stan.org/">Stan</a> to illustrate these concepts. In this post I’ll be replicating some of the paper’s analysis in Python and <a href="https://docs.pymc.io/">PyMC3</a>, mostly for my own edification.</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="op">%</span>matplotlib inline</span></code></pre></div>
+<div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> itertools <span class="im">import</span> product</span></code></pre></div>
+<div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> arviz <span class="im">as</span> az</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> matplotlib <span class="im">import</span> pyplot <span class="im">as</span> plt</span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> numpy <span class="im">as</span> np</span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> pandas <span class="im">as</span> pd</span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> pymc3 <span class="im">as</span> pm</span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> rpy2.robjects <span class="im">import</span> pandas2ri, r</span>
+<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> seaborn <span class="im">as</span> sns</span>
+<span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> theano <span class="im">import</span> shared</span></code></pre></div>
+<div class="sourceCode" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>sns.<span class="bu">set</span>()</span></code></pre></div>
+<p>The paper uses data from the <a href="https://cran.r-project.org/web/packages/ordPens/index.html"><code>ordPens</code></a> R package, which we download and load into a Pandas <code>DataFrame</code>.</p>
+<div class="sourceCode" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="op">%%</span>bash</span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> [[ <span class="op">!</span> <span class="op">-</span>e <span class="op">~/</span>data<span class="op">/</span>ordPens ]]<span class="op">;</span></span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>then</span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a>    mkdir <span class="op">-</span>p data</span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a>    wget <span class="op">-</span>q <span class="op">-</span>O data<span class="op">/</span>ordPens_0<span class="fl">.3</span><span class="op">-</span><span class="fl">1.</span><span class="er">tar</span>.gz <span class="op">~/</span>data<span class="op">/</span> https:<span class="op">//</span>cran.r<span class="op">-</span>project.org<span class="op">/</span>src<span class="op">/</span>contrib<span class="op">/</span>ordPens_0<span class="fl">.3</span><span class="op">-</span><span class="fl">1.</span><span class="er">tar</span>.gz</span>
+<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a>    tar xzf data<span class="op">/</span>ordPens_0<span class="fl">.3</span><span class="op">-</span><span class="fl">1.</span><span class="er">tar</span>.gz <span class="op">-</span>C data</span>
+<span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a>fi</span></code></pre></div>
+<div class="sourceCode" id="cb6"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="op">!</span>ls data<span class="op">/</span>ordPens<span class="op">/</span>data<span class="op">/</span></span></code></pre></div>
+<pre><code>ICFCoreSetCWP.RData</code></pre>
+<div class="sourceCode" id="cb8"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>pandas2ri.activate()</span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>r.load(<span class="st">&#39;data/ordPens/data/ICFCoreSetCWP.RData&#39;</span>)<span class="op">;</span></span>
+<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a>all_df <span class="op">=</span> r[<span class="st">&#39;ICFCoreSetCWP&#39;</span>]</span></code></pre></div>
+<div class="sourceCode" id="cb9"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a>all_df.head()</span></code></pre></div>
+<div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<center>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th>
+</th>
+<th>
+b1602
+</th>
+<th>
+b122
+</th>
+<th>
+b126
+</th>
+<th>
+b130
+</th>
+<th>
+b134
+</th>
+<th>
+b140
+</th>
+<th>
+b147
+</th>
+<th>
+b152
+</th>
+<th>
+b164
+</th>
+<th>
+b180
+</th>
+<th>
+…
+</th>
+<th>
+e450
+</th>
+<th>
+e455
+</th>
+<th>
+e460
+</th>
+<th>
+e465
+</th>
+<th>
+e570
+</th>
+<th>
+e575
+</th>
+<th>
+e580
+</th>
+<th>
+e590
+</th>
+<th>
+s770
+</th>
+<th>
+phcs
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>
+1
+</th>
+<td>
+0
+</td>
+<td>
+1
+</td>
+<td>
+2
+</td>
+<td>
+1
+</td>
+<td>
+1
+</td>
+<td>
+0
+</td>
+<td>
+0
+</td>
+<td>
+2
+</td>
+<td>
+0
+</td>
+<td>
+0
+</td>
+<td>
+…
+</td>
+<td>
+4
+</td>
+<td>
+0
+</td>
+<td>
+0
+</td>
+<td>
+0
+</td>
+<td>
+3
+</td>
+<td>
+3
+</td>
+<td>
+4
+</td>
+<td>
+3
+</td>
+<td>
+0
+</td>
+<td>
+44.33
+</td>
+</tr>
+<tr>
+<th>
+2
+</th>
+<td>
+3
+</td>
+<td>
+2
+</td>
+<td>
+2
+</td>
+<td>
+3
+</td>
+<td>
+3
+</td>
+<td>
+2
+</td>
+<td>
+3
+</td>
+<td>
+3
+</td>
+<td>
+3
+</td>
+<td>
+1
+</td>
+<td>
+…
+</td>
+<td>
+3
+</td>
+<td>
+3
+</td>
+<td>
+2
+</td>
+<td>
+2
+</td>
+<td>
+2
+</td>
+<td>
+2
+</td>
+<td>
+2
+</td>
+<td>
+2
+</td>
+<td>
+2
+</td>
+<td>
+21.09
+</td>
+</tr>
+<tr>
+<th>
+3
+</th>
+<td>
+0
+</td>
+<td>
+1
+</td>
+<td>
+2
+</td>
+<td>
+1
+</td>
+<td>
+1
+</td>
+<td>
+0
+</td>
+<td>
+1
+</td>
+<td>
+2
+</td>
+<td>
+0
+</td>
+<td>
+0
+</td>
+<td>
+…
+</td>
+<td>
+4
+</td>
+<td>
+0
+</td>
+<td>
+0
+</td>
+<td>
+0
+</td>
+<td>
+3
+</td>
+<td>
+3
+</td>
+<td>
+4
+</td>
+<td>
+0
+</td>
+<td>
+0
+</td>
+<td>
+41.74
+</td>
+</tr>
+<tr>
+<th>
+4
+</th>
+<td>
+0
+</td>
+<td>
+0
+</td>
+<td>
+0
+</td>
+<td>
+2
+</td>
+<td>
+1
+</td>
+<td>
+0
+</td>
+<td>
+0
+</td>
+<td>
+0
+</td>
+<td>
+0
+</td>
+<td>
+0
+</td>
+<td>
+…
+</td>
+<td>
+2
+</td>
+<td>
+2
+</td>
+<td>
+-1
+</td>
+<td>
+0
+</td>
+<td>
+0
+</td>
+<td>
+2
+</td>
+<td>
+2
+</td>
+<td>
+1
+</td>
+<td>
+1
+</td>
+<td>
+33.96
+</td>
+</tr>
+<tr>
+<th>
+5
+</th>
+<td>
+0
+</td>
+<td>
+0
+</td>
+<td>
+0
+</td>
+<td>
+0
+</td>
+<td>
+0
+</td>
+<td>
+0
+</td>
+<td>
+0
+</td>
+<td>
+0
+</td>
+<td>
+0
+</td>
+<td>
+0
+</td>
+<td>
+…
+</td>
+<td>
+1
+</td>
+<td>
+0
+</td>
+<td>
+0
+</td>
+<td>
+0
+</td>
+<td>
+0
+</td>
+<td>
+0
+</td>
+<td>
+0
+</td>
+<td>
+0
+</td>
+<td>
+0
+</td>
+<td>
+46.29
+</td>
+</tr>
+</tbody>
+</table>
+<p>
+5 rows × 68 columns
+</p>
+</center>
+</div>
+<p>The variable of interest here is <code>phcs</code>, which is a subjective physical health score. The predictors we are interested in are <code>d450</code> and <code>d455</code>.</p>
+<div class="sourceCode" id="cb10"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a>df <span class="op">=</span> all_df[[<span class="st">&#39;d450&#39;</span>, <span class="st">&#39;d455&#39;</span>, <span class="st">&#39;phcs&#39;</span>]]</span></code></pre></div>
+<div class="sourceCode" id="cb11"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a>df.head()</span></code></pre></div>
+<div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<center>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th>
+</th>
+<th>
+d450
+</th>
+<th>
+d455
+</th>
+<th>
+phcs
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>
+1
+</th>
+<td>
+0
+</td>
+<td>
+2
+</td>
+<td>
+44.33
+</td>
+</tr>
+<tr>
+<th>
+2
+</th>
+<td>
+3
+</td>
+<td>
+3
+</td>
+<td>
+21.09
+</td>
+</tr>
+<tr>
+<th>
+3
+</th>
+<td>
+0
+</td>
+<td>
+2
+</td>
+<td>
+41.74
+</td>
+</tr>
+<tr>
+<th>
+4
+</th>
+<td>
+3
+</td>
+<td>
+2
+</td>
+<td>
+33.96
+</td>
+</tr>
+<tr>
+<th>
+5
+</th>
+<td>
+0
+</td>
+<td>
+0
+</td>
+<td>
+46.29
+</td>
+</tr>
+</tbody>
+</table>
+</center>
+</div>
+<p>These predictors are ratings on a five-point scale (0-4) of the patient’s impairment while walking (<code>d450</code>) and moving around (<code>d455</code>). For more information on this data, consult the <a href="https://cran.r-project.org/web/packages/ordPens/ordPens.pdf"><code>ordPens</code> documentation</a>.</p>
+<p>The following plots show a fairly strong monotonic relationship between <code>d450</code>, <code>d455</code>, and <code>phcs</code>.</p>
+<div class="sourceCode" id="cb12"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a>fig, (d450_ax, d455_ax) <span class="op">=</span> plt.subplots(ncols<span class="op">=</span><span class="dv">2</span>, sharey<span class="op">=</span><span class="va">True</span>, figsize<span class="op">=</span>(<span class="dv">16</span>, <span class="dv">6</span>))</span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a>sns.stripplot(<span class="st">&#39;d450&#39;</span>, <span class="st">&#39;phcs&#39;</span>, data<span class="op">=</span>df,</span>
+<span id="cb12-4"><a href="#cb12-4" aria-hidden="true" tabindex="-1"></a>              jitter<span class="op">=</span><span class="fl">0.1</span>, color<span class="op">=</span><span class="st">&#39;C0&#39;</span>, alpha<span class="op">=</span><span class="fl">0.75</span>,</span>
+<span id="cb12-5"><a href="#cb12-5" aria-hidden="true" tabindex="-1"></a>              ax<span class="op">=</span>d450_ax)<span class="op">;</span></span>
+<span id="cb12-6"><a href="#cb12-6" aria-hidden="true" tabindex="-1"></a>sns.stripplot(<span class="st">&#39;d455&#39;</span>, <span class="st">&#39;phcs&#39;</span>, data<span class="op">=</span>df,</span>
+<span id="cb12-7"><a href="#cb12-7" aria-hidden="true" tabindex="-1"></a>              jitter<span class="op">=</span><span class="fl">0.1</span>, color<span class="op">=</span><span class="st">&#39;C0&#39;</span>, alpha<span class="op">=</span><span class="fl">0.75</span>,</span>
+<span id="cb12-8"><a href="#cb12-8" aria-hidden="true" tabindex="-1"></a>              ax<span class="op">=</span>d455_ax)<span class="op">;</span></span>
+<span id="cb12-9"><a href="#cb12-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb12-10"><a href="#cb12-10" aria-hidden="true" tabindex="-1"></a>d455_ax.set_ylabel(<span class="st">&quot;&quot;</span>)<span class="op">;</span></span>
+<span id="cb12-11"><a href="#cb12-11" aria-hidden="true" tabindex="-1"></a>fig.tight_layout()<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/monotonic/Monotonic%20Effects%20in%20PyMC3_15_0.png" title="fig:" alt="png" />
+</center>
+<p>The big idea of the paper is to include monotonic effects due to these ordinal predictors as follows. A scalar <span class="math inline">\(b \sim N(0, 10^2)\)</span> parameterizes the overall strength and direction of the relationship, and a Dirichlet vector <span class="math inline">\(\xi \sim \textrm{Dirichlet}(1, \ldots, 1)\)</span> encodes how much of <span class="math inline">\(b\)</span> is gained at each level. The parameters <span class="math inline">\(b\)</span> and <span class="math inline">\(\xi\)</span> are combined into</p>
+<p><span class="math display">\[mo(i) = b \sum_{k = 0}^i \xi_k\]</span></p>
+<p>which can be included as a term in a regression model. It is evident that if <span class="math inline">\(i &lt; j\)</span> then <span class="math inline">\(mo(i) \leq mo(j)\)</span> since</p>
+<p><span class="math display">\[mo(j) - mo(i) = b \sum_{k = i + 1}^j \xi_k \geq 0\]</span></p>
+<p>and therefore the effect of this term will be monotonic as desired.</p>
+<p>The following function constructs this distribution in PyMC3.</p>
+<div class="sourceCode" id="cb13"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> monotonic_prior(name, n_cat):</span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a>    b <span class="op">=</span> pm.Normal(<span class="ss">f&#39;b_</span><span class="sc">{</span>name<span class="sc">}</span><span class="ss">&#39;</span>, <span class="fl">0.</span>, <span class="fl">10.</span>)</span>
+<span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a>    ξ <span class="op">=</span> pm.Dirichlet(<span class="ss">f&#39;ξ_</span><span class="sc">{</span>name<span class="sc">}</span><span class="ss">&#39;</span>, np.ones(n_cat))</span>
+<span id="cb13-4"><a href="#cb13-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb13-5"><a href="#cb13-5" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> pm.Deterministic(<span class="ss">f&#39;mo_</span><span class="sc">{</span>name<span class="sc">}</span><span class="ss">&#39;</span>, b <span class="op">*</span> ξ.cumsum())</span></code></pre></div>
+<p>With this notation in hand, our model is</p>
+<p><span class="math display">\[
+\begin{align*}
+    \mu_i
+        &amp; = \beta_0 + mo_{\textrm{d450}}(j_i) + mo_{\textrm{d455}}(k_i) \\
+    \beta_0
+        &amp; \sim N(0, 10^2) \\
+    y_i
+        &amp; \sim N(\mu_i, \sigma^2) \\
+    \sigma
+        &amp; \sim \textrm{HalfNormal}(5^2)
+\end{align*}
+\]</span></p>
+<p>where <span class="math inline">\(j_i\)</span> and <span class="math inline">\(k_i\)</span> are the level of <code>d450</code> and <code>d455</code> for the <span class="math inline">\(i\)</span>-th patient respectively and <span class="math inline">\(y_i\)</span> is that patient’s <code>phcs</code> score.</p>
+<p>We now express this model in PyMC3.</p>
+<div class="sourceCode" id="cb14"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a>d450 <span class="op">=</span> df[<span class="st">&#39;d450&#39;</span>].values</span>
+<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a>d450_cats <span class="op">=</span> np.unique(d450)</span>
+<span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a>d450_n_cat <span class="op">=</span> d450_cats.size</span>
+<span id="cb14-4"><a href="#cb14-4" aria-hidden="true" tabindex="-1"></a>d450_ <span class="op">=</span> shared(d450)</span>
+<span id="cb14-5"><a href="#cb14-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb14-6"><a href="#cb14-6" aria-hidden="true" tabindex="-1"></a>d455 <span class="op">=</span> df[<span class="st">&#39;d455&#39;</span>].values</span>
+<span id="cb14-7"><a href="#cb14-7" aria-hidden="true" tabindex="-1"></a>d455_cats <span class="op">=</span> np.unique(d455)</span>
+<span id="cb14-8"><a href="#cb14-8" aria-hidden="true" tabindex="-1"></a>d455_n_cat <span class="op">=</span> d455_cats.size</span>
+<span id="cb14-9"><a href="#cb14-9" aria-hidden="true" tabindex="-1"></a>d455_ <span class="op">=</span> shared(d455)</span>
+<span id="cb14-10"><a href="#cb14-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb14-11"><a href="#cb14-11" aria-hidden="true" tabindex="-1"></a>phcs <span class="op">=</span> df[<span class="st">&#39;phcs&#39;</span>].values</span></code></pre></div>
+<div class="sourceCode" id="cb15"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> pm.Model() <span class="im">as</span> model:</span>
+<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a>    β<span class="dv">0</span> <span class="op">=</span> pm.Normal(<span class="st">&#39;β0&#39;</span>, <span class="fl">0.</span>, <span class="fl">10.</span>)</span>
+<span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb15-4"><a href="#cb15-4" aria-hidden="true" tabindex="-1"></a>    mo_d450 <span class="op">=</span> monotonic_prior(<span class="st">&#39;d450&#39;</span>, d450_n_cat)</span>
+<span id="cb15-5"><a href="#cb15-5" aria-hidden="true" tabindex="-1"></a>    mo_d455 <span class="op">=</span> monotonic_prior(<span class="st">&#39;d455&#39;</span>, d455_n_cat)</span>
+<span id="cb15-6"><a href="#cb15-6" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb15-7"><a href="#cb15-7" aria-hidden="true" tabindex="-1"></a>    μ <span class="op">=</span> β<span class="dv">0</span> <span class="op">+</span> mo_d450[d450_] <span class="op">+</span> mo_d455[d455_]</span>
+<span id="cb15-8"><a href="#cb15-8" aria-hidden="true" tabindex="-1"></a>    σ <span class="op">=</span> pm.HalfNormal(<span class="st">&#39;σ&#39;</span>, <span class="fl">5.</span>)</span>
+<span id="cb15-9"><a href="#cb15-9" aria-hidden="true" tabindex="-1"></a>    phcs_obs <span class="op">=</span> pm.Normal(<span class="st">&#39;phcs&#39;</span>, μ, σ, observed<span class="op">=</span>phcs)</span></code></pre></div>
+<p>We now sample from the model’s posterior distribution.</p>
+<div class="sourceCode" id="cb16"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a>CHAINS <span class="op">=</span> <span class="dv">3</span></span>
+<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a>SEED <span class="op">=</span> <span class="dv">934520</span> <span class="co"># from random.org</span></span>
+<span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb16-4"><a href="#cb16-4" aria-hidden="true" tabindex="-1"></a>SAMPLE_KWARGS <span class="op">=</span> {</span>
+<span id="cb16-5"><a href="#cb16-5" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;draws&#39;</span>: <span class="dv">1000</span>,</span>
+<span id="cb16-6"><a href="#cb16-6" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;tune&#39;</span>: <span class="dv">1000</span>,</span>
+<span id="cb16-7"><a href="#cb16-7" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;chains&#39;</span>: CHAINS,</span>
+<span id="cb16-8"><a href="#cb16-8" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;random_seed&#39;</span>: <span class="bu">list</span>(SEED <span class="op">+</span> np.arange(CHAINS))</span>
+<span id="cb16-9"><a href="#cb16-9" aria-hidden="true" tabindex="-1"></a>}</span></code></pre></div>
+<div class="sourceCode" id="cb17"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> model:</span>
+<span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a>    trace <span class="op">=</span> pm.sample(<span class="op">**</span>SAMPLE_KWARGS)</span></code></pre></div>
+<pre><code>Auto-assigning NUTS sampler...
+Initializing NUTS using jitter+adapt_diag...
+Multiprocess sampling (3 chains in 2 jobs)
+NUTS: [σ, ξ_d455, b_d455, ξ_d450, b_d450, β0]
+Sampling 3 chains: 100%|██████████| 6000/6000 [00:41&lt;00:00, 145.59draws/s]
+The number of effective samples is smaller than 25% for some parameters.</code></pre>
+<p>We use <a href="https://arviz-devs.github.io/arviz/index.html"><code>arviz</code></a> to check the performance of our sampler.</p>
+<div class="sourceCode" id="cb19"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a>inf_data <span class="op">=</span> az.convert_to_inference_data(trace)</span></code></pre></div>
+<p>The energy plot, BFMI, and Gelman-Rubin statistics show no cause for concern.</p>
+<div class="sourceCode" id="cb20"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a>az.plot_energy(inf_data)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/monotonic/Monotonic%20Effects%20in%20PyMC3_27_0.png" title="fig:" alt="png" />
+</center>
+<div class="sourceCode" id="cb21"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a>az.gelman_rubin(inf_data).<span class="bu">max</span>()</span></code></pre></div>
+<pre><code>&lt;xarray.Dataset&gt;
+Dimensions:  ()
+Data variables:
+    β0       float64 1.0
+    b_d450   float64 1.0
+    b_d455   float64 1.0
+    ξ_d450   float64 1.0
+    mo_d450  float64 1.0
+    ξ_d455   float64 1.0
+    mo_d455  float64 1.0
+    σ        float64 1.0</code></pre>
+<p>We now sample from the model’s posterior predictive distribution and visualize the results.</p>
+<div class="sourceCode" id="cb23"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb23-1"><a href="#cb23-1" aria-hidden="true" tabindex="-1"></a>pp_d450, pp_d455 <span class="op">=</span> np.asarray(<span class="bu">list</span>(<span class="bu">zip</span>(<span class="op">*</span>product(d450_cats, d455_cats))))</span>
+<span id="cb23-2"><a href="#cb23-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb23-3"><a href="#cb23-3" aria-hidden="true" tabindex="-1"></a>d450_.set_value(pp_d450)</span>
+<span id="cb23-4"><a href="#cb23-4" aria-hidden="true" tabindex="-1"></a>d455_.set_value(pp_d455)</span></code></pre></div>
+<div class="sourceCode" id="cb24"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> model:</span>
+<span id="cb24-2"><a href="#cb24-2" aria-hidden="true" tabindex="-1"></a>    pp_trace <span class="op">=</span> pm.sample_posterior_predictive(trace)</span></code></pre></div>
+<pre><code>100%|██████████| 3000/3000 [00:07&lt;00:00, 388.49it/s]</code></pre>
+<div class="sourceCode" id="cb26"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb26-1"><a href="#cb26-1" aria-hidden="true" tabindex="-1"></a>pp_df <span class="op">=</span> pd.DataFrame({</span>
+<span id="cb26-2"><a href="#cb26-2" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;d450&#39;</span>: pp_d450,</span>
+<span id="cb26-3"><a href="#cb26-3" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;d455&#39;</span>: pp_d455,</span>
+<span id="cb26-4"><a href="#cb26-4" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;pp_phcs_mean&#39;</span>: pp_trace[<span class="st">&#39;phcs&#39;</span>].mean(axis<span class="op">=</span><span class="dv">0</span>)</span>
+<span id="cb26-5"><a href="#cb26-5" aria-hidden="true" tabindex="-1"></a>})</span></code></pre></div>
+<p>The important feature of this encoding of ordinal predictors is that the <span class="math inline">\(\xi\)</span> parameters allow different levels of the predictor to contribute to result in a different change in the effect, which is in contrast to what happens when these are included as linear predictors, which is quite common in the literature.</p>
+<div class="sourceCode" id="cb27"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a>REF_CAT <span class="op">=</span> <span class="dv">1</span></span></code></pre></div>
+<div class="sourceCode" id="cb28"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a>fig, (d450_ax, d455_ax) <span class="op">=</span> plt.subplots(ncols<span class="op">=</span><span class="dv">2</span>, sharey<span class="op">=</span><span class="va">True</span>, figsize<span class="op">=</span>(<span class="dv">16</span>, <span class="dv">6</span>))</span>
+<span id="cb28-2"><a href="#cb28-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb28-3"><a href="#cb28-3" aria-hidden="true" tabindex="-1"></a>(pp_df.pivot_table(<span class="st">&#39;pp_phcs_mean&#39;</span>, <span class="st">&#39;d450&#39;</span>, <span class="st">&#39;d455&#39;</span>)</span>
+<span id="cb28-4"><a href="#cb28-4" aria-hidden="true" tabindex="-1"></a>      .plot(marker<span class="op">=</span><span class="st">&#39;o&#39;</span>, ax<span class="op">=</span>d450_ax))<span class="op">;</span></span>
+<span id="cb28-5"><a href="#cb28-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb28-6"><a href="#cb28-6" aria-hidden="true" tabindex="-1"></a>d450_ax.set_xticks(d450_cats)<span class="op">;</span></span>
+<span id="cb28-7"><a href="#cb28-7" aria-hidden="true" tabindex="-1"></a>d450_ax.set_ylabel(<span class="st">&quot;Posterior predictive phcs&quot;</span>)<span class="op">;</span></span>
+<span id="cb28-8"><a href="#cb28-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb28-9"><a href="#cb28-9" aria-hidden="true" tabindex="-1"></a>(pp_df.pivot_table(<span class="st">&#39;pp_phcs_mean&#39;</span>, <span class="st">&#39;d455&#39;</span>, <span class="st">&#39;d450&#39;</span>)</span>
+<span id="cb28-10"><a href="#cb28-10" aria-hidden="true" tabindex="-1"></a>      .plot(marker<span class="op">=</span><span class="st">&#39;o&#39;</span>, ax<span class="op">=</span>d455_ax))<span class="op">;</span></span>
+<span id="cb28-11"><a href="#cb28-11" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb28-12"><a href="#cb28-12" aria-hidden="true" tabindex="-1"></a>d455_ax.set_xticks(d455_cats)<span class="op">;</span></span>
+<span id="cb28-13"><a href="#cb28-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb28-14"><a href="#cb28-14" aria-hidden="true" tabindex="-1"></a>fig.tight_layout()<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/monotonic/Monotonic%20Effects%20in%20PyMC3_35_0.png" title="fig:" alt="png" />
+</center>
+<p>The following plot corresponds to Figure 3 in the original paper, and the dark lines agree with the mean in that figure quite well.</p>
+<div class="sourceCode" id="cb29"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb29-1"><a href="#cb29-1" aria-hidden="true" tabindex="-1"></a>fig, (d450_ax, d455_ax) <span class="op">=</span> plt.subplots(ncols<span class="op">=</span><span class="dv">2</span>, sharey<span class="op">=</span><span class="va">True</span>, figsize<span class="op">=</span>(<span class="dv">16</span>, <span class="dv">6</span>))</span>
+<span id="cb29-2"><a href="#cb29-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb29-3"><a href="#cb29-3" aria-hidden="true" tabindex="-1"></a>(pp_df[pp_df[<span class="st">&#39;d455&#39;</span>] <span class="op">!=</span> REF_CAT]</span>
+<span id="cb29-4"><a href="#cb29-4" aria-hidden="true" tabindex="-1"></a>      .pivot_table(<span class="st">&#39;pp_phcs_mean&#39;</span>, <span class="st">&#39;d450&#39;</span>, <span class="st">&#39;d455&#39;</span>)</span>
+<span id="cb29-5"><a href="#cb29-5" aria-hidden="true" tabindex="-1"></a>      .plot(marker<span class="op">=</span><span class="st">&#39;o&#39;</span>, c<span class="op">=</span><span class="st">&#39;k&#39;</span>, alpha<span class="op">=</span><span class="fl">0.5</span>, legend<span class="op">=</span><span class="va">False</span>,</span>
+<span id="cb29-6"><a href="#cb29-6" aria-hidden="true" tabindex="-1"></a>            ax<span class="op">=</span>d450_ax))<span class="op">;</span></span>
+<span id="cb29-7"><a href="#cb29-7" aria-hidden="true" tabindex="-1"></a>(pp_df[pp_df[<span class="st">&#39;d455&#39;</span>] <span class="op">==</span> REF_CAT]</span>
+<span id="cb29-8"><a href="#cb29-8" aria-hidden="true" tabindex="-1"></a>      .plot(<span class="st">&#39;d450&#39;</span>, <span class="st">&#39;pp_phcs_mean&#39;</span>,</span>
+<span id="cb29-9"><a href="#cb29-9" aria-hidden="true" tabindex="-1"></a>            marker<span class="op">=</span><span class="st">&#39;o&#39;</span>, c<span class="op">=</span><span class="st">&#39;k&#39;</span>,</span>
+<span id="cb29-10"><a href="#cb29-10" aria-hidden="true" tabindex="-1"></a>            label<span class="op">=</span><span class="ss">f&quot;Refernce category (d455 = </span><span class="sc">{</span>REF_CAT<span class="sc">}</span><span class="ss">)&quot;</span>,</span>
+<span id="cb29-11"><a href="#cb29-11" aria-hidden="true" tabindex="-1"></a>            ax<span class="op">=</span>d450_ax))<span class="op">;</span></span>
+<span id="cb29-12"><a href="#cb29-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb29-13"><a href="#cb29-13" aria-hidden="true" tabindex="-1"></a>d450_ax.set_xticks(d450_cats)<span class="op">;</span></span>
+<span id="cb29-14"><a href="#cb29-14" aria-hidden="true" tabindex="-1"></a>d450_ax.set_ylabel(<span class="st">&quot;Posterior excpected phcs&quot;</span>)<span class="op">;</span></span>
+<span id="cb29-15"><a href="#cb29-15" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb29-16"><a href="#cb29-16" aria-hidden="true" tabindex="-1"></a>(pp_df[pp_df[<span class="st">&#39;d450&#39;</span>] <span class="op">!=</span> REF_CAT]</span>
+<span id="cb29-17"><a href="#cb29-17" aria-hidden="true" tabindex="-1"></a>      .pivot_table(<span class="st">&#39;pp_phcs_mean&#39;</span>, <span class="st">&#39;d455&#39;</span>, <span class="st">&#39;d450&#39;</span>)</span>
+<span id="cb29-18"><a href="#cb29-18" aria-hidden="true" tabindex="-1"></a>      .plot(marker<span class="op">=</span><span class="st">&#39;o&#39;</span>, c<span class="op">=</span><span class="st">&#39;k&#39;</span>, alpha<span class="op">=</span><span class="fl">0.5</span>, legend<span class="op">=</span><span class="va">False</span>,</span>
+<span id="cb29-19"><a href="#cb29-19" aria-hidden="true" tabindex="-1"></a>            ax<span class="op">=</span>d455_ax))<span class="op">;</span></span>
+<span id="cb29-20"><a href="#cb29-20" aria-hidden="true" tabindex="-1"></a>(pp_df[pp_df[<span class="st">&#39;d450&#39;</span>] <span class="op">==</span> REF_CAT]</span>
+<span id="cb29-21"><a href="#cb29-21" aria-hidden="true" tabindex="-1"></a>      .plot(<span class="st">&#39;d455&#39;</span>, <span class="st">&#39;pp_phcs_mean&#39;</span>,</span>
+<span id="cb29-22"><a href="#cb29-22" aria-hidden="true" tabindex="-1"></a>            marker<span class="op">=</span><span class="st">&#39;o&#39;</span>, c<span class="op">=</span><span class="st">&#39;k&#39;</span>,</span>
+<span id="cb29-23"><a href="#cb29-23" aria-hidden="true" tabindex="-1"></a>            label<span class="op">=</span><span class="ss">f&quot;Refernce category (d450 = </span><span class="sc">{</span>REF_CAT<span class="sc">}</span><span class="ss">)&quot;</span>,</span>
+<span id="cb29-24"><a href="#cb29-24" aria-hidden="true" tabindex="-1"></a>            ax<span class="op">=</span>d455_ax))<span class="op">;</span></span>
+<span id="cb29-25"><a href="#cb29-25" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb29-26"><a href="#cb29-26" aria-hidden="true" tabindex="-1"></a>d455_ax.set_xticks(d455_cats)<span class="op">;</span></span>
+<span id="cb29-27"><a href="#cb29-27" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb29-28"><a href="#cb29-28" aria-hidden="true" tabindex="-1"></a>fig.tight_layout()<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/monotonic/Monotonic%20Effects%20in%20PyMC3_37_0.png" title="fig:" alt="png" />
+</center>
+<p>For reference, we compare this model to a model that includes <code>d450</code> and <code>d455</code> as linear predictors. This model is given by</p>
+<p><span class="math display">\[
+\begin{align*}
+    \mu_i
+        &amp; = \beta_0 + \beta_{\textrm{d450}} \cdot j(i) + \beta_{\textrm{d455}} \cdot k(i) \\
+    \beta_0, \beta_{\textrm{d450}}, \beta_{\textrm{d455}}
+        &amp; \sim N(0, 10^2) \\
+    y_i
+        &amp; \sim N(\mu_i, \sigma^2) \\
+    \sigma
+        &amp; \sim \textrm{HalfNormal}(5^2)
+\end{align*}
+\]</span></p>
+<div class="sourceCode" id="cb30"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb30-1"><a href="#cb30-1" aria-hidden="true" tabindex="-1"></a>d450_.set_value(d450)</span>
+<span id="cb30-2"><a href="#cb30-2" aria-hidden="true" tabindex="-1"></a>d455_.set_value(d455)</span></code></pre></div>
+<div class="sourceCode" id="cb31"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb31-1"><a href="#cb31-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> pm.Model() <span class="im">as</span> linear_model:</span>
+<span id="cb31-2"><a href="#cb31-2" aria-hidden="true" tabindex="-1"></a>    β<span class="dv">0</span> <span class="op">=</span> pm.Normal(<span class="st">&#39;β0&#39;</span>, <span class="fl">0.</span>, <span class="fl">10.</span>)</span>
+<span id="cb31-3"><a href="#cb31-3" aria-hidden="true" tabindex="-1"></a>    β_d450 <span class="op">=</span> pm.Normal(<span class="st">&#39;β_d450&#39;</span>, <span class="fl">0.</span>, <span class="fl">10.</span>)</span>
+<span id="cb31-4"><a href="#cb31-4" aria-hidden="true" tabindex="-1"></a>    β_d455 <span class="op">=</span> pm.Normal(<span class="st">&#39;β_d455&#39;</span>, <span class="fl">0.</span>, <span class="fl">10.</span>)</span>
+<span id="cb31-5"><a href="#cb31-5" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb31-6"><a href="#cb31-6" aria-hidden="true" tabindex="-1"></a>    μ <span class="op">=</span> β<span class="dv">0</span> <span class="op">+</span> β_d450 <span class="op">*</span> d450_ <span class="op">+</span> β_d455 <span class="op">*</span> d455_</span>
+<span id="cb31-7"><a href="#cb31-7" aria-hidden="true" tabindex="-1"></a>    σ <span class="op">=</span> pm.HalfNormal(<span class="st">&#39;σ&#39;</span>, <span class="fl">5.</span>)</span>
+<span id="cb31-8"><a href="#cb31-8" aria-hidden="true" tabindex="-1"></a>    phcs_obs <span class="op">=</span> pm.Normal(<span class="st">&#39;phcs&#39;</span>, μ, σ, observed<span class="op">=</span>phcs)</span></code></pre></div>
+<div class="sourceCode" id="cb32"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb32-1"><a href="#cb32-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> linear_model:</span>
+<span id="cb32-2"><a href="#cb32-2" aria-hidden="true" tabindex="-1"></a>    linear_trace <span class="op">=</span> pm.sample(<span class="op">**</span>SAMPLE_KWARGS)</span></code></pre></div>
+<pre><code>Auto-assigning NUTS sampler...
+Initializing NUTS using jitter+adapt_diag...
+Multiprocess sampling (3 chains in 2 jobs)
+NUTS: [σ, β_d455, β_d450, β0]
+Sampling 3 chains: 100%|██████████| 6000/6000 [00:07&lt;00:00, 771.92draws/s] </code></pre>
+<p>As in the paper, compare these models by stacking their posterioir predictive distributions.</p>
+<div class="sourceCode" id="cb34"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb34-1"><a href="#cb34-1" aria-hidden="true" tabindex="-1"></a>comp_df <span class="op">=</span> (pm.compare({</span>
+<span id="cb34-2"><a href="#cb34-2" aria-hidden="true" tabindex="-1"></a>                model: trace,</span>
+<span id="cb34-3"><a href="#cb34-3" aria-hidden="true" tabindex="-1"></a>                linear_model: linear_trace</span>
+<span id="cb34-4"><a href="#cb34-4" aria-hidden="true" tabindex="-1"></a>             })</span>
+<span id="cb34-5"><a href="#cb34-5" aria-hidden="true" tabindex="-1"></a>             .rename({</span>
+<span id="cb34-6"><a href="#cb34-6" aria-hidden="true" tabindex="-1"></a>                 <span class="dv">0</span>: <span class="st">&quot;Paper&quot;</span>,</span>
+<span id="cb34-7"><a href="#cb34-7" aria-hidden="true" tabindex="-1"></a>                 <span class="dv">1</span>: <span class="st">&quot;Linear&quot;</span></span>
+<span id="cb34-8"><a href="#cb34-8" aria-hidden="true" tabindex="-1"></a>             }))</span></code></pre></div>
+<div class="sourceCode" id="cb35"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb35-1"><a href="#cb35-1" aria-hidden="true" tabindex="-1"></a>comp_df</span></code></pre></div>
+<div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<center>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th>
+</th>
+<th>
+WAIC
+</th>
+<th>
+pWAIC
+</th>
+<th>
+dWAIC
+</th>
+<th>
+weight
+</th>
+<th>
+SE
+</th>
+<th>
+dSE
+</th>
+<th>
+var_warn
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>
+Paper
+</th>
+<td>
+2825.24
+</td>
+<td>
+6.22
+</td>
+<td>
+0
+</td>
+<td>
+1
+</td>
+<td>
+29.01
+</td>
+<td>
+0
+</td>
+<td>
+0
+</td>
+</tr>
+<tr>
+<th>
+Linear
+</th>
+<td>
+2830.2
+</td>
+<td>
+3.7
+</td>
+<td>
+4.97
+</td>
+<td>
+0
+</td>
+<td>
+29.09
+</td>
+<td>
+4.42
+</td>
+<td>
+0
+</td>
+</tr>
+</tbody>
+</table>
+</center>
+</div>
+<p>We see that the model from the paper has a lower WAIC and gets 100% of the weight, a strong sign that it is surperior to the linear model.</p>
+<p>This post is available as a Jupyter notebook <a href="https://nbviewer.jupyter.org/gist/AustinRochford/166c01cd24979c27ffb5b106904cd802">here</a>.</p>

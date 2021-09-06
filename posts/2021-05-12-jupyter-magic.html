@@ -1,0 +1,147 @@
+<meta name="title" content="How to Write a Jupyter Magic in Python" />
+<meta name="tags" content="Python, Jupyter" />
+<meta name="date" content="2021-05-12" />
+<meta name="has_math" content="true" /><p><a href="https://ipython.readthedocs.io/en/stable/interactive/magics.html">Jupyter magics</a> allow us to run convenient utility functions within Jupyter notebooks. Anyone who has done much data analysis in a Jupyter notebook is likely familiar with</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="op">%</span>matplotlib inline</span></code></pre></div>
+<p>which causes our <code>matplotlib</code> figures to be rendered in the notebook. This short post will explain the mechanics of creating Jupyter notebooks and exists mostly as a reference for my future self. For a slightly more involved example, my package <a href="https://github.com/AustinRochford/giphy-ipython-magic"><code>giphy-ipython-magic</code></a> serves well.</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="op">!</span>pip install <span class="op">-</span>q giphy<span class="op">-</span>ipython<span class="op">-</span>magic</span></code></pre></div>
+<div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="op">%</span>load_ext giphy_magic</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="op">%</span>giphy magic</span></code></pre></div>
+<center>
+<img src="https://media3.giphy.com/media/YV4MD2hR4SJttvxPiE/giphy.gif"/>
+</center>
+<h2 id="a-simple-magic">A simple magic</h2>
+<p>To start, we’ll implement a Jupyter magic that prints the result of <a href="https://en.wikipedia.org/wiki/Cowsay"><code>cowsay</code></a> (one of my favorite Unix utilities) given a phrase.</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="op">!</span>pip install <span class="op">-</span>q cowsay</span></code></pre></div>
+<div class="sourceCode" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="op">%%</span>writefile .<span class="op">/</span>cowsay_magic.py</span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> cowsay <span class="im">as</span> cs</span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> cowsay(msg):</span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a>    cs.cow(msg)</span></code></pre></div>
+<pre><code>Overwriting ./cowsay_magic.py</code></pre>
+<p>Here the <a href="https://ipython.readthedocs.io/en/stable/interactive/magics.html#cellmagic-writefile"><code>%%writefile</code> magic</a> writes the contents of the rest of the cell to the <code>cowsay_magic.py</code> file in the current directory. The script written to this file calls a <a href="https://github.com/VaasuDevanS/cowsay-python">Python library</a> that reimplements <code>cowsay</code> and prints the result. In order for Jupyter to know that this file and function define a magic command, we must register the magic in a function named <code>load_ipython_extension</code>. (Note that we could also use the <a href="http://localhost:8888/notebooks/jupyter_magic/Jupyter%20Magic.ipynb"><code>@register_line_magic</code> decorator</a>, but <code>load_ipython_extension</code> is necessary to redefine this magic momentarily. If anyone knows how to do this with the decorator, I’m all ears.)</p>
+<div class="sourceCode" id="cb7"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="op">%%</span>writefile <span class="op">-</span>a .<span class="op">/</span>cowsay_magic.py</span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> load_ipython_extension(ipython):</span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>    ipython.register_magic_function(cowsay, <span class="st">&#39;line&#39;</span>)</span></code></pre></div>
+<pre><code>Appending to ./cowsay_magic.py</code></pre>
+<p>Here the <code>-a</code> argument causes <code>%%writefile</code> to append to the existing file instead of overwriting it, which is the default behavior.</p>
+<p>We make sure <code>cowsay_magic.py</code> is on the <code>PYTHONPATH</code> and load the magic into the Jupyter environment.</p>
+<div class="sourceCode" id="cb9"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> sys</span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a>sys.path.append(<span class="st">&#39;.&#39;</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb10"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="op">%</span>load_ext cowsay_magic</span></code></pre></div>
+<p>We can now use <code>%cowsay</code> to summon our bovine friend.</p>
+<div class="sourceCode" id="cb11"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="op">%</span>cowsay Hello Jupyter<span class="op">!</span></span></code></pre></div>
+<pre><code>  ______________
+| Hello Jupyter! |
+  ==============
+              \
+               \
+                 ^__^
+                 (oo)\_______
+                 (__)\       )\/\
+                     ||----w |
+                     ||     ||</code></pre>
+<h3 id="adding-arguments">Adding arguments</h3>
+<p>Jupyter passes the string after the magic as <code>msg</code>, and many magics implement shell-style arguments. We will add argument parsing to <code>%cowsay</code> in order to change the type of figure in the ASCII art.</p>
+<div class="sourceCode" id="cb13"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="op">%%</span>writefile .<span class="op">/</span>cowsay_magic.py</span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> argparse <span class="im">import</span> ArgumentParser</span>
+<span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> cowsay <span class="im">as</span> cs</span>
+<span id="cb13-4"><a href="#cb13-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb13-5"><a href="#cb13-5" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> parse_args(msg):</span>
+<span id="cb13-6"><a href="#cb13-6" aria-hidden="true" tabindex="-1"></a>    parser <span class="op">=</span> ArgumentParser(prog<span class="op">=</span><span class="st">&#39;cowsay magic&#39;</span>)</span>
+<span id="cb13-7"><a href="#cb13-7" aria-hidden="true" tabindex="-1"></a>    parser.add_argument(<span class="st">&#39;-f&#39;</span>, dest<span class="op">=</span><span class="st">&#39;char_name&#39;</span>, action<span class="op">=</span><span class="st">&#39;store&#39;</span>, default<span class="op">=</span><span class="st">&#39;cow&#39;</span>)</span>
+<span id="cb13-8"><a href="#cb13-8" aria-hidden="true" tabindex="-1"></a>    parser.add_argument(<span class="st">&#39;message&#39;</span>, nargs<span class="op">=</span><span class="st">&#39;*&#39;</span>)</span>
+<span id="cb13-9"><a href="#cb13-9" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb13-10"><a href="#cb13-10" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> parser.parse_args(msg.split())</span>
+<span id="cb13-11"><a href="#cb13-11" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb13-12"><a href="#cb13-12" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> cowsay(msg):</span>
+<span id="cb13-13"><a href="#cb13-13" aria-hidden="true" tabindex="-1"></a>    args <span class="op">=</span> parse_args(msg)</span>
+<span id="cb13-14"><a href="#cb13-14" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb13-15"><a href="#cb13-15" aria-hidden="true" tabindex="-1"></a>    <span class="bu">print</span>(cs.get_output_string(args.char_name, <span class="st">&#39; &#39;</span>.join(args.message)))</span>
+<span id="cb13-16"><a href="#cb13-16" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb13-17"><a href="#cb13-17" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> load_ipython_extension(ipython):</span>
+<span id="cb13-18"><a href="#cb13-18" aria-hidden="true" tabindex="-1"></a>    ipython.register_magic_function(cowsay, <span class="st">&#39;line&#39;</span>)</span></code></pre></div>
+<pre><code>Overwriting ./cowsay_magic.py</code></pre>
+<p>Here we have used the <a href="https://docs.python.org/3/library/argparse.html"><code>argparse</code></a> module to parse <code>msg</code>. We reload the <code>cowsay_magic</code> extension.</p>
+<div class="sourceCode" id="cb15"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="op">%</span>reload_ext cowsay_magic</span></code></pre></div>
+<p>Passing no arguments to <code>%cowsay</code> still prints a cow.</p>
+<div class="sourceCode" id="cb16"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="op">%</span>cowsay Hello Jupyter<span class="op">!</span></span></code></pre></div>
+<pre><code>  ______________
+| Hello Jupyter! |
+  ==============
+              \
+               \
+                 ^__^
+                 (oo)\_______
+                 (__)\       )\/\
+                     ||----w |
+                     ||     ||</code></pre>
+<p>Passing the <code>-f</code> argument to <code>%cowsay</code> changes the speaker.</p>
+<div class="sourceCode" id="cb18"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="op">%</span>cowsay <span class="op">-</span>f trex Hello Jupyter<span class="op">!</span></span></code></pre></div>
+<pre><code>  ______________
+| Hello Jupyter! |
+  ==============
+                     \
+                      \
+                       \
+                        \
+                           .-=-==--==--.
+                     ..-==&quot;  ,&#39;o`)      `.
+                   ,&#39;         `&quot;&#39;         \
+                  :  (                     `.__...._
+                  |                  )    /         `-=-.
+                  :       ,vv.-._   /    /               `---==-._
+                   \/\/\/VV ^ d88`;&#39;    /                         `.
+                       ``  ^/d88P!&#39;    /             ,              `._
+                          ^/    !&#39;   ,.      ,      /                  &quot;-,,__,,--&#39;&quot;&quot;&quot;&quot;-.
+                         ^/    !&#39;  ,&#39;  \ . .(      (         _           )  ) ) ) ))_,-.\
+                        ^(__ ,!&#39;,&quot;&#39;   ;:+.:%:a.     \:.. . ,&#39;          )  )  ) ) ,&quot;&#39;    &#39;
+                        &#39;,,,&#39;&#39;,&#39;     /o:::&quot;:%:%a.    \:.:.:         .    )  ) _,&#39;
+                         &quot;&quot;&quot;&#39;       ;&#39;:::&#39;&#39; `+%%%a._  \%:%|         ;.). _,-&quot;&quot;
+                                ,-=&#39;_.-&#39;      ``:%::)  )%:|        /:._,&quot;
+                               (/(/&quot;           ,&quot; ,&#39;_,&#39;%%%:       (_,&#39;
+                                              (  (//(`.___;        \
+                                               \     \    `         `
+                                                `.    `.   `.        :
+                                                  \. . .\    : . . . :
+                                                   \. . .:    `.. . .:
+                                                    `..:.:\     \:...\
+                                                     ;:.:.;      ::...:
+                                                     ):%::       :::::;
+                                                 __,::%:(        :::::
+                                              ,;:%%%%%%%:        ;:%::
+                                                ;,--&quot;&quot;-.`\  ,=--&#39;:%:%:\
+                                               /&quot;       &quot;| /-&quot;.:%%%%%%%\
+                                                               ;,-&quot;&#39;`)%%)
+                                                              /&quot;      &quot;|</code></pre>
+<h2 id="working-with-python-objects">Working with Python objects</h2>
+<p>Our <code>%cowsay</code> magic works only with strings, but we can also manipulate Python objects in a magic function using <a href="https://docs.python.org/3/library/functions.html#eval"><code>eval</code></a>. To demonstrate, we will define a magic to invert the y-axis of a <code>matplotlib</code> plot.</p>
+<div class="sourceCode" id="cb20"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a><span class="op">%%</span>writefile flip_magic.py</span>
+<span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> IPython.core.magic <span class="im">import</span> needs_local_scope</span>
+<span id="cb20-3"><a href="#cb20-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb20-4"><a href="#cb20-4" aria-hidden="true" tabindex="-1"></a><span class="at">@needs_local_scope</span></span>
+<span id="cb20-5"><a href="#cb20-5" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> flip(fig_str, local_ns<span class="op">=</span><span class="va">None</span>):</span>
+<span id="cb20-6"><a href="#cb20-6" aria-hidden="true" tabindex="-1"></a>    fig <span class="op">=</span> <span class="bu">eval</span>(fig_str, <span class="va">None</span>, local_ns)</span>
+<span id="cb20-7"><a href="#cb20-7" aria-hidden="true" tabindex="-1"></a>    fig.gca().invert_yaxis()</span>
+<span id="cb20-8"><a href="#cb20-8" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb20-9"><a href="#cb20-9" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> fig</span>
+<span id="cb20-10"><a href="#cb20-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb20-11"><a href="#cb20-11" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> load_ipython_extension(ipython):</span>
+<span id="cb20-12"><a href="#cb20-12" aria-hidden="true" tabindex="-1"></a>    ipython.register_magic_function(flip, <span class="st">&#39;line&#39;</span>)</span></code></pre></div>
+<pre><code>Overwriting flip_magic.py</code></pre>
+<p>Note the <code>@needs_local_scope</code> decorater that tells Jupyter to pass the local scope to our magic function. We load <code>flip_magic</code> and see that it does indeed invert the y-axis of a simple plot.</p>
+<div class="sourceCode" id="cb22"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb22-1"><a href="#cb22-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> matplotlib <span class="im">import</span> pyplot <span class="im">as</span> plt</span></code></pre></div>
+<div class="sourceCode" id="cb23"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb23-1"><a href="#cb23-1" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plt.subplots(figsize<span class="op">=</span>(<span class="dv">8</span>, <span class="dv">6</span>))</span>
+<span id="cb23-2"><a href="#cb23-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb23-3"><a href="#cb23-3" aria-hidden="true" tabindex="-1"></a>ax.plot([<span class="dv">0</span>, <span class="dv">1</span>], [<span class="dv">0</span>, <span class="dv">1</span>])<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/jupyter-magic/Jupyter%20Magic_28_0.png" title="fig:" alt="png" />
+</center>
+<div class="sourceCode" id="cb24"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a><span class="op">%</span>load_ext flip_magic</span></code></pre></div>
+<div class="sourceCode" id="cb25"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb25-1"><a href="#cb25-1" aria-hidden="true" tabindex="-1"></a><span class="op">%</span>flip fig</span></code></pre></div>
+<center>
+<img src="/resources/jupyter-magic/Jupyter%20Magic_30_0.png" title="fig:" alt="png" />
+</center>
+<p>I hope that this simple tutorial has been helpful. For more detail about the custom magic API, consult the excellent <a href="https://ipython.readthedocs.io/en/stable/config/custommagics.html">Jupyter documentation</a>.</p>
+<p>The notebook this post was generated from is available as a Jupyter notebook <a href="https://nbviewer.jupyter.org/gist/AustinRochford/6c48e60953fad4069ff027c3fcdccc9a">here</a>.</p>

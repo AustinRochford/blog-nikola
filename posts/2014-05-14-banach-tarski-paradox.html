@@ -1,0 +1,148 @@
+<meta name="title" content="Duplicating Spheres and the Banach-Tarski Paradox" />
+<meta name="tags" content="Paradox" />
+<meta name="date" content="2014-05-14" />
+<meta name="has_math" content="true" /><p>The <a href="http://en.wikipedia.org/wiki/Banach%E2%80%93Tarski_paradox">Banach-Tarksi paradox</a> is one of the most counterintuitive and astounding results in mathematics. Informally, it states that we may slice a sphere into finitely many pieces which can then be reassembled into two exact copies of the original sphere.</p>
+<br />
+<center>
+<img src="/resources/banach-tarski/spheres.png" />
+</center>
+<p><br /></p>
+<p>The paradox arises from the fact that we have doubled the volume of the sphere by rearranging pieces of it. In this post, we’ll resolve this paradox by closely examining our intuitive notion of volume. In addition, we’ll show why the paradox is true, at least in spirit. (The actual proof of this result has some fairly technical and boring parts; we will show the illuminating idea behind the proof.)</p>
+<p>More formally, the Banach-Tarski paradox states that</p>
+<blockquote>
+<p>if <span class="math inline">\(S\)</span> and <span class="math inline">\(T\)</span> are subsets of three-dimensional space (<span class="math inline">\(\mathbb{R}^3\)</span>) with nonempty <a href="http://en.wikipedia.org/wiki/Interior_(topology)">interior</a>, then <span class="math inline">\(S\)</span> may be sliced into finitely many pieces which may be rearranged into an exact copy of <span class="math inline">\(T\)</span> using only isometries of <span class="math inline">\(\mathbb{R}^3\)</span>.</p>
+</blockquote>
+<p>The hypothesis the that subsets have nonempty interior roughly corresponds to the fact that they must be honest-to-goodness three-dimensional solids. It excludes points, which are zero-dimensional, curves, which are one-dimensional, and surfaces, which are two-dimensional. An <a href="http://en.wikipedia.org/wiki/Isometry">isometry</a> of <span class="math inline">\(\mathbb{R}^3\)</span> is a transformation which preserves the distance between points. Examples of transformations of <span class="math inline">\(\mathbb{R}^3\)</span> are translations and rotations. As a consequence of preserving distances, isometries also preserve volume.</p>
+<h4 id="the-properties-of-volume">The Properties of Volume</h4>
+<p>For a subset <span class="math inline">\(S\)</span> of <span class="math inline">\(\mathbb{R}^3\)</span>, let <span class="math inline">\(V(S)\)</span> be the volume of <span class="math inline">\(S\)</span>. Even in this seemingly innocuous sentence, we have already come close to the heart of the Banach-Tarski paradox.</p>
+<blockquote>
+<p>Does every subset of <span class="math inline">\(\mathbb{R}^3\)</span> have a volume?</p>
+</blockquote>
+<p>At first, this question seems perposterous. In fact, mathematicians did not give it serious consideration until the development of <a href="http://en.wikipedia.org/wiki/Measure_(mathematics)">measure theory</a> around the turn of the 20th century. The resolution of this question will lead to the resolution of the Banach-Tarski paradox. For now, however, we focus on the properties of volume whenever it is defined.</p>
+<p>First, for <span class="math inline">\(V(\cdot)\)</span> to correspond with our intuitive notion of volume, it should assign well-known solids their usual volumes. For example, if <span class="math inline">\(B_r\)</span> is a sphere of radius <span class="math inline">\(r\)</span>, we expect that <span class="math inline">\(V(B_r) = \frac{4}{3} \pi r^3\)</span>.</p>
+<br />
+<center>
+<img src="/resources/banach-tarski/sphere_volume.png" />
+</center>
+<p><br /></p>
+<p>Second, if <span class="math inline">\(S\)</span> and <span class="math inline">\(T\)</span> are disjoint (nonoverlapping) subsets of <span class="math inline">\(\mathbb{R}^3\)</span>, it seems reasonable that their volume together should be the sum of their volumes. That is, <span class="math inline">\(V(S \cup T) = V(S) + V(T)\)</span>.</p>
+<br />
+<center>
+<img src="/resources/banach-tarski/sum_two.png" />
+</center>
+<p><br /></p>
+<p>We can generalize this property to finitely many pairwise disjoint sets <span class="math inline">\(S_1, \ldots, S_n\)</span> as <span class="math inline">\(V(S_1 \cup \cdots \cup S_n) = V(S_1) + \cdots + V(S_n)\)</span> using induction.</p>
+<br />
+<center>
+<img src="/resources/banach-tarski/sum_many.png" />
+</center>
+<p><br /></p>
+<p>Third, moving or rotating a solid (but not stretching it) should not change its volume. More precisely, if <span class="math inline">\(T\)</span> can be obtained from <span class="math inline">\(S\)</span> by <a href="http://en.wikipedia.org/wiki/Euclidean_group">Euclidean isometries</a> (translations, rotations, etc.), then <span class="math inline">\(V(S) = V(T)\)</span>.</p>
+<br />
+<center>
+<img src="/resources/banach-tarski/cubes.png" />
+</center>
+<p><br /></p>
+<p>We summarize these properties of volume here.</p>
+<ol type="1">
+<li>Well-known solids are assigned the correct volume. If <span class="math inline">\(B_r\)</span> is a sphere of radius <span class="math inline">\(r\)</span>, <span class="math inline">\(V(B_r) = \frac{4}{3} \pi r^3\)</span>.</li>
+<li>If <span class="math inline">\(S_1, \ldots S_n\)</span> are pairwise disjoint, <span class="math inline">\(V(S_1 \cup \cdots \cup S_n) = V(S_1) + \cdots + V(S_n)\)</span>.</li>
+<li>If <span class="math inline">\(T\)</span> is obtained from <span class="math inline">\(S\)</span> by Euclidean isometries, <span class="math inline">\(V(S) = V(T)\)</span>.</li>
+</ol>
+<p>Some readers with mathematical experience may notice that <span class="math inline">\(V\)</span> is a <a href="http://en.wikipedia.org/wiki/Content_(measure_theory)">finitely additive measure</a>.</p>
+<h4 id="free-groups-and-euclidean-isometries">Free Groups and Euclidean Isometries</h4>
+<p>We now turn our attention to the <a href="http://en.wikipedia.org/wiki/Free_group">free group</a> on two generators, which initially seems rather abstract and unrelated to the geometric Banach-Tarski paradox. At the end of this section and in the next section, however, we will show that the free group is intimately connected to the Banach-Tarski paradox.</p>
+<p>The free group on two generators, <span class="math inline">\(\mathbb{F}_2\)</span> is defined as follows. Let <span class="math inline">\(x\)</span> and <span class="math inline">\(y\)</span> be two symbols, with formal inverses <span class="math inline">\(x^{-1}\)</span> and <span class="math inline">\(y^{-1}\)</span>. (That is, <span class="math inline">\(x x^{-1} = 1 = x^{-1} x\)</span>, and <span class="math inline">\(y y^{-1} = 1 = y^{-1} y\)</span>.) The free group on two generators is <span class="math inline">\(\mathbb{F}_2 = \{\textrm{reduced words in } x, y, x^{-1}\textrm{, and } y^{-1}\}\)</span>.</p>
+<p>A <a href="http://en.wikipedia.org/wiki/Word_(group_theory)">word</a> in <span class="math inline">\(x\)</span>, <span class="math inline">\(y\)</span>, <span class="math inline">\(x^{-1}\)</span>, and <span class="math inline">\(y^{-1}\)</span> is a sequence of these symbols. For example, <span class="math inline">\(x y\)</span>, <span class="math inline">\(x^2 y x^{-1}\)</span>, and <span class="math inline">\(y^{-1} x y y^{-2} x^{-1}\)</span> are all words in these four symbols. (Here <span class="math inline">\(x^2 = x x\)</span>, etc.) A <a href="http://en.wikipedia.org/wiki/Word_(group_theory)#Reduced_words">reduced word</a> is one in which no symbol appears adjacent to its formal inverse. In any situation where these pairs occur consecutively, we may cancel the pair to produce a shorter word. Of our example words, the first two are reduced, while the third is not. We may reduce the third example as</p>
+<p><span class="math display">\[y^{-1} x y y^{-2} x^{-1} = y^{-1} x (y y^{-1}) y^{-1} x^{-1} = y^{-1} x y^{-1} x^{-1},\]</span></p>
+<p>which is now a reduced word.</p>
+<p>We have now defined <span class="math inline">\(\mathbb{F}_2\)</span> as a set, but it requires a product to become a <a href="http://en.wikipedia.org/wiki/Group_(mathematics)">group</a>. For two reduced words <span class="math inline">\(w_1\)</span> and <span class="math inline">\(w_2\)</span> in <span class="math inline">\(\mathbb{F}_2\)</span>, their product <span class="math inline">\(w_1 w_2\)</span> is formed by concatenating <span class="math inline">\(w_1\)</span> and <span class="math inline">\(w_2\)</span> and reducing the result. For example, if <span class="math inline">\(w_1 = y x y x^{-1}\)</span> and <span class="math inline">\(w_2 = x y^{-1} x^2 y\)</span>, then the product is</p>
+<p><span class="math display">\[w_1 w_2 = (y x y x^{-1}) (x y^{-1} x^2 y) = y x y y^{-1} x^2 y = y x^3 y.\]</span></p>
+<p>We’ve managed to define the free group on two generators, but it seems rather abstract at this point. Fortunately, we are now in a position to connect <span class="math inline">\(\mathbb{F}_2\)</span> to the Banach-Tarski paradox. The matrices</p>
+<p><span class="math display">\[X = \begin{pmatrix}
+\frac{1}{3}             &amp; -\frac{2 \sqrt{2}}{3} &amp; 0 \\
+\frac{2 \sqrt{2}}{3}    &amp; \frac{1}{3}           &amp; 0 \\
+0                       &amp; 0                     &amp; 1
+\end{pmatrix}\]</span></p>
+<p>and</p>
+<p><span class="math display">\[Y = \begin{pmatrix}
+1                       &amp; 0                     &amp; 0 \\
+0                       &amp; \frac{1}{3}           &amp; -\frac{2 \sqrt{2}}{3} \\
+0                       &amp; \frac{2 \sqrt{2}}{3}  &amp; \frac{1}{3}
+\end{pmatrix}\]</span></p>
+<p>represent rotations of <span class="math inline">\(\mathbb{R}^3\)</span>. It can be shown that <span class="math inline">\(X\)</span> and <span class="math inline">\(Y\)</span> generate a copy of the free group, <span class="math inline">\(\mathbb{F}_2\)</span>, inside the group of isometries of <span class="math inline">\(\mathbb{R}^3\)</span>. (To do so, one must show that no reduced word in <span class="math inline">\(X\)</span> and <span class="math inline">\(Y\)</span> can act as the identity on <span class="math inline">\(\mathbb{R}^3\)</span>.)</p>
+<h4 id="the-nonamenability-of-the-free-group">The Nonamenability of the Free Group</h4>
+<p>Since the free group on two generators is present in the isometries of <span class="math inline">\(\mathbb{R}^3\)</span>, we may define a volume-like function on the free group, with properties corresponding to those of volume almost exactly. Whether or not such a volume-like function exists on <span class="math inline">\(\mathbb{F}_2\)</span> is the key to understanding the source of the Banach-Tarski paradox.</p>
+<p>A mean is a function <span class="math inline">\(m\)</span> that maps subsets of <span class="math inline">\(\mathbb{F}_2\)</span> to the unit interval <span class="math inline">\([0, 1]\)</span> with the following properties.</p>
+<ol type="1">
+<li><span class="math inline">\(m(\mathbb{F}_2) = 1\)</span></li>
+<li>For <span class="math inline">\(S_1, \ldots, S_n \subseteq \mathbb{F}_2\)</span> which are pairwise disjoint, <span class="math inline">\(m(S_1 \cup \cdots \cup S_n) = m(S_1) + \cdots + m(S_n)\)</span>.</li>
+<li>For <span class="math inline">\(S \subseteq \mathbb{F}_2\)</span> and <span class="math inline">\(w \in \mathbb{F_2}\)</span>, <span class="math inline">\(m(w S) = m(S)\)</span>.</li>
+</ol>
+<p>If such a mean exists, <span class="math inline">\(\mathbb{F}_2\)</span> is called amenable. Intuitively, the mean of a subset of <span class="math inline">\(\mathbb{F}_2\)</span> quantifies what proportion of <span class="math inline">\(\mathbb{F}_2\)</span> the subset occupies. With this interpretation, the three properties of a mean correpsond closely to the three properties of volume listed earlier. It seems reasonable that <span class="math inline">\(\mathbb{F}_2\)</span> should occupy 100% of itself, so property (1) of <span class="math inline">\(m\)</span> corresponds to property (1) of volume. Property (2) of <span class="math inline">\(m\)</span> and property (2) of volume are so similar that any further comment seems unnecessary. Property (3) of <span class="math inline">\(m\)</span> merits further discussion. The set <span class="math inline">\(w S = \{w s | s \in S\}\)</span> corresponds to a translation of <span class="math inline">\(\mathbb{R}^3\)</span>. In fact, since left multiplication of a subsets of <span class="math inline">\(\mathbb{F}_2\)</span> by a fixed element of <span class="math inline">\(\mathbb{F}_2\)</span> is a bijection, the map <span class="math inline">\(S \mapsto w S\)</span> can be considered an “isometry” of <span class="math inline">\(\mathbb{F}_2\)</span>. Property (3) of <span class="math inline">\(m\)</span> then states that “isometries” should not change the proportional size of a subset, which corresponds to property (3) of volume.</p>
+<p>We will now show that <span class="math inline">\(\mathbb{F}_2\)</span> is not amenable. To do so, we must consider the <a href="http://en.wikipedia.org/wiki/Cayley_graph">Cayley graph</a> of <span class="math inline">\(\mathbb{F}_2\)</span>.</p>
+<p>They Cayley graph of <span class="math inline">\(\mathbb{F}_2\)</span> is a geometric representation of the group. We will illustrate a decomposition and rearrangement of the Cayley graph of <span class="math inline">\(\mathbb{F}_2\)</span> that gives rise to the Banach-Tarski paradox. This decomposition will show that <span class="math inline">\(\mathbb{F}_2\)</span> is not amenable.</p>
+<p>To form the Cayley graph of <span class="math inline">\(\mathbb{F}_2\)</span>, we begin by connecting vertices for each of the four generators <span class="math inline">\(x\)</span>, <span class="math inline">\(y\)</span>, <span class="math inline">\(x^{-1}\)</span>, and <span class="math inline">\(y^{-1}\)</span> to a vertex corresponding to the identity element.</p>
+<br />
+<center>
+<img src="/resources/banach-tarski/cayley_generators.png" />
+</center>
+<p><br /></p>
+<p>To each of these four vertices, we attach three new vertices, correpsonding to multiplication on the right by <span class="math inline">\(x\)</span>, <span class="math inline">\(y\)</span>, <span class="math inline">\(x^{-1}\)</span>, and <span class="math inline">\(y^{-1}\)</span>. Note that this only produces three new vertices (at each existing vertex), since multiplication by the vertex’s inverse element returns us to the vertex corresponding to <span class="math inline">\(1\)</span>.</p>
+<br />
+<center>
+<img src="/resources/banach-tarski/cayley_two_levels.png" />
+</center>
+<p><br /></p>
+<p>Repeating this procedure at each of the new vertices, we arrive at the following graph. (Vertex labels have been removed due to the increased density of the vertices.)</p>
+<br />
+<center>
+<img src="/resources/banach-tarski/cayley_three_levels.png" />
+</center>
+<p><br /></p>
+<p>Repeating this process ad infinitum, we arrive at the Cayley graph of <span class="math inline">\(\mathbb{F}_2\)</span>, which is a <a href="http://en.wikipedia.org/wiki/Regular_graph">four-regular</a> <a href="http://en.wikipedia.org/wiki/Tree_(graph_theory)">tree</a>. The power of this Cayley graph is that it provides a geometric lens through which we may view <span class="math inline">\(\mathbb{F}_2\)</span>. If <span class="math inline">\(w\)</span> and <span class="math inline">\(w&#39;\)</span> are two reduced words in <span class="math inline">\(\mathbb{F}_2\)</span>, we can define the distance between <span class="math inline">\(w\)</span> and <span class="math inline">\(w&#39;\)</span> as the number of edges in the shortest path connecting their vertices in the Cayley graph of <span class="math inline">\(\mathbb{F}_2\)</span>. Once we define the distance between elements of <span class="math inline">\(\mathbb{F}_2\)</span>, we can study the geometry of <span class="math inline">\(\mathbb{F}_2\)</span>. This idea leads to the deep and fascinating field of <a href="http://en.wikipedia.org/wiki/Geometric_group_theory">geometric group theory</a>.</p>
+<p>We now have all of the tools necessary to show that <span class="math inline">\(\mathbb{F}_2\)</span> is not amenable, the fact that underlies the Banach-Tarski paradox. Let <span class="math inline">\(W(x)\)</span> be the set of all reduced words in <span class="math inline">\(\mathbb{F}_2\)</span> that being with <span class="math inline">\(x\)</span>. Define <span class="math inline">\(W(y)\)</span>, <span class="math inline">\(W(x^{-1})\)</span>, and <span class="math inline">\(W(y^{-1})\)</span> similarly.</p>
+<br />
+<center>
+<img src="/resources/banach-tarski/cayley_colors.png" />
+</center>
+<p><br /></p>
+<p>Above we have colored <span class="math inline">\(W(x)\)</span> in red, <span class="math inline">\(W(y)\)</span> in blue, <span class="math inline">\(W(x^{-1})\)</span> in green and <span class="math inline">\(W(y^{-1})\)</span> in yellow. This diagram illustrates the decomposition</p>
+<p><span class="math display">\[\mathbb{F}_2 = \{1\} \cup W(x) \cup W(y) \cup W(x^{-1}) \cup W(y^{-1}).\]</span></p>
+<p>The nonamenability of <span class="math inline">\(\mathbb{F}_2\)</span> (and consequently the Banach-Tarski paradox) arises from another decomposition of <span class="math inline">\(\mathbb{F}_2\)</span> which contradicts the one above. The key to the second decomposition is calculating the complement of <span class="math inline">\(W(x)\)</span>. If <span class="math inline">\(w\)</span> is not in <span class="math inline">\(W(x)\)</span>, then <span class="math inline">\(x^{-1} w\)</span> is in <span class="math inline">\(W(x^{-1})\)</span> (since there is no initial <span class="math inline">\(x\)</span> to cancel), so <span class="math inline">\(w = x (x^{-1} w)\)</span> is an element of <span class="math inline">\(x W(x^{-1})\)</span>. Similarly, if <span class="math inline">\(w&#39;\)</span> is in <span class="math inline">\(x W(x^{-1})\)</span>, then it cannot start with <span class="math inline">\(x\)</span>, so <span class="math inline">\(W(x)^\mathsf{c} = x W(x^{-1})\)</span>. The second decomposition of <span class="math inline">\(\mathbb{F}_2\)</span> is then</p>
+<p><span class="math display">\[\mathbb{F}_2 = W(x) \cup W(x)^\mathsf{c} = W(x) \cup x W(x^{-1}).\]</span></p>
+<p>This decomposition is shown in the following diagram.</p>
+<br />
+<center>
+<img src="/resources/banach-tarski/cayley_paradox.png" />
+</center>
+<p><br /></p>
+<p>Here <span class="math inline">\(W(x)\)</span> is shown in red, and <span class="math inline">\(x W(x^{-1})\)</span> is shown in green. The fact that the multiplying <span class="math inline">\(W(x^{-1})\)</span> by <span class="math inline">\(x\)</span> (which corresponds to a translation of <span class="math inline">\(\mathbb{R}^3\)</span>) causes the set of green vertices in the first decomposition to absorb the blue, yellow, and gray vertices leads to the nonamenability of <span class="math inline">\(\mathbb{F}_2\)</span> and the Banach-Tarski paradox.</p>
+<p>Now we’ll show formally that these two decompositions cause <span class="math inline">\(\mathbb{F}_2\)</span> to be nonamenable. The proof proceeds by contradiction. Suppose <span class="math inline">\(m\)</span> is a mean on <span class="math inline">\(\mathbb{F}_2\)</span>. From the second decomposition,</p>
+<p><span class="math display">\[\begin{align*}
+m(\mathbb{F}_2)
+    &amp; = m(W(x)) + m(x W(x^{-1}))    \\
+1
+    &amp; = m(W(x)) + m(W(x^{-1})).
+\end{align*}\]</span></p>
+<p>In this calculation, the first equality follows from property (2) of <span class="math inline">\(m\)</span> and the second equality follows from properties (1) and (3) of <span class="math inline">\(m\)</span>. We can also produce a third decomposition of <span class="math inline">\(\mathbb{F}_2\)</span> as <span class="math inline">\(\mathbb{F}_2 = W(y) \cup y W(y^{-1}),\)</span> so a similar argument shows that <span class="math inline">\(1 = m(W(y)) + m(W(y^{-1}))\)</span>. Combining these two facts with the first decomposition, we get</p>
+<p><span class="math display">\[\begin{align*}
+m(\mathbb{F}_2)
+    &amp; = m(\{1\}) + m(W(x)) + m(W(y)) + m(W(x^{-1})) + m(W(y^{-1}))  \\
+m(\mathbb{F}_2)
+    &amp; \geq m(W(x))+ m(W(x^{-1})) + m(W(y)) + m(W(y^{-1}))  \\
+1
+    &amp; \geq 1 + 1
+      = 2,
+\end{align*}\]</span></p>
+<p>which is a contradiction. The second step of this derivation comes from dropping the terms <span class="math inline">\(m(\{1\})\)</span> from the right hand side, which must be nonnegative, since the range of <span class="math inline">\(m\)</span> is <span class="math inline">\([0, 1]\)</span>.</p>
+<p>Due to the prescence of <span class="math inline">\(\mathbb{F}_2\)</span> in the group of isometries of <span class="math inline">\(\mathbb{R}^3\)</span>, we can transfer these decompositions of <span class="math inline">\(\mathbb{F}_2\)</span> to <span class="math inline">\(\mathbb{R}^3\)</span>, leading to the Banach-Tarski paradox. The transition to <span class="math inline">\(\mathbb{R}^3\)</span> involves a technical argument that requires a bit of care. For details see Chapter 0 of <a href="http://www.math.ualberta.ca/~runde/runde.html">Volker Runde</a>’s excellent book <em>Lectures on Amenability</em><a href="#fn1" class="footnote-ref" id="fnref1" role="doc-noteref"><sup>1</sup></a>. It is worth nothing that this argument involves the <a href="http://en.wikipedia.org/wiki/Axiom_of_choice">axiom of choice</a>, so that while we gave an explicit description of conflicting decompositions of <span class="math inline">\(\mathbb{F}_2\)</span>, we are only able to prove that such a decompositions exist in <span class="math inline">\(\mathbb{F}_2\)</span>, not describe it explicitly.</p>
+<h4 id="resolving-the-paradox">Resolving the Paradox</h4>
+<p>When considering the properties of volume, we arrived at the question of whether or not every subset of <span class="math inline">\(\mathbb{R}^3\)</span> can be assigned a volume. Fortunately for mathematicians, the answer is no. The fact that <span class="math inline">\(\mathbb{F}_2\)</span> is nonamenable intuitively means that it is impossible to say what proportion of <span class="math inline">\(\mathbb{F}_2\)</span> every subset occupies in a consistent manner. Through the presence of <span class="math inline">\(\mathbb{F}_2\)</span> in the isometries of <span class="math inline">\(\mathbb{R}^3\)</span>, this leads to the impossibility of assigning a volume to every subset of <span class="math inline">\(\mathbb{R}^3\)</span>. (There are much more succint proofs that <span class="math inline">\(\mathbb{R}^3\)</span> contains <a href="http://en.wikipedia.org/wiki/Non-measurable_set">nonmeasurable</a> subsets; we chose to take a longer route to this fact in order to show the origin of the Banach-Tarski paradox.)</p>
+<p>The Banach-Tarski paradox is resolved by noting that as long as at least one of the slices of the original sphere does not have a volume, the notion of doubling its volume is meaningless.</p>
+<section class="footnotes" role="doc-endnotes">
+<hr />
+<ol>
+<li id="fn1" role="doc-endnote"><p>Runde, Volker. <em>Lectures on amenability</em>. No. 1774. Springer, 2002.<a href="#fnref1" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+</ol>
+</section>

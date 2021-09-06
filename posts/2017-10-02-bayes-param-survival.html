@@ -1,0 +1,420 @@
+<meta name="title" content="Bayesian Parametric Survival Analysis with PyMC3" />
+<meta name="tags" content="Bayesian Statistics, PyMC3" />
+<meta name="date" content="2017-10-02" />
+<meta name="has_math" content="true" /><style>
+.dataframe * {border-color: #c0c0c0 !important;}
+.dataframe th{background: #eee;}
+.dataframe td{
+    background: #fff;
+    text-align: right; 
+    min-width:5em;
+}
+
+/* Format summary rows */
+.dataframe-summary-row tr:last-child,
+.dataframe-summary-col td:last-child{
+background: #eee;
+    font-weight: 500;
+}
+</style>
+<p><a href="https://en.wikipedia.org/wiki/Survival_analysis">Survival analysis</a> studies the distribution of the time between when a subject comes under observation and when that subject experiences an event of interest. One of the fundamental challenges of survival analysis (which also makes it mathematically interesting) is that, in general, not every subject will experience the event of interest before we conduct our analysis. In more concrete terms, if we are studying the time between cancer treatment and death (as we will in this post), we will often want to analyze our data before every subject has died. This phenomenon is called <a href="https://en.wikipedia.org/wiki/Censoring_(statistics)">censoring</a> and is fundamental to survival analysis.</p>
+<p>I have previously <a href="http://austinrochford.com/posts/2015-10-05-bayes-survival.html">written</a> about Bayesian survival analysis using the <a href="https://en.wikipedia.org/wiki/Semiparametric_model">semiparametric</a> <a href="https://en.wikipedia.org/wiki/Proportional_hazards_model#The_Cox_model">Cox proportional hazards model</a>. Implementing that semiparametric model in PyMC3 involved some fairly complex <code>numpy</code> code and nonobvious probability theory equivalences. This post illustrates a parametric approach to Bayesian survival analysis in PyMC3. Parametric models of survival are simpler to both implement and understand than semiparametric models; statistically, they are also more <a href="https://en.wikipedia.org/wiki/Statistical_power">powerful</a> than non- or semiparametric methods <em>when they are correctly specified</em>. This post will not further cover the differences between parametric and nonparametric models or the various methods for chosing between them.</p>
+<p>As in the previous post, we will analyze <a href="https://vincentarelbundock.github.io/Rdatasets/doc/HSAUR/mastectomy.html">mastectomy data</a> from <code>R</code>’s <a href="https://cran.r-project.org/web/packages/HSAUR/index.html"><code>HSAUR</code></a> package. First, we load the data.</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="op">%</span>matplotlib inline</span></code></pre></div>
+<div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> matplotlib <span class="im">import</span> pyplot <span class="im">as</span> plt</span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> matplotlib.ticker <span class="im">import</span> StrMethodFormatter</span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> numpy <span class="im">as</span> np</span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> pymc3 <span class="im">as</span> pm</span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> scipy <span class="im">as</span> sp</span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> seaborn <span class="im">as</span> sns</span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> statsmodels <span class="im">import</span> datasets</span>
+<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> theano <span class="im">import</span> shared, tensor <span class="im">as</span> tt</span></code></pre></div>
+<div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>sns.<span class="bu">set</span>()</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>blue, green, red, purple, gold, teal <span class="op">=</span> sns.color_palette()</span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>pct_formatter <span class="op">=</span> StrMethodFormatter(<span class="st">&#39;</span><span class="sc">{x:.1%}</span><span class="st">&#39;</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>df <span class="op">=</span> (datasets.get_rdataset(<span class="st">&#39;mastectomy&#39;</span>, <span class="st">&#39;HSAUR&#39;</span>, cache<span class="op">=</span><span class="va">True</span>)</span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>              .data</span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>              .assign(metastized<span class="op">=</span><span class="kw">lambda</span> df: <span class="fl">1.</span> <span class="op">*</span> (df.metastized <span class="op">==</span> <span class="st">&quot;yes&quot;</span>),</span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>                      event<span class="op">=</span><span class="kw">lambda</span> df: <span class="fl">1.</span> <span class="op">*</span> df.event))</span></code></pre></div>
+<div class="sourceCode" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>df.head()</span></code></pre></div>
+<center>
+<div>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th>
+</th>
+<th>
+time
+</th>
+<th>
+event
+</th>
+<th>
+metastized
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>
+0
+</th>
+<td>
+23
+</td>
+<td>
+1.0
+</td>
+<td>
+0.0
+</td>
+</tr>
+<tr>
+<th>
+1
+</th>
+<td>
+47
+</td>
+<td>
+1.0
+</td>
+<td>
+0.0
+</td>
+</tr>
+<tr>
+<th>
+2
+</th>
+<td>
+69
+</td>
+<td>
+1.0
+</td>
+<td>
+0.0
+</td>
+</tr>
+<tr>
+<th>
+3
+</th>
+<td>
+70
+</td>
+<td>
+0.0
+</td>
+<td>
+0.0
+</td>
+</tr>
+<tr>
+<th>
+4
+</th>
+<td>
+100
+</td>
+<td>
+0.0
+</td>
+<td>
+0.0
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center>
+<p>The column <code>time</code> represents the survival time for a breast cancer patient after a mastectomy, measured in months. The column <code>event</code> indicates whether or not the observation is censored. If <code>event</code> is one, the patient’s death was observed during the study; if <code>event</code> is zero, the patient lived past the end of the study and their survival time is censored. The column <code>metastized</code> indicates whether the cancer had <a href="https://en.wikipedia.org/wiki/Metastasis">metastized</a> prior to the mastectomy. In this post, we will use Bayesian parametric survival regression to quantify the difference in survival times for patients whose cancer had and had not metastized.</p>
+<h2 id="accelerated-failure-time-models">Accelerated failure time models</h2>
+<p><a href="https://en.wikipedia.org/wiki/Accelerated_failure_time_model">Accelerated failure time models</a> are the most common type of parametric survival regression models. The fundamental quantity of survival analysis is the <a href="https://en.wikipedia.org/wiki/Survival_function">survival function</a>; if <span class="math inline">\(T\)</span> is the random variable representing the time to the event in question, the survival function is <span class="math inline">\(S(t) = P(T &gt; t)\)</span>. Accelerated failure time models incorporate covariates <span class="math inline">\(\mathbf{x}\)</span> into the survival function as</p>
+<p><span class="math display">\[S(t\ |\ \beta, \mathbf{x}) = S_0\left(\exp\left(\beta^{\top} \mathbf{x}\right) \cdot t\right),\]</span></p>
+<p>where <span class="math inline">\(S_0(t)\)</span> is a fixed baseline survival function. These models are called “accelerated failure time” because, when <span class="math inline">\(\beta^{\top} \mathbf{x} &gt; 0\)</span>, <span class="math inline">\(\exp\left(\beta^{\top} \mathbf{x}\right) \cdot t &gt; t\)</span>, so the effect of the covariates is to accelerate the <em>effective</em> passage of time for the individual in question. The following plot illustrates this phenomenon using an exponential survival function.</p>
+<div class="sourceCode" id="cb6"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>S0 <span class="op">=</span> sp.stats.expon.sf</span></code></pre></div>
+<div class="sourceCode" id="cb7"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plt.subplots(figsize<span class="op">=</span>(<span class="dv">8</span>, <span class="dv">6</span>))</span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>t <span class="op">=</span> np.linspace(<span class="dv">0</span>, <span class="dv">10</span>, <span class="dv">100</span>)</span>
+<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a>ax.plot(t, S0(<span class="dv">5</span> <span class="op">*</span> t),</span>
+<span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a>        label<span class="op">=</span><span class="vs">r&quot;$\beta^{\top} \mathbf</span><span class="sc">{x}</span><span class="vs"> = \log\ 5$&quot;</span>)<span class="op">;</span></span>
+<span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a>ax.plot(t, S0(<span class="dv">2</span> <span class="op">*</span> t),</span>
+<span id="cb7-8"><a href="#cb7-8" aria-hidden="true" tabindex="-1"></a>        label<span class="op">=</span><span class="vs">r&quot;$\beta^{\top} \mathbf</span><span class="sc">{x}</span><span class="vs"> = \log\ 2$&quot;</span>)<span class="op">;</span></span>
+<span id="cb7-9"><a href="#cb7-9" aria-hidden="true" tabindex="-1"></a>ax.plot(t, S0(t),</span>
+<span id="cb7-10"><a href="#cb7-10" aria-hidden="true" tabindex="-1"></a>        label<span class="op">=</span><span class="vs">r&quot;$\beta^{\top} \mathbf</span><span class="sc">{x}</span><span class="vs"> = 0$ ($S_0$)&quot;</span>)<span class="op">;</span></span>
+<span id="cb7-11"><a href="#cb7-11" aria-hidden="true" tabindex="-1"></a>ax.plot(t, S0(<span class="fl">0.5</span> <span class="op">*</span> t),</span>
+<span id="cb7-12"><a href="#cb7-12" aria-hidden="true" tabindex="-1"></a>        label<span class="op">=</span><span class="vs">r&quot;$\beta^{\top} \mathbf</span><span class="sc">{x}</span><span class="vs"> = -\log\ 2$&quot;</span>)<span class="op">;</span></span>
+<span id="cb7-13"><a href="#cb7-13" aria-hidden="true" tabindex="-1"></a>ax.plot(t, S0(<span class="fl">0.2</span> <span class="op">*</span> t),</span>
+<span id="cb7-14"><a href="#cb7-14" aria-hidden="true" tabindex="-1"></a>        label<span class="op">=</span><span class="vs">r&quot;$\beta^{\top} \mathbf</span><span class="sc">{x}</span><span class="vs"> = -\log\ 5$&quot;</span>)<span class="op">;</span></span>
+<span id="cb7-15"><a href="#cb7-15" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-16"><a href="#cb7-16" aria-hidden="true" tabindex="-1"></a>ax.set_xlim(<span class="dv">0</span>, <span class="dv">10</span>)<span class="op">;</span></span>
+<span id="cb7-17"><a href="#cb7-17" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="vs">r&quot;$t$&quot;</span>)<span class="op">;</span></span>
+<span id="cb7-18"><a href="#cb7-18" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-19"><a href="#cb7-19" aria-hidden="true" tabindex="-1"></a>ax.yaxis.set_major_formatter(pct_formatter)<span class="op">;</span></span>
+<span id="cb7-20"><a href="#cb7-20" aria-hidden="true" tabindex="-1"></a>ax.set_ylim(<span class="op">-</span><span class="fl">0.025</span>, <span class="dv">1</span>)<span class="op">;</span></span>
+<span id="cb7-21"><a href="#cb7-21" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="vs">r&quot;Survival probability, $S(t\ |\ \beta, \mathbf</span><span class="sc">{x}</span><span class="vs">)$&quot;</span>)<span class="op">;</span></span>
+<span id="cb7-22"><a href="#cb7-22" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-23"><a href="#cb7-23" aria-hidden="true" tabindex="-1"></a>ax.legend(loc<span class="op">=</span><span class="dv">1</span>)<span class="op">;</span></span>
+<span id="cb7-24"><a href="#cb7-24" aria-hidden="true" tabindex="-1"></a>ax.set_title(<span class="st">&quot;Accelerated failure times&quot;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/bayes-param-survival/Bayesian%20Parametric%20Survival%20Analysis%20with%20PyMC3_10_0.png" title="fig:" alt="png" />
+</center>
+<p>Accelerated failure time models are equivalent to log-linear models for <span class="math inline">\(T\)</span>,</p>
+<p><span class="math display">\[Y = \log T = \beta^{\top} \mathbf{x} + \varepsilon.\]</span></p>
+<p>A choice of distribution for the error term <span class="math inline">\(\varepsilon\)</span> determines baseline survival function, <span class="math inline">\(S_0\)</span>, of the accelerated failure time model. The following table shows the correspondence between the distribution of <span class="math inline">\(\varepsilon\)</span> and <span class="math inline">\(S_0\)</span> for several common accelerated failure time models.</p>
+<center>
+<table border="1">
+<tr>
+<th>
+Log-linear error distribution (<span class="math inline">\(\varepsilon\)</span>)
+</th>
+<th>
+Baseline survival function (<span class="math inline">\(S_0\)</span>)
+</th>
+</tr>
+<tr>
+<td>
+<a href="https://en.wikipedia.org/wiki/Normal_distribution">Normal</a>
+</td>
+<td>
+<a href="https://en.wikipedia.org/wiki/Log-normal_distribution">Log-normal</a>
+</td>
+</tr>
+<tr>
+<td>
+Extreme value (<a href="https://en.wikipedia.org/wiki/Gumbel_distribution">Gumbel</a>)
+</td>
+<td>
+<a href="https://en.wikipedia.org/wiki/Weibull_distribution">Weibull</a>
+</td>
+</tr>
+<tr>
+<td>
+<a href="https://en.wikipedia.org/wiki/Logistic_distribution">Logistic</a>
+</td>
+<td>
+<a href="https://en.wikipedia.org/wiki/Log-logistic_distribution">Log-logistic</a>
+</td>
+</tr>
+</table>
+</center>
+<p>Accelerated failure time models are conventionally named after their baseline survival function, <span class="math inline">\(S_0\)</span>. The rest of this post will show how to implement Weibull and log-logistic survival regression models in PyMC3 using the mastectomy data.</p>
+<h3 id="weibull-survival-regression">Weibull survival regression</h3>
+<p>In this example, the covariates are <span class="math inline">\(\mathbf{x}_i = \left(1\ x^{\textrm{met}}_i\right)^{\top}\)</span>, where</p>
+<p><span class="math display">\[
+\begin{align*}
+x^{\textrm{met}}_i
+    &amp; = \begin{cases}
+        0 &amp; \textrm{if the } i\textrm{-th patient&#39;s cancer had not metastized} \\
+        1 &amp; \textrm{if the } i\textrm{-th patient&#39;s cancer had metastized}
+    \end{cases}.
+\end{align*}
+\]</span></p>
+<p>We construct the matrix of covariates <span class="math inline">\(\mathbf{X}\)</span>.</p>
+<div class="sourceCode" id="cb8"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>n_patient, _ <span class="op">=</span> df.shape</span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>X <span class="op">=</span> np.empty((n_patient, <span class="dv">2</span>))</span>
+<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a>X[:, <span class="dv">0</span>] <span class="op">=</span> <span class="fl">1.</span></span>
+<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a>X[:, <span class="dv">1</span>] <span class="op">=</span> df.metastized</span></code></pre></div>
+<p>We place independent, vague normal prior distributions on the regression coefficients,</p>
+<p><span class="math display">\[\beta \sim N(0, 5^2 I_2).\]</span></p>
+<div class="sourceCode" id="cb9"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a>VAGUE_PRIOR_SD <span class="op">=</span> <span class="fl">5.</span></span></code></pre></div>
+<div class="sourceCode" id="cb10"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> pm.Model() <span class="im">as</span> weibull_model:</span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a>    β <span class="op">=</span> pm.Normal(<span class="st">&#39;β&#39;</span>, <span class="fl">0.</span>, VAGUE_PRIOR_SD, shape<span class="op">=</span><span class="dv">2</span>)</span></code></pre></div>
+<p>The covariates, <span class="math inline">\(\mathbf{x}\)</span>, affect value of <span class="math inline">\(Y = \log T\)</span> through <span class="math inline">\(\eta = \beta^{\top} \mathbf{x}\)</span>.</p>
+<div class="sourceCode" id="cb11"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a>X_ <span class="op">=</span> shared(X)</span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> weibull_model:</span>
+<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a>    η <span class="op">=</span> β.dot(X_.T)</span></code></pre></div>
+<p>For Weibull regression, we use</p>
+<p><span class="math display">\[
+\begin{align*}
+    \varepsilon
+        &amp; \sim \textrm{Gumbel}(0, s) \\
+    s
+        &amp; \sim \textrm{HalfNormal(5)}.
+\end{align*}
+\]</span></p>
+<div class="sourceCode" id="cb12"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> weibull_model:</span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a>    s <span class="op">=</span> pm.HalfNormal(<span class="st">&#39;s&#39;</span>, <span class="fl">5.</span>)</span></code></pre></div>
+<p>We are nearly ready to specify the likelihood of the observations given these priors. Before doing so, we transform the observed times to the log scale and standardize them.</p>
+<div class="sourceCode" id="cb13"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a>y <span class="op">=</span> np.log(df.time.values)</span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a>y_std <span class="op">=</span> (y <span class="op">-</span> y.mean()) <span class="op">/</span> y.std()</span></code></pre></div>
+<p>The likelihood of the data is specified in two parts, one for uncensored samples, and one for censored samples. Since <span class="math inline">\(Y = \eta + \varepsilon\)</span>, and <span class="math inline">\(\varepsilon \sim \textrm{Gumbel}(0, s)\)</span>, <span class="math inline">\(Y \sim \textrm{Gumbel}(\eta, s)\)</span>. For the uncensored survival times, the likelihood is implemented as</p>
+<div class="sourceCode" id="cb14"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a>cens <span class="op">=</span> df.event.values <span class="op">==</span> <span class="fl">0.</span></span></code></pre></div>
+<div class="sourceCode" id="cb15"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a>cens_ <span class="op">=</span> shared(cens)</span>
+<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> weibull_model:</span>
+<span id="cb15-4"><a href="#cb15-4" aria-hidden="true" tabindex="-1"></a>    y_obs <span class="op">=</span> pm.Gumbel(</span>
+<span id="cb15-5"><a href="#cb15-5" aria-hidden="true" tabindex="-1"></a>        <span class="st">&#39;y_obs&#39;</span>, η[<span class="op">~</span>cens_], s,</span>
+<span id="cb15-6"><a href="#cb15-6" aria-hidden="true" tabindex="-1"></a>        observed<span class="op">=</span>y_std[<span class="op">~</span>cens]</span>
+<span id="cb15-7"><a href="#cb15-7" aria-hidden="true" tabindex="-1"></a>    )</span></code></pre></div>
+<p>For censored observations, we only know that their true survival time exceeded the total time that they were under observation. This probability is given by the survival function of the Gumbel distribution,</p>
+<p><span class="math display">\[P(Y \geq y) = 1 - \exp\left(-\exp\left(-\frac{y - \mu}{s}\right)\right).\]</span></p>
+<p>This survival function is implemented below.</p>
+<div class="sourceCode" id="cb16"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> gumbel_sf(y, μ, σ):</span>
+<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="fl">1.</span> <span class="op">-</span> tt.exp(<span class="op">-</span>tt.exp(<span class="op">-</span>(y <span class="op">-</span> μ) <span class="op">/</span> σ))</span></code></pre></div>
+<p>We now specify the likelihood for the censored observations.</p>
+<div class="sourceCode" id="cb17"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> weibull_model:</span>
+<span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a>    y_cens <span class="op">=</span> pm.Bernoulli(</span>
+<span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a>        <span class="st">&#39;y_cens&#39;</span>, gumbel_sf(y_std[cens], η[cens_], s),</span>
+<span id="cb17-4"><a href="#cb17-4" aria-hidden="true" tabindex="-1"></a>        observed<span class="op">=</span>np.ones(cens.<span class="bu">sum</span>())</span>
+<span id="cb17-5"><a href="#cb17-5" aria-hidden="true" tabindex="-1"></a>    )</span></code></pre></div>
+<p>We now sample from the model.</p>
+<div class="sourceCode" id="cb18"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a>SEED <span class="op">=</span> <span class="dv">845199</span> <span class="co"># from random.org, for reproducibility</span></span>
+<span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb18-3"><a href="#cb18-3" aria-hidden="true" tabindex="-1"></a>SAMPLE_KWARGS <span class="op">=</span> {</span>
+<span id="cb18-4"><a href="#cb18-4" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;njobs&#39;</span>: <span class="dv">3</span>,</span>
+<span id="cb18-5"><a href="#cb18-5" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;tune&#39;</span>: <span class="dv">1000</span>,</span>
+<span id="cb18-6"><a href="#cb18-6" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;random_seed&#39;</span>: [</span>
+<span id="cb18-7"><a href="#cb18-7" aria-hidden="true" tabindex="-1"></a>        SEED,</span>
+<span id="cb18-8"><a href="#cb18-8" aria-hidden="true" tabindex="-1"></a>        SEED <span class="op">+</span> <span class="dv">1</span>,</span>
+<span id="cb18-9"><a href="#cb18-9" aria-hidden="true" tabindex="-1"></a>        SEED <span class="op">+</span> <span class="dv">2</span></span>
+<span id="cb18-10"><a href="#cb18-10" aria-hidden="true" tabindex="-1"></a>    ]</span>
+<span id="cb18-11"><a href="#cb18-11" aria-hidden="true" tabindex="-1"></a>}</span></code></pre></div>
+<div class="sourceCode" id="cb19"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> weibull_model:</span>
+<span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a>    weibull_trace <span class="op">=</span> pm.sample(<span class="op">**</span>SAMPLE_KWARGS)</span></code></pre></div>
+<pre><code>Auto-assigning NUTS sampler...
+Initializing NUTS using jitter+adapt_diag...
+100%|██████████| 1500/1500 [00:04&lt;00:00, 322.90it/s]</code></pre>
+<p>The energy plot and Bayesian fraction of missing information give no cause for concern about poor mixing in NUTS.</p>
+<div class="sourceCode" id="cb21"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a>pm.energyplot(weibull_trace)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/bayes-param-survival/Bayesian%20Parametric%20Survival%20Analysis%20with%20PyMC3_34_0.png" title="fig:" alt="png" />
+</center>
+<div class="sourceCode" id="cb22"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb22-1"><a href="#cb22-1" aria-hidden="true" tabindex="-1"></a>pm.bfmi(weibull_trace)</span></code></pre></div>
+<pre><code>1.0189285246960067</code></pre>
+<p>The Gelman-Rubin statistics also indicate convergence.</p>
+<div class="sourceCode" id="cb24"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a><span class="bu">max</span>(np.<span class="bu">max</span>(gr_stats) <span class="cf">for</span> gr_stats <span class="kw">in</span> pm.gelman_rubin(weibull_trace).values())</span></code></pre></div>
+<pre><code>1.0077500079163573</code></pre>
+<p>Below we plot posterior distributions of the parameters.</p>
+<div class="sourceCode" id="cb26"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb26-1"><a href="#cb26-1" aria-hidden="true" tabindex="-1"></a>pm.plot_posterior(weibull_trace, lw<span class="op">=</span><span class="dv">0</span>, alpha<span class="op">=</span><span class="fl">0.5</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/bayes-param-survival/Bayesian%20Parametric%20Survival%20Analysis%20with%20PyMC3_39_0.png" title="fig:" alt="png" />
+</center>
+<p>These are somewhat interesting (espescially the fact that the posterior of <span class="math inline">\(\beta_1\)</span> is fairly well-separated from zero), but the posterior predictive survival curves will be much more interpretable.</p>
+<p>The advantage of using <a href="http://deeplearning.net/software/theano_versions/dev/library/compile/shared.html"><code>theano.shared</code></a> variables is that we can now change their values to perform posterior predictive sampling. For posterior prediction, we set <span class="math inline">\(X\)</span> to have two rows, one for a subject whose cancer had not metastized and one for a subject whose cancer had metastized. Since we want to predict actual survival times, none of the posterior predictive rows are censored.</p>
+<div class="sourceCode" id="cb27"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a>X_pp <span class="op">=</span> np.empty((<span class="dv">2</span>, <span class="dv">2</span>))</span>
+<span id="cb27-2"><a href="#cb27-2" aria-hidden="true" tabindex="-1"></a>X_pp[:, <span class="dv">0</span>] <span class="op">=</span> <span class="fl">1.</span></span>
+<span id="cb27-3"><a href="#cb27-3" aria-hidden="true" tabindex="-1"></a>X_pp[:, <span class="dv">1</span>] <span class="op">=</span> [<span class="dv">0</span>, <span class="dv">1</span>]</span>
+<span id="cb27-4"><a href="#cb27-4" aria-hidden="true" tabindex="-1"></a>X_.set_value(X_pp)</span>
+<span id="cb27-5"><a href="#cb27-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb27-6"><a href="#cb27-6" aria-hidden="true" tabindex="-1"></a>cens_pp <span class="op">=</span> np.repeat(<span class="va">False</span>, <span class="dv">2</span>)</span>
+<span id="cb27-7"><a href="#cb27-7" aria-hidden="true" tabindex="-1"></a>cens_.set_value(cens_pp)</span></code></pre></div>
+<div class="sourceCode" id="cb28"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> weibull_model:</span>
+<span id="cb28-2"><a href="#cb28-2" aria-hidden="true" tabindex="-1"></a>    pp_weibull_trace <span class="op">=</span> pm.sample_ppc(</span>
+<span id="cb28-3"><a href="#cb28-3" aria-hidden="true" tabindex="-1"></a>        weibull_trace, samples<span class="op">=</span><span class="dv">1500</span>, <span class="bu">vars</span><span class="op">=</span>[y_obs]</span>
+<span id="cb28-4"><a href="#cb28-4" aria-hidden="true" tabindex="-1"></a>    )</span></code></pre></div>
+<pre><code>100%|██████████| 1500/1500 [00:00&lt;00:00, 2789.50it/s]</code></pre>
+<p>The posterior predictive survival times show that, on average, patients whose cancer had not metastized survived longer than those whose cancer had metastized.</p>
+<div class="sourceCode" id="cb30"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb30-1"><a href="#cb30-1" aria-hidden="true" tabindex="-1"></a>t_plot <span class="op">=</span> np.linspace(<span class="dv">0</span>, <span class="dv">230</span>, <span class="dv">100</span>)</span>
+<span id="cb30-2"><a href="#cb30-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb30-3"><a href="#cb30-3" aria-hidden="true" tabindex="-1"></a>weibull_pp_surv <span class="op">=</span> (np.greater_equal</span>
+<span id="cb30-4"><a href="#cb30-4" aria-hidden="true" tabindex="-1"></a>                     .outer(np.exp(y.mean() <span class="op">+</span> y.std() <span class="op">*</span> pp_weibull_trace[<span class="st">&#39;y_obs&#39;</span>]),</span>
+<span id="cb30-5"><a href="#cb30-5" aria-hidden="true" tabindex="-1"></a>                            t_plot))</span>
+<span id="cb30-6"><a href="#cb30-6" aria-hidden="true" tabindex="-1"></a>weibull_pp_surv_mean <span class="op">=</span> weibull_pp_surv.mean(axis<span class="op">=</span><span class="dv">0</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb31"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb31-1"><a href="#cb31-1" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plt.subplots(figsize<span class="op">=</span>(<span class="dv">8</span>, <span class="dv">6</span>))</span>
+<span id="cb31-2"><a href="#cb31-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb31-3"><a href="#cb31-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb31-4"><a href="#cb31-4" aria-hidden="true" tabindex="-1"></a>ax.plot(t_plot, weibull_pp_surv_mean[<span class="dv">0</span>],</span>
+<span id="cb31-5"><a href="#cb31-5" aria-hidden="true" tabindex="-1"></a>        c<span class="op">=</span>blue, label<span class="op">=</span><span class="st">&quot;Not metastized&quot;</span>)<span class="op">;</span></span>
+<span id="cb31-6"><a href="#cb31-6" aria-hidden="true" tabindex="-1"></a>ax.plot(t_plot, weibull_pp_surv_mean[<span class="dv">1</span>],</span>
+<span id="cb31-7"><a href="#cb31-7" aria-hidden="true" tabindex="-1"></a>        c<span class="op">=</span>red, label<span class="op">=</span><span class="st">&quot;Metastized&quot;</span>)<span class="op">;</span></span>
+<span id="cb31-8"><a href="#cb31-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb31-9"><a href="#cb31-9" aria-hidden="true" tabindex="-1"></a>ax.set_xlim(<span class="dv">0</span>, <span class="dv">230</span>)<span class="op">;</span></span>
+<span id="cb31-10"><a href="#cb31-10" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="st">&quot;Weeks since mastectomy&quot;</span>)<span class="op">;</span></span>
+<span id="cb31-11"><a href="#cb31-11" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb31-12"><a href="#cb31-12" aria-hidden="true" tabindex="-1"></a>ax.set_ylim(top<span class="op">=</span><span class="dv">1</span>)<span class="op">;</span></span>
+<span id="cb31-13"><a href="#cb31-13" aria-hidden="true" tabindex="-1"></a>ax.yaxis.set_major_formatter(pct_formatter)<span class="op">;</span></span>
+<span id="cb31-14"><a href="#cb31-14" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="st">&quot;Survival probability&quot;</span>)<span class="op">;</span></span>
+<span id="cb31-15"><a href="#cb31-15" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb31-16"><a href="#cb31-16" aria-hidden="true" tabindex="-1"></a>ax.legend(loc<span class="op">=</span><span class="dv">1</span>)<span class="op">;</span></span>
+<span id="cb31-17"><a href="#cb31-17" aria-hidden="true" tabindex="-1"></a>ax.set_title(<span class="st">&quot;Weibull survival regression model&quot;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/bayes-param-survival/Bayesian%20Parametric%20Survival%20Analysis%20with%20PyMC3_45_0.png" title="fig:" alt="png" />
+</center>
+<h3 id="log-logistic-survival-regression">Log-logistic survival regression</h3>
+<p>Other accelerated failure time models can be specificed in a modular way by changing the prior distribution on <span class="math inline">\(\varepsilon\)</span>. A log-logistic model corresponds to a <a href="https://en.wikipedia.org/wiki/Logistic_distribution">logistic</a> prior on <span class="math inline">\(\varepsilon\)</span>. Most of the model specification is the same as for the Weibull model above.</p>
+<div class="sourceCode" id="cb32"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb32-1"><a href="#cb32-1" aria-hidden="true" tabindex="-1"></a>X_.set_value(X)</span>
+<span id="cb32-2"><a href="#cb32-2" aria-hidden="true" tabindex="-1"></a>cens_.set_value(cens)</span>
+<span id="cb32-3"><a href="#cb32-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb32-4"><a href="#cb32-4" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> pm.Model() <span class="im">as</span> log_logistic_model:</span>
+<span id="cb32-5"><a href="#cb32-5" aria-hidden="true" tabindex="-1"></a>    β <span class="op">=</span> pm.Normal(<span class="st">&#39;β&#39;</span>, <span class="fl">0.</span>, VAGUE_PRIOR_SD, shape<span class="op">=</span><span class="dv">2</span>)</span>
+<span id="cb32-6"><a href="#cb32-6" aria-hidden="true" tabindex="-1"></a>    η <span class="op">=</span> β.dot(X_.T)</span>
+<span id="cb32-7"><a href="#cb32-7" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb32-8"><a href="#cb32-8" aria-hidden="true" tabindex="-1"></a>    s <span class="op">=</span> pm.HalfNormal(<span class="st">&#39;s&#39;</span>, <span class="fl">5.</span>)</span></code></pre></div>
+<p>We use the prior <span class="math inline">\(\varepsilon \sim \textrm{Logistic}(0, s)\)</span>. The survival function of the logistic distribution is</p>
+<p><span class="math display">\[P(Y \geq y) = 1 - \frac{1}{1 + \exp\left(-\left(\frac{y - \mu}{s}\right)\right)},\]</span></p>
+<p>so we get the likelihood</p>
+<div class="sourceCode" id="cb33"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb33-1"><a href="#cb33-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> logistic_sf(y, μ, s):</span>
+<span id="cb33-2"><a href="#cb33-2" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="fl">1.</span> <span class="op">-</span> pm.math.sigmoid((y <span class="op">-</span> μ) <span class="op">/</span> s)</span></code></pre></div>
+<div class="sourceCode" id="cb34"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb34-1"><a href="#cb34-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> log_logistic_model:</span>
+<span id="cb34-2"><a href="#cb34-2" aria-hidden="true" tabindex="-1"></a>    y_obs <span class="op">=</span> pm.Logistic(</span>
+<span id="cb34-3"><a href="#cb34-3" aria-hidden="true" tabindex="-1"></a>        <span class="st">&#39;y_obs&#39;</span>, η[<span class="op">~</span>cens_], s,</span>
+<span id="cb34-4"><a href="#cb34-4" aria-hidden="true" tabindex="-1"></a>        observed<span class="op">=</span>y_std[<span class="op">~</span>cens]</span>
+<span id="cb34-5"><a href="#cb34-5" aria-hidden="true" tabindex="-1"></a>    )</span>
+<span id="cb34-6"><a href="#cb34-6" aria-hidden="true" tabindex="-1"></a>    y_cens <span class="op">=</span> pm.Bernoulli(</span>
+<span id="cb34-7"><a href="#cb34-7" aria-hidden="true" tabindex="-1"></a>        <span class="st">&#39;y_cens&#39;</span>, logistic_sf(y_std[cens], η[cens_], s),</span>
+<span id="cb34-8"><a href="#cb34-8" aria-hidden="true" tabindex="-1"></a>        observed<span class="op">=</span>np.ones(cens.<span class="bu">sum</span>())</span>
+<span id="cb34-9"><a href="#cb34-9" aria-hidden="true" tabindex="-1"></a>    )</span></code></pre></div>
+<p>We now sample from the log-logistic model.</p>
+<div class="sourceCode" id="cb35"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb35-1"><a href="#cb35-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> log_logistic_model:</span>
+<span id="cb35-2"><a href="#cb35-2" aria-hidden="true" tabindex="-1"></a>    log_logistic_trace <span class="op">=</span> pm.sample(<span class="op">**</span>SAMPLE_KWARGS)</span></code></pre></div>
+<pre><code>Auto-assigning NUTS sampler...
+Initializing NUTS using jitter+adapt_diag...
+100%|██████████| 1500/1500 [00:05&lt;00:00, 291.48it/s]</code></pre>
+<p>All of the sampling diagnostics look good for this model.</p>
+<div class="sourceCode" id="cb37"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb37-1"><a href="#cb37-1" aria-hidden="true" tabindex="-1"></a>pm.energyplot(log_logistic_trace)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/bayes-param-survival/Bayesian%20Parametric%20Survival%20Analysis%20with%20PyMC3_54_0.png" title="fig:" alt="png" />
+</center>
+<div class="sourceCode" id="cb38"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb38-1"><a href="#cb38-1" aria-hidden="true" tabindex="-1"></a>pm.bfmi(log_logistic_trace)</span></code></pre></div>
+<pre><code>0.98805328946082049</code></pre>
+<div class="sourceCode" id="cb40"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb40-1"><a href="#cb40-1" aria-hidden="true" tabindex="-1"></a><span class="bu">max</span>(np.<span class="bu">max</span>(gr_stats) <span class="cf">for</span> gr_stats <span class="kw">in</span> pm.gelman_rubin(log_logistic_trace).values())</span></code></pre></div>
+<pre><code>1.0018938145216476</code></pre>
+<p>Again, we calculate the posterior expected survival functions for this model.</p>
+<div class="sourceCode" id="cb42"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb42-1"><a href="#cb42-1" aria-hidden="true" tabindex="-1"></a>X_.set_value(X_pp)</span>
+<span id="cb42-2"><a href="#cb42-2" aria-hidden="true" tabindex="-1"></a>cens_.set_value(cens_pp)</span>
+<span id="cb42-3"><a href="#cb42-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb42-4"><a href="#cb42-4" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> log_logistic_model:</span>
+<span id="cb42-5"><a href="#cb42-5" aria-hidden="true" tabindex="-1"></a>    pp_log_logistic_trace <span class="op">=</span> pm.sample_ppc(</span>
+<span id="cb42-6"><a href="#cb42-6" aria-hidden="true" tabindex="-1"></a>        log_logistic_trace, samples<span class="op">=</span><span class="dv">1500</span>, <span class="bu">vars</span><span class="op">=</span>[y_obs]</span>
+<span id="cb42-7"><a href="#cb42-7" aria-hidden="true" tabindex="-1"></a>    )</span></code></pre></div>
+<pre><code>100%|██████████| 1500/1500 [00:00&lt;00:00, 2526.82it/s]</code></pre>
+<div class="sourceCode" id="cb44"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb44-1"><a href="#cb44-1" aria-hidden="true" tabindex="-1"></a>log_logistic_pp_surv <span class="op">=</span> (np.greater_equal</span>
+<span id="cb44-2"><a href="#cb44-2" aria-hidden="true" tabindex="-1"></a>                          .outer(np.exp(y.mean() <span class="op">+</span> y.std() <span class="op">*</span> pp_log_logistic_trace[<span class="st">&#39;y_obs&#39;</span>]),</span>
+<span id="cb44-3"><a href="#cb44-3" aria-hidden="true" tabindex="-1"></a>                                 t_plot))</span>
+<span id="cb44-4"><a href="#cb44-4" aria-hidden="true" tabindex="-1"></a>log_logistic_pp_surv_mean <span class="op">=</span> log_logistic_pp_surv.mean(axis<span class="op">=</span><span class="dv">0</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb45"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb45-1"><a href="#cb45-1" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plt.subplots(figsize<span class="op">=</span>(<span class="dv">8</span>, <span class="dv">6</span>))</span>
+<span id="cb45-2"><a href="#cb45-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb45-3"><a href="#cb45-3" aria-hidden="true" tabindex="-1"></a>ax.plot(t_plot, weibull_pp_surv_mean[<span class="dv">0</span>],</span>
+<span id="cb45-4"><a href="#cb45-4" aria-hidden="true" tabindex="-1"></a>        c<span class="op">=</span>blue, label<span class="op">=</span><span class="st">&quot;Weibull, not metastized&quot;</span>)<span class="op">;</span></span>
+<span id="cb45-5"><a href="#cb45-5" aria-hidden="true" tabindex="-1"></a>ax.plot(t_plot, weibull_pp_surv_mean[<span class="dv">1</span>],</span>
+<span id="cb45-6"><a href="#cb45-6" aria-hidden="true" tabindex="-1"></a>        c<span class="op">=</span>red, label<span class="op">=</span><span class="st">&quot;Weibull, metastized&quot;</span>)<span class="op">;</span></span>
+<span id="cb45-7"><a href="#cb45-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb45-8"><a href="#cb45-8" aria-hidden="true" tabindex="-1"></a>ax.plot(t_plot, log_logistic_pp_surv_mean[<span class="dv">0</span>],</span>
+<span id="cb45-9"><a href="#cb45-9" aria-hidden="true" tabindex="-1"></a>        <span class="st">&#39;--&#39;</span>, c<span class="op">=</span>blue, </span>
+<span id="cb45-10"><a href="#cb45-10" aria-hidden="true" tabindex="-1"></a>        label<span class="op">=</span><span class="st">&quot;Log-logistic, not metastized&quot;</span>)<span class="op">;</span></span>
+<span id="cb45-11"><a href="#cb45-11" aria-hidden="true" tabindex="-1"></a>ax.plot(t_plot, log_logistic_pp_surv_mean[<span class="dv">1</span>],</span>
+<span id="cb45-12"><a href="#cb45-12" aria-hidden="true" tabindex="-1"></a>        <span class="st">&#39;--&#39;</span>, c<span class="op">=</span>red,</span>
+<span id="cb45-13"><a href="#cb45-13" aria-hidden="true" tabindex="-1"></a>        label<span class="op">=</span><span class="st">&quot;Log-logistic, metastized&quot;</span>)<span class="op">;</span></span>
+<span id="cb45-14"><a href="#cb45-14" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb45-15"><a href="#cb45-15" aria-hidden="true" tabindex="-1"></a>ax.set_xlim(<span class="dv">0</span>, <span class="dv">230</span>)<span class="op">;</span></span>
+<span id="cb45-16"><a href="#cb45-16" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="st">&quot;Weeks since mastectomy&quot;</span>)<span class="op">;</span></span>
+<span id="cb45-17"><a href="#cb45-17" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb45-18"><a href="#cb45-18" aria-hidden="true" tabindex="-1"></a>ax.set_ylim(top<span class="op">=</span><span class="dv">1</span>)<span class="op">;</span></span>
+<span id="cb45-19"><a href="#cb45-19" aria-hidden="true" tabindex="-1"></a>ax.yaxis.set_major_formatter(pct_formatter)<span class="op">;</span></span>
+<span id="cb45-20"><a href="#cb45-20" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="st">&quot;Survival probability&quot;</span>)<span class="op">;</span></span>
+<span id="cb45-21"><a href="#cb45-21" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb45-22"><a href="#cb45-22" aria-hidden="true" tabindex="-1"></a>ax.legend(loc<span class="op">=</span><span class="dv">1</span>)<span class="op">;</span></span>
+<span id="cb45-23"><a href="#cb45-23" aria-hidden="true" tabindex="-1"></a>ax.set_title(<span class="st">&quot;Weibull and log-logistic</span><span class="ch">\n</span><span class="st">survival regression models&quot;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/bayes-param-survival/Bayesian%20Parametric%20Survival%20Analysis%20with%20PyMC3_60_0.png" title="fig:" alt="png" />
+</center>
+<p>This post has been a short introduction to implementing parametric survival regression models in PyMC3 with a fairly simple data set. The modular nature of probabilistic programming with PyMC3 should make it straightforward to generalize these techniques to more complex and interesting data sets.</p>
+<p>This post is available as a Jupyter notebook <a href="https://gist.github.com/AustinRochford/4b8a163b66a11cdcbc430797b9b664fe">here</a>.</p>

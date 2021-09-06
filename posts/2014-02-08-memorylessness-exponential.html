@@ -1,0 +1,29 @@
+<meta name="title" content="Memorylessness and the Exponential Distribution" />
+<meta name="tags" content="Probability" />
+<meta name="date" content="2014-02-08" />
+<meta name="has_math" content="true" /><p>Imagine you’re a teller at a bank. No customers have been arriving, so you’re bored, and decide to investigate the distribution of the time it takes for the each customer to arrive (you’re a very analytically-minded bank teller). To this end, you decide to track the number of customers that arrive in the next hour. Forty-five minutes in, you are getting impatient, as no customers have arrived. At this point, what is the probability that a single customer will arrive before the end of the hour? It seems reasonable that this probability should be the same as that of an arrival during the first fifteen minutes of the experiment.</p>
+<p>This post is devoted to showing the remarkable fact that this reasonable and seemingly small assumption about the distribution of interarrival times actually completely specifies their probability distribution (along with the mean of the interarrival times).</p>
+<p>Let <span class="math inline">\(T\)</span> be the arrival time of the first customer. The situation in the introduction leads to the identity</p>
+<p><span class="math display">\[P(T &gt; 60 | T &gt; 45) = P(T &gt; 15).\]</span></p>
+<p>This identity generalizes to</p>
+<p><span class="math display">\[P(T &gt; s + t | T &gt; t) = P(T &gt; s),\]</span></p>
+<p>for <span class="math inline">\(s, t &gt; 0\)</span>. Any distribution which satisfies this requirement is called <a href="http://en.wikipedia.org/wiki/Memorylessness">memoryless</a>. In this post, we will show that the <a href="http://en.wikipedia.org/wiki/Exponential_distribution">exponential distribution</a> is the only (continuous) memoryless distribution. We can rewrite this identity as</p>
+<p><span class="math display">\[
+\begin{align*}
+\frac{P(T &gt; s + t \textrm{ and } T &gt; t)}{P(T &gt; t)}
+    &amp; = P(T &gt; s),    \\
+P(T &gt; s + t)
+    &amp; = P(T &gt; s) P(T &gt; t),
+\end{align*}
+\]</span></p>
+<p>since <span class="math inline">\(T &gt; s + t\)</span> implies <span class="math inline">\(T &gt; t\)</span>. It is this identity connection addition and multiplication that leads to the exponential distribution. To begin to see this, let’s to calculate <span class="math inline">\(P(T &gt; 2)\)</span>:</p>
+<p><span class="math display">\[P(T &gt; 2) = P(T &gt; 1 + 1) = P(T &gt; 1) P(T &gt; 1) = P(T &gt; 1)^2.\]</span></p>
+<p>Similarly, <span class="math inline">\(P(T &gt; 3) = P(T &gt; 1)^3\)</span>, and for any natural number <span class="math inline">\(n\)</span>, <span class="math inline">\(P(T &gt; n) = P(T &gt; 1)^n\)</span>. For reasons which will become clear, define <span class="math inline">\(\lambda = - \ln P(T &gt; 1)\)</span>, so that <span class="math inline">\(P(T &gt; 1) = e^{-\lambda}\)</span>, and <span class="math inline">\(P(T &gt; n) = e^{-\lambda n}\)</span>.</p>
+<p>Continuing on, let’s calculate <span class="math inline">\(P(T &gt; \frac{1}{2})\)</span>:</p>
+<p><span class="math display">\[e^{-\lambda} = P\left(T &gt; 1\right) = P\left(T &gt; \frac{1}{2} + \frac{1}{2}\right) = P\left(T &gt; \frac{1}{2}\right)^2,\]</span></p>
+<p>so <span class="math inline">\(P(T &gt; \frac{1}{2}) = \exp(-\frac{\lambda}{2})\)</span>. This sort of calculation can be extended to any rational number <span class="math inline">\(\frac{m}{n}\)</span> as follows</p>
+<p><span class="math display">\[e^{-\lambda m} = P(T &gt; m) = P\left(T &gt; \underbrace{\frac{m}{n} + \cdots + \frac{m}{n}}_{n \textrm{ times}}\right) = P\left(T &gt; \frac{m}{n}\right)^n,\]</span></p>
+<p>so <span class="math inline">\(P(T &gt; \frac{m}{n}) = \exp(-\lambda \frac{m}{n})\)</span>. All that remains is to extend this result to the irrational numbers. Fortunately, the rational numbers are <a href="http://en.wikipedia.org/wiki/Dense_set#Examples">dense</a> in the rals, every irrational, <span class="math inline">\(t\)</span> number is the limit of an increasing sequence of rational numbers, <span class="math inline">\((q_i)\)</span>. Additonally, the <a href="http://en.wikipedia.org/wiki/Survival_function">survival function</a>, <span class="math inline">\(t \mapsto P(T &gt; t)\)</span> must be left-continuous, so</p>
+<p><span class="math display">\[P(T &gt; t) = \lim P(T &gt; q_i) = \lim \exp(-\lambda q_i) = e^{-\lambda t},\]</span></p>
+<p>since the exponential function is continuous. Now that we know that <span class="math inline">\(P(T &gt; t) = e^{-\lambda t}\)</span> for all <span class="math inline">\(t &gt; 0\)</span>, we see that this is exactly the survival function of an exponentially distributed random variable with mean <span class="math inline">\(\lambda^{-1}\)</span>.</p>
+<p>It is truly astounding that such a seemingly small assumption about the arrival time completely specifies its distribution. The memorylessness of the exponential distribution is immensely important in the study of <a href="http://en.wikipedia.org/wiki/Queueing_theory">queueing theory</a>, as it implies that the homogeneous <a href="http://en.wikipedia.org/wiki/Poisson_process">Poisson process</a> has <a href="http://en.wikipedia.org/wiki/Stationary_increments#Stationary_increments">stationary increments</a>.</p>

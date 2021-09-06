@@ -1,0 +1,1934 @@
+<meta name="title" content="The Hierarchical Regularized Horseshoe Prior in PyMC3" />
+<meta name="tags" content="Bayesian Statistics, PyMC3, Python" />
+<meta name="date" content="2021-05-29" />
+<meta name="has_math" content="true" /><p>For some time I have been interested in better understanding the <a href="http://proceedings.mlr.press/v5/carvalho09a">horseshoe prior</a><a href="#fn1" class="footnote-ref" id="fnref1" role="doc-noteref"><sup>1</sup></a> by implementing it in PyMC3. The horsehoe prior is a continuous alternative to the <a href="https://en.wikipedia.org/wiki/Spike-and-slab_regression">spike-and-slab</a> prior for sparse Bayesian estimation. The continuity of the horeshoe prior allows for simpler estimation using general purpose Bayesian computation packages such as <a href="https://docs.pymc.io/"><code>pymc3</code></a> and <a href="https://mc-stan.org/">Stan</a>. <a href="https://projecteuclid.org/journals/electronic-journal-of-statistics/volume-11/issue-2/Sparsity-information-and-regularization-in-the-horseshoe-and-other-shrinkage/10.1214/17-EJS1337SI.full">Piironen and Vehtari</a><a href="#fn2" class="footnote-ref" id="fnref2" role="doc-noteref"><sup>2</sup></a> have proposed a hierarchical regularized horseshoe prior that has advantages over the original horseshoe prior when it comes to specifying the hyperprior distributions on the regularization parameters. In the appendix of their paper, Piironen and Vehtari give a sample implementation in Stan. This post gives a corresponding implementation in <code>pymc3</code> and tests it on simulated data.</p>
+<center>
+<img src="https://upload.wikimedia.org/wikipedia/commons/f/f1/Horseshoe.jpg" width="300">
+</center>
+<p>First we import the necessary Python packages and do some light housekeeping.</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="op">%</span>matplotlib inline</span></code></pre></div>
+<div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> warnings <span class="im">import</span> filterwarnings</span></code></pre></div>
+<div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> aesara <span class="im">import</span> tensor <span class="im">as</span> at</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> arviz <span class="im">as</span> az</span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> matplotlib <span class="im">import</span> pyplot <span class="im">as</span> plt</span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> numpy <span class="im">as</span> np</span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> pymc3 <span class="im">as</span> pm</span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> seaborn <span class="im">as</span> sns</span></code></pre></div>
+<div class="sourceCode" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>filterwarnings(<span class="st">&#39;ignore&#39;</span>, category<span class="op">=</span><span class="pp">UserWarning</span>, module<span class="op">=</span><span class="st">&#39;aesara&#39;</span>)</span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>filterwarnings(<span class="st">&#39;ignore&#39;</span>, category<span class="op">=</span><span class="pp">UserWarning</span>, module<span class="op">=</span><span class="st">&#39;arviz&#39;</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>sns.<span class="bu">set</span>(color_codes<span class="op">=</span><span class="va">True</span>)</span></code></pre></div>
+<h2 id="simulated-data">Simulated Data</h2>
+<p>Since the horseshoe is designed for sparse estimation of regression parameters, we simulate data from a model with <span class="math inline">\(D = 50\)</span> variables, <span class="math inline">\(D_0 = 5\)</span> of which are nonzero.</p>
+<div class="sourceCode" id="cb6"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>D <span class="op">=</span> <span class="dv">50</span></span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>D0 <span class="op">=</span> <span class="dv">5</span></span></code></pre></div>
+<div class="sourceCode" id="cb7"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a>SEED <span class="op">=</span> <span class="dv">123456789</span> <span class="co"># for reproducibility</span></span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>rng <span class="op">=</span> np.random.default_rng(SEED)</span></code></pre></div>
+<div class="sourceCode" id="cb8"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>INTERCEPT <span class="op">=</span> rng.uniform(<span class="op">-</span><span class="dv">3</span>, <span class="dv">3</span>)</span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>COEF <span class="op">=</span> np.zeros(D)</span>
+<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a>COEF[:D0] <span class="op">=</span> rng.choice([<span class="op">-</span><span class="dv">1</span>, <span class="dv">1</span>], size<span class="op">=</span>D0) <span class="op">*</span> rng.normal(<span class="dv">5</span>, <span class="dv">1</span>, size<span class="op">=</span>D0)</span></code></pre></div>
+<p>Now we draw <span class="math inline">\(N = 100\)</span> random observations with <span class="math inline">\(x_i \sim N(0, 1).\)</span></p>
+<div class="sourceCode" id="cb9"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a>N <span class="op">=</span> <span class="dv">100</span></span></code></pre></div>
+<div class="sourceCode" id="cb10"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a>X <span class="op">=</span> rng.normal(size<span class="op">=</span>(N, D))</span></code></pre></div>
+<p>We now simulate responses from this regression model with <span class="math inline">\(N(0, 1)\)</span>-distributed noise.</p>
+<div class="sourceCode" id="cb11"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a>SIGMA <span class="op">=</span> <span class="fl">1.</span></span></code></pre></div>
+<div class="sourceCode" id="cb12"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a>y <span class="op">=</span> INTERCEPT <span class="op">+</span> X.dot(COEF) <span class="op">+</span> rng.normal(<span class="dv">0</span>, SIGMA, size<span class="op">=</span>N)</span></code></pre></div>
+<p>We see that there is a linear relationship between <span class="math inline">\(y\)</span> and the first <span class="math inline">\(D_0\)</span> variables and no relationship between <span class="math inline">\(y\)</span> and a random sample from the subsequent <span class="math inline">\(D - D0\)</span> variables.</p>
+<div class="sourceCode" id="cb13"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a>fig, axes <span class="op">=</span> plt.subplots(nrows<span class="op">=</span><span class="dv">2</span>, ncols<span class="op">=</span>D0,</span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a>                         sharex<span class="op">=</span><span class="va">True</span>, sharey<span class="op">=</span><span class="va">True</span>,</span>
+<span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a>                         figsize<span class="op">=</span>(<span class="dv">16</span>, <span class="dv">6</span>))</span>
+<span id="cb13-4"><a href="#cb13-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb13-5"><a href="#cb13-5" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> i, (ax, coef) <span class="kw">in</span> <span class="bu">enumerate</span>(<span class="bu">zip</span>(axes[<span class="dv">0</span>], COEF)):</span>
+<span id="cb13-6"><a href="#cb13-6" aria-hidden="true" tabindex="-1"></a>    ax.scatter(X[:, i], y, alpha<span class="op">=</span><span class="fl">0.75</span>)<span class="op">;</span></span>
+<span id="cb13-7"><a href="#cb13-7" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb13-8"><a href="#cb13-8" aria-hidden="true" tabindex="-1"></a>    ax.set_xlabel(<span class="ss">f&quot;$x_</span><span class="ch">{{</span><span class="ss"> </span><span class="sc">{</span>i<span class="sc">}</span><span class="ss"> </span><span class="ch">}}</span><span class="ss">$&quot;</span>)<span class="op">;</span></span>
+<span id="cb13-9"><a href="#cb13-9" aria-hidden="true" tabindex="-1"></a>    ax.set_title(<span class="ss">f&quot;$</span><span class="ch">\\</span><span class="ss">beta_</span><span class="ch">{{</span><span class="ss"> </span><span class="sc">{</span>i<span class="sc">}</span><span class="ss"> </span><span class="ch">}}</span><span class="ss"> </span><span class="ch">\\</span><span class="ss">approx </span><span class="sc">{</span>coef<span class="sc">:.2f}</span><span class="ss">$&quot;</span>)<span class="op">;</span></span>
+<span id="cb13-10"><a href="#cb13-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb13-11"><a href="#cb13-11" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb13-12"><a href="#cb13-12" aria-hidden="true" tabindex="-1"></a>zero_coef_ix <span class="op">=</span> rng.choice(<span class="bu">range</span>(D0, D), replace<span class="op">=</span><span class="va">False</span>, size<span class="op">=</span>D0)</span>
+<span id="cb13-13"><a href="#cb13-13" aria-hidden="true" tabindex="-1"></a>zero_coef_ix.sort()</span>
+<span id="cb13-14"><a href="#cb13-14" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb13-15"><a href="#cb13-15" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> ax, i <span class="kw">in</span> <span class="bu">zip</span>(axes[<span class="dv">1</span>], zero_coef_ix):</span>
+<span id="cb13-16"><a href="#cb13-16" aria-hidden="true" tabindex="-1"></a>    ax.scatter(X[:, i], y, alpha<span class="op">=</span><span class="fl">0.75</span>)<span class="op">;</span></span>
+<span id="cb13-17"><a href="#cb13-17" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb13-18"><a href="#cb13-18" aria-hidden="true" tabindex="-1"></a>    ax.set_xlabel(<span class="ss">f&quot;$x_</span><span class="ch">{{</span><span class="ss"> </span><span class="sc">{</span>i<span class="sc">}</span><span class="ss"> </span><span class="ch">}}</span><span class="ss">$&quot;</span>)<span class="op">;</span></span>
+<span id="cb13-19"><a href="#cb13-19" aria-hidden="true" tabindex="-1"></a>    ax.set_title(<span class="ss">f&quot;$</span><span class="ch">\\</span><span class="ss">beta_</span><span class="ch">{{</span><span class="ss"> </span><span class="sc">{</span>i<span class="sc">}</span><span class="ss"> </span><span class="ch">}}</span><span class="ss"> = 0$&quot;</span>)<span class="op">;</span></span>
+<span id="cb13-20"><a href="#cb13-20" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb13-21"><a href="#cb13-21" aria-hidden="true" tabindex="-1"></a>axes[<span class="dv">0</span>, <span class="dv">0</span>].set_ylabel(<span class="st">&quot;$y$&quot;</span>)<span class="op">;</span></span>
+<span id="cb13-22"><a href="#cb13-22" aria-hidden="true" tabindex="-1"></a>axes[<span class="dv">1</span>, <span class="dv">0</span>].set_ylabel(<span class="st">&quot;$y$&quot;</span>)<span class="op">;</span></span>
+<span id="cb13-23"><a href="#cb13-23" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb13-24"><a href="#cb13-24" aria-hidden="true" tabindex="-1"></a>fig.tight_layout()<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/horseshoe_files/horseshoe_18_0.png" title="fig:" alt="png" />
+</center>
+<h2 id="the-regularized-horseshoe">The Regularized Horseshoe</h2>
+<p>First we place a reasonable half-normal prior on the error variance <span class="math inline">\(\sigma^2\)</span>.</p>
+<div class="sourceCode" id="cb14"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> pm.Model() <span class="im">as</span> model:</span>
+<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a>    σ <span class="op">=</span> pm.HalfNormal(<span class="st">&quot;σ&quot;</span>, <span class="fl">2.5</span>)</span></code></pre></div>
+<p>The hierarchical regularized horseshoe uses two levels of regularization, global and local. There is a global parameter, <span class="math inline">\(\tau\)</span>, that will shrink all parameters towards zero (similarly to ridge regression) along with local parameters <span class="math inline">\(\lambda_i\)</span> for each coefficient. A long-tailed prior on the <span class="math inline">\(\lambda_i\)</span>s allows some of them to be nonzero, with the scale of <span class="math inline">\(\tau\)</span> setting the prior expected number of nonzero parameters.</p>
+<p>An important calculation (§3.3 of Piironen and Vehtari) shows that if we believe there are actually <span class="math inline">\(D_*\)</span> nonzero coefficients, the prior on the global shrinkage parameter <span class="math inline">\(\tau\)</span> should be</p>
+<p><span class="math display">\[
+\tau \sim \textrm{Half-StudentT}_{2} \left(\frac{D_*}{D - D_*} \cdot \frac{\sigma}{\sqrt{N}}\right).
+\]</span></p>
+<p>Since we know the generating process for this data, we set <span class="math inline">\(D_* = D_0\)</span>, although Piironen and Vehtari show that this guess only needs to be order-of-magnitude correct in practice.</p>
+<div class="sourceCode" id="cb15"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> model:</span>
+<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a>    τ <span class="op">=</span> pm.HalfStudentT(<span class="st">&quot;τ&quot;</span>, <span class="dv">2</span>, D0 <span class="op">/</span> (D <span class="op">-</span> D0) <span class="op">*</span> σ <span class="op">/</span> np.sqrt(N))</span></code></pre></div>
+<p>The regularized horseshoe uses the prior</p>
+<p><span class="math display">\[\beta_i \sim N\left(0, \tau^2 \cdot \tilde{\lambda}_i^2\right)\]</span></p>
+<p>for the coefficients, where</p>
+<p><span class="math display">\[\tilde{\lambda}_i^2 = \frac{c^2 \lambda_i^2}{c^2 + \tau^2 \lambda_i^2}.\]</span></p>
+<p>Given these definitions, it only remains to specify priors on <span class="math inline">\(\lambda_i\)</span> and <span class="math inline">\(c\)</span>. As indicated above, we use a long-tailed prior <span class="math inline">\(\lambda_i \sim \textrm{Half-StudentT}_5(1)\)</span> on the local parameters</p>
+<div class="sourceCode" id="cb16"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> model:</span>
+<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a>    λ <span class="op">=</span> pm.HalfStudentT(<span class="st">&quot;λ&quot;</span>, <span class="dv">5</span>, shape<span class="op">=</span>D)</span></code></pre></div>
+<p>Following §2.3 of Piironen and Vehtari, we place an inverse gamma prior on <span class="math inline">\(c^2\)</span>, <span class="math inline">\(c^2 \sim \textrm{InverseGamma}(1, 1).\)</span></p>
+<div class="sourceCode" id="cb17"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> model:</span>
+<span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a>    c2 <span class="op">=</span> pm.InverseGamma(<span class="st">&quot;c2&quot;</span>, <span class="dv">1</span>, <span class="dv">1</span>)</span></code></pre></div>
+<p>With these priors in place, we define <span class="math inline">\(\tilde{\lambda}_i\)</span></p>
+<div class="sourceCode" id="cb18"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> model:</span>
+<span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a>    λ_ <span class="op">=</span> λ <span class="op">*</span> at.sqrt(c2 <span class="op">/</span> (c2 <span class="op">+</span> τ<span class="op">**</span><span class="dv">2</span> <span class="op">*</span> λ<span class="op">**</span><span class="dv">2</span>))</span></code></pre></div>
+<p>To implement <span class="math inline">\(\beta_i \sim N\left(0, \tau^2 \cdot \tilde{\lambda}_i^2\right)\)</span> more efficiently, we use the parameterization</p>
+<p><span class="math display">\[
+\begin{align*}
+    z_i
+        &amp; \sim N(0, 1), \\
+     \beta_i
+         &amp; = z_i \cdot \tau \cdot \tilde{\lambda_i}.
+\end{align*}
+\]</span></p>
+<div class="sourceCode" id="cb19"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> model:</span>
+<span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a>    z <span class="op">=</span> pm.Normal(<span class="st">&quot;z&quot;</span>, <span class="fl">0.</span>, <span class="fl">1.</span>, shape<span class="op">=</span>D)</span>
+<span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a>    β <span class="op">=</span> pm.Deterministic(<span class="st">&quot;β&quot;</span>, z <span class="op">*</span> τ <span class="op">*</span> λ_)</span></code></pre></div>
+<p>Note that it is important to constrain two of the three factors <span class="math inline">\(z_i\)</span>, <span class="math inline">\(\tau\)</span>, and <span class="math inline">\(\tilde{\lambda}_i\)</span> to be positive, otherwise this model will not be fully <a href="https://en.wikipedia.org/wiki/Identifiability">identified</a>. Unlike in Piironen and Vehtari, we enforce identifiability by using half-Student T priors on <span class="math inline">\(\tau\)</span> and <span class="math inline">\(\lambda_i\)</span>.</p>
+<p>Using a relatively flat <span class="math inline">\(N(0, 10^2)\)</span> prior for the intercept, the likelihood of the observed data is</p>
+<div class="sourceCode" id="cb20"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> model:</span>
+<span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a>    β<span class="dv">0</span> <span class="op">=</span> pm.Normal(<span class="st">&quot;β0&quot;</span>, <span class="dv">0</span>, <span class="fl">10.</span>)</span>
+<span id="cb20-3"><a href="#cb20-3" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb20-4"><a href="#cb20-4" aria-hidden="true" tabindex="-1"></a>    obs <span class="op">=</span> pm.Normal(<span class="st">&quot;obs&quot;</span>, β<span class="dv">0</span> <span class="op">+</span> at.dot(X, β), σ, observed<span class="op">=</span>y)</span></code></pre></div>
+<p>We proceed to sample from this model</p>
+<div class="sourceCode" id="cb21"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a>CHAINS <span class="op">=</span> <span class="dv">3</span></span>
+<span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a>SAMPLE_KWARGS <span class="op">=</span> {</span>
+<span id="cb21-4"><a href="#cb21-4" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;cores&#39;</span>: CHAINS,</span>
+<span id="cb21-5"><a href="#cb21-5" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;target_accept&#39;</span>: <span class="fl">0.99</span>,</span>
+<span id="cb21-6"><a href="#cb21-6" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;max_treedepth&#39;</span>: <span class="dv">15</span>,</span>
+<span id="cb21-7"><a href="#cb21-7" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;random_seed&#39;</span>: [SEED <span class="op">+</span> i <span class="cf">for</span> i <span class="kw">in</span> <span class="bu">range</span>(CHAINS)],</span>
+<span id="cb21-8"><a href="#cb21-8" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;return_inferencedata&#39;</span>: <span class="va">True</span></span>
+<span id="cb21-9"><a href="#cb21-9" aria-hidden="true" tabindex="-1"></a>}</span></code></pre></div>
+<div class="sourceCode" id="cb22"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb22-1"><a href="#cb22-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> model:</span>
+<span id="cb22-2"><a href="#cb22-2" aria-hidden="true" tabindex="-1"></a>    trace <span class="op">=</span> pm.sample(<span class="op">**</span>SAMPLE_KWARGS)</span></code></pre></div>
+<pre><code>Auto-assigning NUTS sampler...
+Initializing NUTS using jitter+adapt_diag...
+Multiprocess sampling (3 chains in 3 jobs)
+NUTS: [β0, z, c2, λ, τ, σ]</code></pre>
+<div>
+<style>
+/* Turns off some styling */
+progress {
+/* gets rid of default border in Firefox and Opera. */
+border: none;
+/* Needs to be in here for Safari polyfill so background images work as expected. */
+background-size: auto;
+}
+.progress-bar-interrupted, .progress-bar-interrupted::-webkit-progress-bar {
+background: #F44336;
+}
+</style>
+<progress value="6000" class max="6000" style="width:300px; height:20px; vertical-align: middle;">
+</progress>
+<p>100.00% [6000/6000 05:20&lt;00:00 Sampling 3 chains, 0 divergences]</p>
+</div>
+<pre><code>Sampling 3 chains for 1_000 tune and 1_000 draw iterations (3_000 + 3_000 draws total) took 322 seconds.</code></pre>
+<p>The energy plot, BFMIs, and <span class="math inline">\(\hat{R}\)</span> statistics for these samples show no cause for concern.</p>
+<div class="sourceCode" id="cb25"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb25-1"><a href="#cb25-1" aria-hidden="true" tabindex="-1"></a>az.plot_energy(trace)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/horseshoe_files/horseshoe_38_0.png" title="fig:" alt="png" />
+</center>
+<div class="sourceCode" id="cb26"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb26-1"><a href="#cb26-1" aria-hidden="true" tabindex="-1"></a>az.rhat(trace).<span class="bu">max</span>()</span></code></pre></div>
+<div>
+<svg style="position: absolute; width: 0; height: 0; overflow: hidden">
+<defs> <symbol id="icon-database" viewBox="0 0 32 32"> <path d="M16 0c-8.837 0-16 2.239-16 5v4c0 2.761 7.163 5 16 5s16-2.239 16-5v-4c0-2.761-7.163-5-16-5z"></path> <path d="M16 17c-8.837 0-16-2.239-16-5v6c0 2.761 7.163 5 16 5s16-2.239 16-5v-6c0 2.761-7.163 5-16 5z"></path> <path d="M16 26c-8.837 0-16-2.239-16-5v6c0 2.761 7.163 5 16 5s16-2.239 16-5v-6c0 2.761-7.163 5-16 5z"></path> </symbol> <symbol id="icon-file-text2" viewBox="0 0 32 32"> <path d="M28.681 7.159c-0.694-0.947-1.662-2.053-2.724-3.116s-2.169-2.030-3.116-2.724c-1.612-1.182-2.393-1.319-2.841-1.319h-15.5c-1.378 0-2.5 1.121-2.5 2.5v27c0 1.378 1.122 2.5 2.5 2.5h23c1.378 0 2.5-1.122 2.5-2.5v-19.5c0-0.448-0.137-1.23-1.319-2.841zM24.543 5.457c0.959 0.959 1.712 1.825 2.268 2.543h-4.811v-4.811c0.718 0.556 1.584 1.309 2.543 2.268zM28 29.5c0 0.271-0.229 0.5-0.5 0.5h-23c-0.271 0-0.5-0.229-0.5-0.5v-27c0-0.271 0.229-0.5 0.5-0.5 0 0 15.499-0 15.5 0v7c0 0.552 0.448 1 1 1h7v19.5z"></path> <path d="M23 26h-14c-0.552 0-1-0.448-1-1s0.448-1 1-1h14c0.552 0 1 0.448 1 1s-0.448 1-1 1z"></path> <path d="M23 22h-14c-0.552 0-1-0.448-1-1s0.448-1 1-1h14c0.552 0 1 0.448 1 1s-0.448 1-1 1z"></path> <path d="M23 18h-14c-0.552 0-1-0.448-1-1s0.448-1 1-1h14c0.552 0 1 0.448 1 1s-0.448 1-1 1z"></path> </symbol> </defs>
+</svg>
+<style>/* CSS stylesheet for displaying xarray objects in jupyterlab.
+ *
+ */
+
+:root {
+  --xr-font-color0: var(--jp-content-font-color0, rgba(0, 0, 0, 1));
+  --xr-font-color2: var(--jp-content-font-color2, rgba(0, 0, 0, 0.54));
+  --xr-font-color3: var(--jp-content-font-color3, rgba(0, 0, 0, 0.38));
+  --xr-border-color: var(--jp-border-color2, #e0e0e0);
+  --xr-disabled-color: var(--jp-layout-color3, #bdbdbd);
+  --xr-background-color: var(--jp-layout-color0, white);
+  --xr-background-color-row-even: var(--jp-layout-color1, white);
+  --xr-background-color-row-odd: var(--jp-layout-color2, #eeeeee);
+}
+
+html[theme=dark],
+body.vscode-dark {
+  --xr-font-color0: rgba(255, 255, 255, 1);
+  --xr-font-color2: rgba(255, 255, 255, 0.54);
+  --xr-font-color3: rgba(255, 255, 255, 0.38);
+  --xr-border-color: #1F1F1F;
+  --xr-disabled-color: #515151;
+  --xr-background-color: #111111;
+  --xr-background-color-row-even: #111111;
+  --xr-background-color-row-odd: #313131;
+}
+
+.xr-wrap {
+  display: block;
+  min-width: 300px;
+  max-width: 700px;
+}
+
+.xr-text-repr-fallback {
+  /* fallback to plain text repr when CSS is not injected (untrusted notebook) */
+  display: none;
+}
+
+.xr-header {
+  padding-top: 6px;
+  padding-bottom: 6px;
+  margin-bottom: 4px;
+  border-bottom: solid 1px var(--xr-border-color);
+}
+
+.xr-header > div,
+.xr-header > ul {
+  display: inline;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.xr-obj-type,
+.xr-array-name {
+  margin-left: 2px;
+  margin-right: 10px;
+}
+
+.xr-obj-type {
+  color: var(--xr-font-color2);
+}
+
+.xr-sections {
+  padding-left: 0 !important;
+  display: grid;
+  grid-template-columns: 150px auto auto 1fr 20px 20px;
+}
+
+.xr-section-item {
+  display: contents;
+}
+
+.xr-section-item input {
+  display: none;
+}
+
+.xr-section-item input + label {
+  color: var(--xr-disabled-color);
+}
+
+.xr-section-item input:enabled + label {
+  cursor: pointer;
+  color: var(--xr-font-color2);
+}
+
+.xr-section-item input:enabled + label:hover {
+  color: var(--xr-font-color0);
+}
+
+.xr-section-summary {
+  grid-column: 1;
+  color: var(--xr-font-color2);
+  font-weight: 500;
+}
+
+.xr-section-summary > span {
+  display: inline-block;
+  padding-left: 0.5em;
+}
+
+.xr-section-summary-in:disabled + label {
+  color: var(--xr-font-color2);
+}
+
+.xr-section-summary-in + label:before {
+  display: inline-block;
+  content: '►';
+  font-size: 11px;
+  width: 15px;
+  text-align: center;
+}
+
+.xr-section-summary-in:disabled + label:before {
+  color: var(--xr-disabled-color);
+}
+
+.xr-section-summary-in:checked + label:before {
+  content: '▼';
+}
+
+.xr-section-summary-in:checked + label > span {
+  display: none;
+}
+
+.xr-section-summary,
+.xr-section-inline-details {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+.xr-section-inline-details {
+  grid-column: 2 / -1;
+}
+
+.xr-section-details {
+  display: none;
+  grid-column: 1 / -1;
+  margin-bottom: 5px;
+}
+
+.xr-section-summary-in:checked ~ .xr-section-details {
+  display: contents;
+}
+
+.xr-array-wrap {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 20px auto;
+}
+
+.xr-array-wrap > label {
+  grid-column: 1;
+  vertical-align: top;
+}
+
+.xr-preview {
+  color: var(--xr-font-color3);
+}
+
+.xr-array-preview,
+.xr-array-data {
+  padding: 0 5px !important;
+  grid-column: 2;
+}
+
+.xr-array-data,
+.xr-array-in:checked ~ .xr-array-preview {
+  display: none;
+}
+
+.xr-array-in:checked ~ .xr-array-data,
+.xr-array-preview {
+  display: inline-block;
+}
+
+.xr-dim-list {
+  display: inline-block !important;
+  list-style: none;
+  padding: 0 !important;
+  margin: 0;
+}
+
+.xr-dim-list li {
+  display: inline-block;
+  padding: 0;
+  margin: 0;
+}
+
+.xr-dim-list:before {
+  content: '(';
+}
+
+.xr-dim-list:after {
+  content: ')';
+}
+
+.xr-dim-list li:not(:last-child):after {
+  content: ',';
+  padding-right: 5px;
+}
+
+.xr-has-index {
+  font-weight: bold;
+}
+
+.xr-var-list,
+.xr-var-item {
+  display: contents;
+}
+
+.xr-var-item > div,
+.xr-var-item label,
+.xr-var-item > .xr-var-name span {
+  background-color: var(--xr-background-color-row-even);
+  margin-bottom: 0;
+}
+
+.xr-var-item > .xr-var-name:hover span {
+  padding-right: 5px;
+}
+
+.xr-var-list > li:nth-child(odd) > div,
+.xr-var-list > li:nth-child(odd) > label,
+.xr-var-list > li:nth-child(odd) > .xr-var-name span {
+  background-color: var(--xr-background-color-row-odd);
+}
+
+.xr-var-name {
+  grid-column: 1;
+}
+
+.xr-var-dims {
+  grid-column: 2;
+}
+
+.xr-var-dtype {
+  grid-column: 3;
+  text-align: right;
+  color: var(--xr-font-color2);
+}
+
+.xr-var-preview {
+  grid-column: 4;
+}
+
+.xr-var-name,
+.xr-var-dims,
+.xr-var-dtype,
+.xr-preview,
+.xr-attrs dt {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-right: 10px;
+}
+
+.xr-var-name:hover,
+.xr-var-dims:hover,
+.xr-var-dtype:hover,
+.xr-attrs dt:hover {
+  overflow: visible;
+  width: auto;
+  z-index: 1;
+}
+
+.xr-var-attrs,
+.xr-var-data {
+  display: none;
+  background-color: var(--xr-background-color) !important;
+  padding-bottom: 5px !important;
+}
+
+.xr-var-attrs-in:checked ~ .xr-var-attrs,
+.xr-var-data-in:checked ~ .xr-var-data {
+  display: block;
+}
+
+.xr-var-data > table {
+  float: right;
+}
+
+.xr-var-name span,
+.xr-var-data,
+.xr-attrs {
+  padding-left: 25px !important;
+}
+
+.xr-attrs,
+.xr-var-attrs,
+.xr-var-data {
+  grid-column: 1 / -1;
+}
+
+dl.xr-attrs {
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: 125px auto;
+}
+
+.xr-attrs dt,
+.xr-attrs dd {
+  padding: 0;
+  margin: 0;
+  float: left;
+  padding-right: 10px;
+  width: auto;
+}
+
+.xr-attrs dt {
+  font-weight: normal;
+  grid-column: 1;
+}
+
+.xr-attrs dt:hover span {
+  display: inline-block;
+  background: var(--xr-background-color);
+  padding-right: 10px;
+}
+
+.xr-attrs dd {
+  grid-column: 2;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.xr-icon-database,
+.xr-icon-file-text2 {
+  display: inline-block;
+  vertical-align: middle;
+  width: 1em;
+  height: 1.5em !important;
+  stroke-width: 0;
+  stroke: currentColor;
+  fill: currentColor;
+}
+</style>
+<pre class='xr-text-repr-fallback'>&lt;xarray.Dataset&gt;
+Dimensions:  ()
+Data variables:
+    z        float64 1.006
+    β0       float64 1.001
+    σ        float64 1.001
+    τ        float64 1.002
+    λ        float64 1.004
+    c2       float64 1.0
+    β        float64 1.002</pre>
+<div class="xr-wrap" hidden="">
+<div class="xr-header">
+<div class="xr-obj-type">
+xarray.Dataset
+</div>
+</div>
+<ul class="xr-sections">
+<li class="xr-section-item">
+<input id='section-fed721cf-8c6d-46da-a16b-22f379af3f92' class='xr-section-summary-in' type='checkbox' disabled ><label for='section-fed721cf-8c6d-46da-a16b-22f379af3f92' class='xr-section-summary'  title='Expand/collapse section'>Dimensions:</label>
+<div class="xr-section-inline-details">
+
+</div>
+<div class="xr-section-details">
+
+</div>
+</li>
+<li class="xr-section-item">
+<input id='section-35916933-2414-4cd0-aeea-7f35e685f6a1' class='xr-section-summary-in' type='checkbox' disabled ><label for='section-35916933-2414-4cd0-aeea-7f35e685f6a1' class='xr-section-summary'  title='Expand/collapse section'>Coordinates: <span>(0)</span></label>
+<div class="xr-section-inline-details">
+
+</div>
+<div class="xr-section-details">
+<ul class="xr-var-list">
+</ul>
+</div>
+</li>
+<li class="xr-section-item">
+<input id='section-a9fde3d1-4f14-41ee-8417-dff3276a6f39' class='xr-section-summary-in' type='checkbox'  checked><label for='section-a9fde3d1-4f14-41ee-8417-dff3276a6f39' class='xr-section-summary' >Data variables: <span>(7)</span></label>
+<div class="xr-section-inline-details">
+
+</div>
+<div class="xr-section-details">
+<ul class="xr-var-list">
+<li class="xr-var-item">
+<div class="xr-var-name">
+<span>z</span>
+</div>
+<div class="xr-var-dims">
+()
+</div>
+<div class="xr-var-dtype">
+float64
+</div>
+<div class="xr-var-preview xr-preview">
+1.006
+</div>
+<input id='attrs-880a360c-1136-45b9-8fca-5927c13c1122' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-880a360c-1136-45b9-8fca-5927c13c1122' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-e816e0e2-5842-4bb7-b277-90cdedcc8d84' class='xr-var-data-in' type='checkbox'><label for='data-e816e0e2-5842-4bb7-b277-90cdedcc8d84' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label>
+<div class="xr-var-attrs">
+<dl class="xr-attrs">
+</dl>
+</div>
+<div class="xr-var-data">
+<pre>array(1.00634042)</pre>
+</div>
+</li>
+<li class="xr-var-item">
+<div class="xr-var-name">
+<span>β0</span>
+</div>
+<div class="xr-var-dims">
+()
+</div>
+<div class="xr-var-dtype">
+float64
+</div>
+<div class="xr-var-preview xr-preview">
+1.001
+</div>
+<input id='attrs-74e72b4d-0132-4819-9915-6f2155db16f4' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-74e72b4d-0132-4819-9915-6f2155db16f4' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-4f4a5400-6e30-4943-8253-6158c4edfba8' class='xr-var-data-in' type='checkbox'><label for='data-4f4a5400-6e30-4943-8253-6158c4edfba8' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label>
+<div class="xr-var-attrs">
+<dl class="xr-attrs">
+</dl>
+</div>
+<div class="xr-var-data">
+<pre>array(1.00109199)</pre>
+</div>
+</li>
+<li class="xr-var-item">
+<div class="xr-var-name">
+<span>σ</span>
+</div>
+<div class="xr-var-dims">
+()
+</div>
+<div class="xr-var-dtype">
+float64
+</div>
+<div class="xr-var-preview xr-preview">
+1.001
+</div>
+<input id='attrs-9395dc3f-dcb4-4a16-b9e1-4b69b294e9e7' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-9395dc3f-dcb4-4a16-b9e1-4b69b294e9e7' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-5f5da7f7-09d7-42b9-8f86-abef0f36eb82' class='xr-var-data-in' type='checkbox'><label for='data-5f5da7f7-09d7-42b9-8f86-abef0f36eb82' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label>
+<div class="xr-var-attrs">
+<dl class="xr-attrs">
+</dl>
+</div>
+<div class="xr-var-data">
+<pre>array(1.0012928)</pre>
+</div>
+</li>
+<li class="xr-var-item">
+<div class="xr-var-name">
+<span>τ</span>
+</div>
+<div class="xr-var-dims">
+()
+</div>
+<div class="xr-var-dtype">
+float64
+</div>
+<div class="xr-var-preview xr-preview">
+1.002
+</div>
+<input id='attrs-f2e350ac-9ba5-4291-9d99-26b6453054e7' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-f2e350ac-9ba5-4291-9d99-26b6453054e7' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-14b84f37-16a7-4a8c-a0be-efe59e114993' class='xr-var-data-in' type='checkbox'><label for='data-14b84f37-16a7-4a8c-a0be-efe59e114993' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label>
+<div class="xr-var-attrs">
+<dl class="xr-attrs">
+</dl>
+</div>
+<div class="xr-var-data">
+<pre>array(1.00197336)</pre>
+</div>
+</li>
+<li class="xr-var-item">
+<div class="xr-var-name">
+<span>λ</span>
+</div>
+<div class="xr-var-dims">
+()
+</div>
+<div class="xr-var-dtype">
+float64
+</div>
+<div class="xr-var-preview xr-preview">
+1.004
+</div>
+<input id='attrs-6ef40866-ddec-4a77-a6b5-a79ca32af7f2' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-6ef40866-ddec-4a77-a6b5-a79ca32af7f2' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-271fc19c-30a6-43da-8cdc-1dd4106049b7' class='xr-var-data-in' type='checkbox'><label for='data-271fc19c-30a6-43da-8cdc-1dd4106049b7' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label>
+<div class="xr-var-attrs">
+<dl class="xr-attrs">
+</dl>
+</div>
+<div class="xr-var-data">
+<pre>array(1.00367552)</pre>
+</div>
+</li>
+<li class="xr-var-item">
+<div class="xr-var-name">
+<span>c2</span>
+</div>
+<div class="xr-var-dims">
+()
+</div>
+<div class="xr-var-dtype">
+float64
+</div>
+<div class="xr-var-preview xr-preview">
+1.0
+</div>
+<input id='attrs-ddd82f73-e6d2-423a-87a5-41fe6b295817' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-ddd82f73-e6d2-423a-87a5-41fe6b295817' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-31b518c1-2741-4bbb-b3e6-56a0a12930f4' class='xr-var-data-in' type='checkbox'><label for='data-31b518c1-2741-4bbb-b3e6-56a0a12930f4' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label>
+<div class="xr-var-attrs">
+<dl class="xr-attrs">
+</dl>
+</div>
+<div class="xr-var-data">
+<pre>array(1.00018438)</pre>
+</div>
+</li>
+<li class="xr-var-item">
+<div class="xr-var-name">
+<span>β</span>
+</div>
+<div class="xr-var-dims">
+()
+</div>
+<div class="xr-var-dtype">
+float64
+</div>
+<div class="xr-var-preview xr-preview">
+1.002
+</div>
+<input id='attrs-d01e0c84-8410-496f-8995-50dc44f6a7f8' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-d01e0c84-8410-496f-8995-50dc44f6a7f8' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-33b5bf98-96a8-43c2-8821-c1fb03c0b1a0' class='xr-var-data-in' type='checkbox'><label for='data-33b5bf98-96a8-43c2-8821-c1fb03c0b1a0' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label>
+<div class="xr-var-attrs">
+<dl class="xr-attrs">
+</dl>
+</div>
+<div class="xr-var-data">
+<pre>array(1.00235304)</pre>
+</div>
+</li>
+</ul>
+</div>
+</li>
+<li class="xr-section-item">
+<input id='section-ac0c19be-fec5-4acd-8dda-ef868e868ec2' class='xr-section-summary-in' type='checkbox' disabled ><label for='section-ac0c19be-fec5-4acd-8dda-ef868e868ec2' class='xr-section-summary'  title='Expand/collapse section'>Attributes: <span>(0)</span></label>
+<div class="xr-section-inline-details">
+
+</div>
+<div class="xr-section-details">
+<dl class="xr-attrs">
+</dl>
+</div>
+</li>
+</ul>
+</div>
+</div>
+<p>The relative error in recovering the true nonzero parameters is quite good (the largest relative error is approximately 3%).</p>
+<div class="sourceCode" id="cb27"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> post_mean(trace, var_name):</span>
+<span id="cb27-2"><a href="#cb27-2" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> trace[<span class="st">&quot;posterior&quot;</span>][var_name].mean(dim<span class="op">=</span>(<span class="st">&quot;chain&quot;</span>, <span class="st">&quot;draw&quot;</span>))</span></code></pre></div>
+<div class="sourceCode" id="cb28"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a>np.<span class="bu">abs</span>((post_mean(trace, <span class="st">&quot;β&quot;</span>)[:D0] <span class="op">-</span> COEF[:D0]) <span class="op">/</span> COEF[:D0]).<span class="bu">max</span>()</span></code></pre></div>
+<div>
+<svg style="position: absolute; width: 0; height: 0; overflow: hidden">
+<defs> <symbol id="icon-database" viewBox="0 0 32 32"> <path d="M16 0c-8.837 0-16 2.239-16 5v4c0 2.761 7.163 5 16 5s16-2.239 16-5v-4c0-2.761-7.163-5-16-5z"></path> <path d="M16 17c-8.837 0-16-2.239-16-5v6c0 2.761 7.163 5 16 5s16-2.239 16-5v-6c0 2.761-7.163 5-16 5z"></path> <path d="M16 26c-8.837 0-16-2.239-16-5v6c0 2.761 7.163 5 16 5s16-2.239 16-5v-6c0 2.761-7.163 5-16 5z"></path> </symbol> <symbol id="icon-file-text2" viewBox="0 0 32 32"> <path d="M28.681 7.159c-0.694-0.947-1.662-2.053-2.724-3.116s-2.169-2.030-3.116-2.724c-1.612-1.182-2.393-1.319-2.841-1.319h-15.5c-1.378 0-2.5 1.121-2.5 2.5v27c0 1.378 1.122 2.5 2.5 2.5h23c1.378 0 2.5-1.122 2.5-2.5v-19.5c0-0.448-0.137-1.23-1.319-2.841zM24.543 5.457c0.959 0.959 1.712 1.825 2.268 2.543h-4.811v-4.811c0.718 0.556 1.584 1.309 2.543 2.268zM28 29.5c0 0.271-0.229 0.5-0.5 0.5h-23c-0.271 0-0.5-0.229-0.5-0.5v-27c0-0.271 0.229-0.5 0.5-0.5 0 0 15.499-0 15.5 0v7c0 0.552 0.448 1 1 1h7v19.5z"></path> <path d="M23 26h-14c-0.552 0-1-0.448-1-1s0.448-1 1-1h14c0.552 0 1 0.448 1 1s-0.448 1-1 1z"></path> <path d="M23 22h-14c-0.552 0-1-0.448-1-1s0.448-1 1-1h14c0.552 0 1 0.448 1 1s-0.448 1-1 1z"></path> <path d="M23 18h-14c-0.552 0-1-0.448-1-1s0.448-1 1-1h14c0.552 0 1 0.448 1 1s-0.448 1-1 1z"></path> </symbol> </defs>
+</svg>
+<style>/* CSS stylesheet for displaying xarray objects in jupyterlab.
+ *
+ */
+
+:root {
+  --xr-font-color0: var(--jp-content-font-color0, rgba(0, 0, 0, 1));
+  --xr-font-color2: var(--jp-content-font-color2, rgba(0, 0, 0, 0.54));
+  --xr-font-color3: var(--jp-content-font-color3, rgba(0, 0, 0, 0.38));
+  --xr-border-color: var(--jp-border-color2, #e0e0e0);
+  --xr-disabled-color: var(--jp-layout-color3, #bdbdbd);
+  --xr-background-color: var(--jp-layout-color0, white);
+  --xr-background-color-row-even: var(--jp-layout-color1, white);
+  --xr-background-color-row-odd: var(--jp-layout-color2, #eeeeee);
+}
+
+html[theme=dark],
+body.vscode-dark {
+  --xr-font-color0: rgba(255, 255, 255, 1);
+  --xr-font-color2: rgba(255, 255, 255, 0.54);
+  --xr-font-color3: rgba(255, 255, 255, 0.38);
+  --xr-border-color: #1F1F1F;
+  --xr-disabled-color: #515151;
+  --xr-background-color: #111111;
+  --xr-background-color-row-even: #111111;
+  --xr-background-color-row-odd: #313131;
+}
+
+.xr-wrap {
+  display: block;
+  min-width: 300px;
+  max-width: 700px;
+}
+
+.xr-text-repr-fallback {
+  /* fallback to plain text repr when CSS is not injected (untrusted notebook) */
+  display: none;
+}
+
+.xr-header {
+  padding-top: 6px;
+  padding-bottom: 6px;
+  margin-bottom: 4px;
+  border-bottom: solid 1px var(--xr-border-color);
+}
+
+.xr-header > div,
+.xr-header > ul {
+  display: inline;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.xr-obj-type,
+.xr-array-name {
+  margin-left: 2px;
+  margin-right: 10px;
+}
+
+.xr-obj-type {
+  color: var(--xr-font-color2);
+}
+
+.xr-sections {
+  padding-left: 0 !important;
+  display: grid;
+  grid-template-columns: 150px auto auto 1fr 20px 20px;
+}
+
+.xr-section-item {
+  display: contents;
+}
+
+.xr-section-item input {
+  display: none;
+}
+
+.xr-section-item input + label {
+  color: var(--xr-disabled-color);
+}
+
+.xr-section-item input:enabled + label {
+  cursor: pointer;
+  color: var(--xr-font-color2);
+}
+
+.xr-section-item input:enabled + label:hover {
+  color: var(--xr-font-color0);
+}
+
+.xr-section-summary {
+  grid-column: 1;
+  color: var(--xr-font-color2);
+  font-weight: 500;
+}
+
+.xr-section-summary > span {
+  display: inline-block;
+  padding-left: 0.5em;
+}
+
+.xr-section-summary-in:disabled + label {
+  color: var(--xr-font-color2);
+}
+
+.xr-section-summary-in + label:before {
+  display: inline-block;
+  content: '►';
+  font-size: 11px;
+  width: 15px;
+  text-align: center;
+}
+
+.xr-section-summary-in:disabled + label:before {
+  color: var(--xr-disabled-color);
+}
+
+.xr-section-summary-in:checked + label:before {
+  content: '▼';
+}
+
+.xr-section-summary-in:checked + label > span {
+  display: none;
+}
+
+.xr-section-summary,
+.xr-section-inline-details {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+.xr-section-inline-details {
+  grid-column: 2 / -1;
+}
+
+.xr-section-details {
+  display: none;
+  grid-column: 1 / -1;
+  margin-bottom: 5px;
+}
+
+.xr-section-summary-in:checked ~ .xr-section-details {
+  display: contents;
+}
+
+.xr-array-wrap {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 20px auto;
+}
+
+.xr-array-wrap > label {
+  grid-column: 1;
+  vertical-align: top;
+}
+
+.xr-preview {
+  color: var(--xr-font-color3);
+}
+
+.xr-array-preview,
+.xr-array-data {
+  padding: 0 5px !important;
+  grid-column: 2;
+}
+
+.xr-array-data,
+.xr-array-in:checked ~ .xr-array-preview {
+  display: none;
+}
+
+.xr-array-in:checked ~ .xr-array-data,
+.xr-array-preview {
+  display: inline-block;
+}
+
+.xr-dim-list {
+  display: inline-block !important;
+  list-style: none;
+  padding: 0 !important;
+  margin: 0;
+}
+
+.xr-dim-list li {
+  display: inline-block;
+  padding: 0;
+  margin: 0;
+}
+
+.xr-dim-list:before {
+  content: '(';
+}
+
+.xr-dim-list:after {
+  content: ')';
+}
+
+.xr-dim-list li:not(:last-child):after {
+  content: ',';
+  padding-right: 5px;
+}
+
+.xr-has-index {
+  font-weight: bold;
+}
+
+.xr-var-list,
+.xr-var-item {
+  display: contents;
+}
+
+.xr-var-item > div,
+.xr-var-item label,
+.xr-var-item > .xr-var-name span {
+  background-color: var(--xr-background-color-row-even);
+  margin-bottom: 0;
+}
+
+.xr-var-item > .xr-var-name:hover span {
+  padding-right: 5px;
+}
+
+.xr-var-list > li:nth-child(odd) > div,
+.xr-var-list > li:nth-child(odd) > label,
+.xr-var-list > li:nth-child(odd) > .xr-var-name span {
+  background-color: var(--xr-background-color-row-odd);
+}
+
+.xr-var-name {
+  grid-column: 1;
+}
+
+.xr-var-dims {
+  grid-column: 2;
+}
+
+.xr-var-dtype {
+  grid-column: 3;
+  text-align: right;
+  color: var(--xr-font-color2);
+}
+
+.xr-var-preview {
+  grid-column: 4;
+}
+
+.xr-var-name,
+.xr-var-dims,
+.xr-var-dtype,
+.xr-preview,
+.xr-attrs dt {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-right: 10px;
+}
+
+.xr-var-name:hover,
+.xr-var-dims:hover,
+.xr-var-dtype:hover,
+.xr-attrs dt:hover {
+  overflow: visible;
+  width: auto;
+  z-index: 1;
+}
+
+.xr-var-attrs,
+.xr-var-data {
+  display: none;
+  background-color: var(--xr-background-color) !important;
+  padding-bottom: 5px !important;
+}
+
+.xr-var-attrs-in:checked ~ .xr-var-attrs,
+.xr-var-data-in:checked ~ .xr-var-data {
+  display: block;
+}
+
+.xr-var-data > table {
+  float: right;
+}
+
+.xr-var-name span,
+.xr-var-data,
+.xr-attrs {
+  padding-left: 25px !important;
+}
+
+.xr-attrs,
+.xr-var-attrs,
+.xr-var-data {
+  grid-column: 1 / -1;
+}
+
+dl.xr-attrs {
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: 125px auto;
+}
+
+.xr-attrs dt,
+.xr-attrs dd {
+  padding: 0;
+  margin: 0;
+  float: left;
+  padding-right: 10px;
+  width: auto;
+}
+
+.xr-attrs dt {
+  font-weight: normal;
+  grid-column: 1;
+}
+
+.xr-attrs dt:hover span {
+  display: inline-block;
+  background: var(--xr-background-color);
+  padding-right: 10px;
+}
+
+.xr-attrs dd {
+  grid-column: 2;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.xr-icon-database,
+.xr-icon-file-text2 {
+  display: inline-block;
+  vertical-align: middle;
+  width: 1em;
+  height: 1.5em !important;
+  stroke-width: 0;
+  stroke: currentColor;
+  fill: currentColor;
+}
+</style>
+<pre class='xr-text-repr-fallback'>&lt;xarray.DataArray &#x27;β&#x27; ()&gt;
+array(0.03201216)</pre>
+<div class="xr-wrap" hidden="">
+<div class="xr-header">
+<div class="xr-obj-type">
+xarray.DataArray
+</div>
+<div class="xr-array-name">
+‘β’
+</div>
+</div>
+<ul class="xr-sections">
+<li class="xr-section-item">
+<div class="xr-array-wrap">
+<input id='section-ee713d78-0554-41ea-bfd7-c7e66dc3757c' class='xr-array-in' type='checkbox' checked><label for='section-ee713d78-0554-41ea-bfd7-c7e66dc3757c' title='Show/hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label>
+<div class="xr-array-preview xr-preview">
+<span>0.03201</span>
+</div>
+<div class="xr-array-data">
+<pre>array(0.03201216)</pre>
+</div>
+</div>
+</li>
+<li class="xr-section-item">
+<input id='section-f7b4799e-a0ac-4d6f-8220-b345c102b83b' class='xr-section-summary-in' type='checkbox' disabled ><label for='section-f7b4799e-a0ac-4d6f-8220-b345c102b83b' class='xr-section-summary'  title='Expand/collapse section'>Coordinates: <span>(0)</span></label>
+<div class="xr-section-inline-details">
+
+</div>
+<div class="xr-section-details">
+<ul class="xr-var-list">
+</ul>
+</div>
+</li>
+<li class="xr-section-item">
+<input id='section-0ace46a4-ea49-4b34-b437-11419d7da2db' class='xr-section-summary-in' type='checkbox' disabled ><label for='section-0ace46a4-ea49-4b34-b437-11419d7da2db' class='xr-section-summary'  title='Expand/collapse section'>Attributes: <span>(0)</span></label>
+<div class="xr-section-inline-details">
+
+</div>
+<div class="xr-section-details">
+<dl class="xr-attrs">
+</dl>
+</div>
+</li>
+</ul>
+</div>
+</div>
+<p>Visually, the true parameter values lie comfortably inside the 95% high posterior density intervals for these nonzero parameters.</p>
+<div class="sourceCode" id="cb29"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb29-1"><a href="#cb29-1" aria-hidden="true" tabindex="-1"></a>ax, <span class="op">=</span> az.plot_forest(</span>
+<span id="cb29-2"><a href="#cb29-2" aria-hidden="true" tabindex="-1"></a>    trace, var_names<span class="op">=</span>[<span class="st">&quot;β&quot;</span>], coords<span class="op">=</span>{<span class="st">&quot;β_dim_0&quot;</span>: <span class="bu">range</span>(D0)},</span>
+<span id="cb29-3"><a href="#cb29-3" aria-hidden="true" tabindex="-1"></a>    kind<span class="op">=</span><span class="st">&#39;ridgeplot&#39;</span>, ridgeplot_truncate<span class="op">=</span><span class="va">False</span>, ridgeplot_alpha<span class="op">=</span><span class="fl">0.5</span>,</span>
+<span id="cb29-4"><a href="#cb29-4" aria-hidden="true" tabindex="-1"></a>    hdi_prob<span class="op">=</span><span class="fl">0.95</span>, combined<span class="op">=</span><span class="va">True</span>,</span>
+<span id="cb29-5"><a href="#cb29-5" aria-hidden="true" tabindex="-1"></a>    figsize<span class="op">=</span>(<span class="dv">8</span>, <span class="dv">6</span>)</span>
+<span id="cb29-6"><a href="#cb29-6" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb29-7"><a href="#cb29-7" aria-hidden="true" tabindex="-1"></a>ax.scatter(COEF[:D0][::<span class="op">-</span><span class="dv">1</span>], ax.get_yticks(),</span>
+<span id="cb29-8"><a href="#cb29-8" aria-hidden="true" tabindex="-1"></a>           c<span class="op">=</span><span class="st">&#39;C1&#39;</span>,</span>
+<span id="cb29-9"><a href="#cb29-9" aria-hidden="true" tabindex="-1"></a>           label<span class="op">=</span><span class="st">&quot;Actual value&quot;</span>)<span class="op">;</span></span>
+<span id="cb29-10"><a href="#cb29-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb29-11"><a href="#cb29-11" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="vs">r&quot;$\beta_i$&quot;</span>)<span class="op">;</span></span>
+<span id="cb29-12"><a href="#cb29-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb29-13"><a href="#cb29-13" aria-hidden="true" tabindex="-1"></a>ax.set_ylim(bottom<span class="op">=</span><span class="va">None</span>, top<span class="op">=</span><span class="fl">1.55</span> <span class="op">*</span> ax.get_yticks().<span class="bu">max</span>())</span>
+<span id="cb29-14"><a href="#cb29-14" aria-hidden="true" tabindex="-1"></a>ax.set_yticklabels(<span class="bu">range</span>(D0)[::<span class="op">-</span><span class="dv">1</span>])<span class="op">;</span></span>
+<span id="cb29-15"><a href="#cb29-15" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="vs">r&quot;$i$&quot;</span>)<span class="op">;</span></span>
+<span id="cb29-16"><a href="#cb29-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb29-17"><a href="#cb29-17" aria-hidden="true" tabindex="-1"></a>ax.legend(loc<span class="op">=</span><span class="st">&#39;upper center&#39;</span>)<span class="op">;</span></span>
+<span id="cb29-18"><a href="#cb29-18" aria-hidden="true" tabindex="-1"></a>ax.set_title(<span class="st">&quot;Posterior distribution of nonzero coefficients&quot;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/horseshoe_files/horseshoe_44_0.png" title="fig:" alt="png" />
+</center>
+<p>The (absolute) largest posterior expected value for a coefficient that is actually zero is relatively small compared to the scale of the nonzero parameters.</p>
+<div class="sourceCode" id="cb30"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb30-1"><a href="#cb30-1" aria-hidden="true" tabindex="-1"></a>np.<span class="bu">abs</span>(post_mean(trace, <span class="st">&quot;β&quot;</span>)[D0:]).<span class="bu">max</span>()</span></code></pre></div>
+<div>
+<svg style="position: absolute; width: 0; height: 0; overflow: hidden">
+<defs> <symbol id="icon-database" viewBox="0 0 32 32"> <path d="M16 0c-8.837 0-16 2.239-16 5v4c0 2.761 7.163 5 16 5s16-2.239 16-5v-4c0-2.761-7.163-5-16-5z"></path> <path d="M16 17c-8.837 0-16-2.239-16-5v6c0 2.761 7.163 5 16 5s16-2.239 16-5v-6c0 2.761-7.163 5-16 5z"></path> <path d="M16 26c-8.837 0-16-2.239-16-5v6c0 2.761 7.163 5 16 5s16-2.239 16-5v-6c0 2.761-7.163 5-16 5z"></path> </symbol> <symbol id="icon-file-text2" viewBox="0 0 32 32"> <path d="M28.681 7.159c-0.694-0.947-1.662-2.053-2.724-3.116s-2.169-2.030-3.116-2.724c-1.612-1.182-2.393-1.319-2.841-1.319h-15.5c-1.378 0-2.5 1.121-2.5 2.5v27c0 1.378 1.122 2.5 2.5 2.5h23c1.378 0 2.5-1.122 2.5-2.5v-19.5c0-0.448-0.137-1.23-1.319-2.841zM24.543 5.457c0.959 0.959 1.712 1.825 2.268 2.543h-4.811v-4.811c0.718 0.556 1.584 1.309 2.543 2.268zM28 29.5c0 0.271-0.229 0.5-0.5 0.5h-23c-0.271 0-0.5-0.229-0.5-0.5v-27c0-0.271 0.229-0.5 0.5-0.5 0 0 15.499-0 15.5 0v7c0 0.552 0.448 1 1 1h7v19.5z"></path> <path d="M23 26h-14c-0.552 0-1-0.448-1-1s0.448-1 1-1h14c0.552 0 1 0.448 1 1s-0.448 1-1 1z"></path> <path d="M23 22h-14c-0.552 0-1-0.448-1-1s0.448-1 1-1h14c0.552 0 1 0.448 1 1s-0.448 1-1 1z"></path> <path d="M23 18h-14c-0.552 0-1-0.448-1-1s0.448-1 1-1h14c0.552 0 1 0.448 1 1s-0.448 1-1 1z"></path> </symbol> </defs>
+</svg>
+<style>/* CSS stylesheet for displaying xarray objects in jupyterlab.
+ *
+ */
+
+:root {
+  --xr-font-color0: var(--jp-content-font-color0, rgba(0, 0, 0, 1));
+  --xr-font-color2: var(--jp-content-font-color2, rgba(0, 0, 0, 0.54));
+  --xr-font-color3: var(--jp-content-font-color3, rgba(0, 0, 0, 0.38));
+  --xr-border-color: var(--jp-border-color2, #e0e0e0);
+  --xr-disabled-color: var(--jp-layout-color3, #bdbdbd);
+  --xr-background-color: var(--jp-layout-color0, white);
+  --xr-background-color-row-even: var(--jp-layout-color1, white);
+  --xr-background-color-row-odd: var(--jp-layout-color2, #eeeeee);
+}
+
+html[theme=dark],
+body.vscode-dark {
+  --xr-font-color0: rgba(255, 255, 255, 1);
+  --xr-font-color2: rgba(255, 255, 255, 0.54);
+  --xr-font-color3: rgba(255, 255, 255, 0.38);
+  --xr-border-color: #1F1F1F;
+  --xr-disabled-color: #515151;
+  --xr-background-color: #111111;
+  --xr-background-color-row-even: #111111;
+  --xr-background-color-row-odd: #313131;
+}
+
+.xr-wrap {
+  display: block;
+  min-width: 300px;
+  max-width: 700px;
+}
+
+.xr-text-repr-fallback {
+  /* fallback to plain text repr when CSS is not injected (untrusted notebook) */
+  display: none;
+}
+
+.xr-header {
+  padding-top: 6px;
+  padding-bottom: 6px;
+  margin-bottom: 4px;
+  border-bottom: solid 1px var(--xr-border-color);
+}
+
+.xr-header > div,
+.xr-header > ul {
+  display: inline;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.xr-obj-type,
+.xr-array-name {
+  margin-left: 2px;
+  margin-right: 10px;
+}
+
+.xr-obj-type {
+  color: var(--xr-font-color2);
+}
+
+.xr-sections {
+  padding-left: 0 !important;
+  display: grid;
+  grid-template-columns: 150px auto auto 1fr 20px 20px;
+}
+
+.xr-section-item {
+  display: contents;
+}
+
+.xr-section-item input {
+  display: none;
+}
+
+.xr-section-item input + label {
+  color: var(--xr-disabled-color);
+}
+
+.xr-section-item input:enabled + label {
+  cursor: pointer;
+  color: var(--xr-font-color2);
+}
+
+.xr-section-item input:enabled + label:hover {
+  color: var(--xr-font-color0);
+}
+
+.xr-section-summary {
+  grid-column: 1;
+  color: var(--xr-font-color2);
+  font-weight: 500;
+}
+
+.xr-section-summary > span {
+  display: inline-block;
+  padding-left: 0.5em;
+}
+
+.xr-section-summary-in:disabled + label {
+  color: var(--xr-font-color2);
+}
+
+.xr-section-summary-in + label:before {
+  display: inline-block;
+  content: '►';
+  font-size: 11px;
+  width: 15px;
+  text-align: center;
+}
+
+.xr-section-summary-in:disabled + label:before {
+  color: var(--xr-disabled-color);
+}
+
+.xr-section-summary-in:checked + label:before {
+  content: '▼';
+}
+
+.xr-section-summary-in:checked + label > span {
+  display: none;
+}
+
+.xr-section-summary,
+.xr-section-inline-details {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+.xr-section-inline-details {
+  grid-column: 2 / -1;
+}
+
+.xr-section-details {
+  display: none;
+  grid-column: 1 / -1;
+  margin-bottom: 5px;
+}
+
+.xr-section-summary-in:checked ~ .xr-section-details {
+  display: contents;
+}
+
+.xr-array-wrap {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 20px auto;
+}
+
+.xr-array-wrap > label {
+  grid-column: 1;
+  vertical-align: top;
+}
+
+.xr-preview {
+  color: var(--xr-font-color3);
+}
+
+.xr-array-preview,
+.xr-array-data {
+  padding: 0 5px !important;
+  grid-column: 2;
+}
+
+.xr-array-data,
+.xr-array-in:checked ~ .xr-array-preview {
+  display: none;
+}
+
+.xr-array-in:checked ~ .xr-array-data,
+.xr-array-preview {
+  display: inline-block;
+}
+
+.xr-dim-list {
+  display: inline-block !important;
+  list-style: none;
+  padding: 0 !important;
+  margin: 0;
+}
+
+.xr-dim-list li {
+  display: inline-block;
+  padding: 0;
+  margin: 0;
+}
+
+.xr-dim-list:before {
+  content: '(';
+}
+
+.xr-dim-list:after {
+  content: ')';
+}
+
+.xr-dim-list li:not(:last-child):after {
+  content: ',';
+  padding-right: 5px;
+}
+
+.xr-has-index {
+  font-weight: bold;
+}
+
+.xr-var-list,
+.xr-var-item {
+  display: contents;
+}
+
+.xr-var-item > div,
+.xr-var-item label,
+.xr-var-item > .xr-var-name span {
+  background-color: var(--xr-background-color-row-even);
+  margin-bottom: 0;
+}
+
+.xr-var-item > .xr-var-name:hover span {
+  padding-right: 5px;
+}
+
+.xr-var-list > li:nth-child(odd) > div,
+.xr-var-list > li:nth-child(odd) > label,
+.xr-var-list > li:nth-child(odd) > .xr-var-name span {
+  background-color: var(--xr-background-color-row-odd);
+}
+
+.xr-var-name {
+  grid-column: 1;
+}
+
+.xr-var-dims {
+  grid-column: 2;
+}
+
+.xr-var-dtype {
+  grid-column: 3;
+  text-align: right;
+  color: var(--xr-font-color2);
+}
+
+.xr-var-preview {
+  grid-column: 4;
+}
+
+.xr-var-name,
+.xr-var-dims,
+.xr-var-dtype,
+.xr-preview,
+.xr-attrs dt {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-right: 10px;
+}
+
+.xr-var-name:hover,
+.xr-var-dims:hover,
+.xr-var-dtype:hover,
+.xr-attrs dt:hover {
+  overflow: visible;
+  width: auto;
+  z-index: 1;
+}
+
+.xr-var-attrs,
+.xr-var-data {
+  display: none;
+  background-color: var(--xr-background-color) !important;
+  padding-bottom: 5px !important;
+}
+
+.xr-var-attrs-in:checked ~ .xr-var-attrs,
+.xr-var-data-in:checked ~ .xr-var-data {
+  display: block;
+}
+
+.xr-var-data > table {
+  float: right;
+}
+
+.xr-var-name span,
+.xr-var-data,
+.xr-attrs {
+  padding-left: 25px !important;
+}
+
+.xr-attrs,
+.xr-var-attrs,
+.xr-var-data {
+  grid-column: 1 / -1;
+}
+
+dl.xr-attrs {
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: 125px auto;
+}
+
+.xr-attrs dt,
+.xr-attrs dd {
+  padding: 0;
+  margin: 0;
+  float: left;
+  padding-right: 10px;
+  width: auto;
+}
+
+.xr-attrs dt {
+  font-weight: normal;
+  grid-column: 1;
+}
+
+.xr-attrs dt:hover span {
+  display: inline-block;
+  background: var(--xr-background-color);
+  padding-right: 10px;
+}
+
+.xr-attrs dd {
+  grid-column: 2;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.xr-icon-database,
+.xr-icon-file-text2 {
+  display: inline-block;
+  vertical-align: middle;
+  width: 1em;
+  height: 1.5em !important;
+  stroke-width: 0;
+  stroke: currentColor;
+  fill: currentColor;
+}
+</style>
+<pre class='xr-text-repr-fallback'>&lt;xarray.DataArray &#x27;β&#x27; ()&gt;
+array(0.2778543)</pre>
+<div class="xr-wrap" hidden="">
+<div class="xr-header">
+<div class="xr-obj-type">
+xarray.DataArray
+</div>
+<div class="xr-array-name">
+‘β’
+</div>
+</div>
+<ul class="xr-sections">
+<li class="xr-section-item">
+<div class="xr-array-wrap">
+<input id='section-69092d20-7c6f-46c3-8847-e664ec3a81a7' class='xr-array-in' type='checkbox' checked><label for='section-69092d20-7c6f-46c3-8847-e664ec3a81a7' title='Show/hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label>
+<div class="xr-array-preview xr-preview">
+<span>0.2779</span>
+</div>
+<div class="xr-array-data">
+<pre>array(0.2778543)</pre>
+</div>
+</div>
+</li>
+<li class="xr-section-item">
+<input id='section-73723dad-4c5e-4277-8694-4d92cb81889f' class='xr-section-summary-in' type='checkbox' disabled ><label for='section-73723dad-4c5e-4277-8694-4d92cb81889f' class='xr-section-summary'  title='Expand/collapse section'>Coordinates: <span>(0)</span></label>
+<div class="xr-section-inline-details">
+
+</div>
+<div class="xr-section-details">
+<ul class="xr-var-list">
+</ul>
+</div>
+</li>
+<li class="xr-section-item">
+<input id='section-03993c06-d0ec-41f6-839b-7585a91b32a3' class='xr-section-summary-in' type='checkbox' disabled ><label for='section-03993c06-d0ec-41f6-839b-7585a91b32a3' class='xr-section-summary'  title='Expand/collapse section'>Attributes: <span>(0)</span></label>
+<div class="xr-section-inline-details">
+
+</div>
+<div class="xr-section-details">
+<dl class="xr-attrs">
+</dl>
+</div>
+</li>
+</ul>
+</div>
+</div>
+<p>The following plot shows the posterior distributions of the <span class="math inline">\(D - D_0 = 45\)</span> coefficients. Most of the distributions show a pronounced peak around zero, as we would expect for a sparse estimator.</p>
+<div class="sourceCode" id="cb31"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb31-1"><a href="#cb31-1" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plt.subplots(figsize<span class="op">=</span>(<span class="dv">8</span>, <span class="dv">6</span>))</span>
+<span id="cb31-2"><a href="#cb31-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb31-3"><a href="#cb31-3" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> i <span class="kw">in</span> <span class="bu">range</span>(D0, D):</span>
+<span id="cb31-4"><a href="#cb31-4" aria-hidden="true" tabindex="-1"></a>    ax.hist(trace[<span class="st">&quot;posterior&quot;</span>][<span class="st">&quot;β&quot;</span>][..., i].data.ravel(),</span>
+<span id="cb31-5"><a href="#cb31-5" aria-hidden="true" tabindex="-1"></a>            histtype<span class="op">=</span><span class="st">&#39;step&#39;</span>, bins<span class="op">=</span><span class="dv">100</span>,</span>
+<span id="cb31-6"><a href="#cb31-6" aria-hidden="true" tabindex="-1"></a>            color<span class="op">=</span><span class="st">&#39;C0&#39;</span>, alpha<span class="op">=</span><span class="fl">0.25</span>,)<span class="op">;</span></span>
+<span id="cb31-7"><a href="#cb31-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb31-8"><a href="#cb31-8" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="ss">f&quot;$</span><span class="ch">\\</span><span class="ss">beta_i$</span><span class="ch">\n</span><span class="ss">$i = </span><span class="sc">{</span>D0<span class="sc">}</span><span class="ss">,...,</span><span class="sc">{</span>D<span class="sc">}</span><span class="ss">$&quot;</span>)<span class="op">;</span></span>
+<span id="cb31-9"><a href="#cb31-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb31-10"><a href="#cb31-10" aria-hidden="true" tabindex="-1"></a>ax.set_yticks([])<span class="op">;</span></span>
+<span id="cb31-11"><a href="#cb31-11" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="st">&quot;Density&quot;</span>)<span class="op">;</span></span>
+<span id="cb31-12"><a href="#cb31-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb31-13"><a href="#cb31-13" aria-hidden="true" tabindex="-1"></a>ax.set_title(<span class="st">&quot;Posterior distributions&quot;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/horseshoe_files/horseshoe_48_0.png" title="fig:" alt="png" />
+</center>
+<p>And surely enough, all but one of the 95% high posterior density intervals for the coefficients that are actually zero contain zero.</p>
+<div class="sourceCode" id="cb32"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb32-1"><a href="#cb32-1" aria-hidden="true" tabindex="-1"></a>post_β_low, post_β_high <span class="op">=</span> trace[<span class="st">&quot;posterior&quot;</span>][<span class="st">&quot;β&quot;</span>][..., D0:].quantile([<span class="fl">0.025</span>, <span class="fl">0.975</span>], dim<span class="op">=</span>(<span class="st">&#39;chain&#39;</span>, <span class="st">&#39;draw&#39;</span>))</span>
+<span id="cb32-2"><a href="#cb32-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb32-3"><a href="#cb32-3" aria-hidden="true" tabindex="-1"></a>((post_β_low <span class="op">&lt;=</span> <span class="dv">0</span>) <span class="op">&amp;</span> (<span class="dv">0</span> <span class="op">&lt;=</span> post_β_high)).mean()</span></code></pre></div>
+<div>
+<svg style="position: absolute; width: 0; height: 0; overflow: hidden">
+<defs> <symbol id="icon-database" viewBox="0 0 32 32"> <path d="M16 0c-8.837 0-16 2.239-16 5v4c0 2.761 7.163 5 16 5s16-2.239 16-5v-4c0-2.761-7.163-5-16-5z"></path> <path d="M16 17c-8.837 0-16-2.239-16-5v6c0 2.761 7.163 5 16 5s16-2.239 16-5v-6c0 2.761-7.163 5-16 5z"></path> <path d="M16 26c-8.837 0-16-2.239-16-5v6c0 2.761 7.163 5 16 5s16-2.239 16-5v-6c0 2.761-7.163 5-16 5z"></path> </symbol> <symbol id="icon-file-text2" viewBox="0 0 32 32"> <path d="M28.681 7.159c-0.694-0.947-1.662-2.053-2.724-3.116s-2.169-2.030-3.116-2.724c-1.612-1.182-2.393-1.319-2.841-1.319h-15.5c-1.378 0-2.5 1.121-2.5 2.5v27c0 1.378 1.122 2.5 2.5 2.5h23c1.378 0 2.5-1.122 2.5-2.5v-19.5c0-0.448-0.137-1.23-1.319-2.841zM24.543 5.457c0.959 0.959 1.712 1.825 2.268 2.543h-4.811v-4.811c0.718 0.556 1.584 1.309 2.543 2.268zM28 29.5c0 0.271-0.229 0.5-0.5 0.5h-23c-0.271 0-0.5-0.229-0.5-0.5v-27c0-0.271 0.229-0.5 0.5-0.5 0 0 15.499-0 15.5 0v7c0 0.552 0.448 1 1 1h7v19.5z"></path> <path d="M23 26h-14c-0.552 0-1-0.448-1-1s0.448-1 1-1h14c0.552 0 1 0.448 1 1s-0.448 1-1 1z"></path> <path d="M23 22h-14c-0.552 0-1-0.448-1-1s0.448-1 1-1h14c0.552 0 1 0.448 1 1s-0.448 1-1 1z"></path> <path d="M23 18h-14c-0.552 0-1-0.448-1-1s0.448-1 1-1h14c0.552 0 1 0.448 1 1s-0.448 1-1 1z"></path> </symbol> </defs>
+</svg>
+<style>/* CSS stylesheet for displaying xarray objects in jupyterlab.
+ *
+ */
+
+:root {
+  --xr-font-color0: var(--jp-content-font-color0, rgba(0, 0, 0, 1));
+  --xr-font-color2: var(--jp-content-font-color2, rgba(0, 0, 0, 0.54));
+  --xr-font-color3: var(--jp-content-font-color3, rgba(0, 0, 0, 0.38));
+  --xr-border-color: var(--jp-border-color2, #e0e0e0);
+  --xr-disabled-color: var(--jp-layout-color3, #bdbdbd);
+  --xr-background-color: var(--jp-layout-color0, white);
+  --xr-background-color-row-even: var(--jp-layout-color1, white);
+  --xr-background-color-row-odd: var(--jp-layout-color2, #eeeeee);
+}
+
+html[theme=dark],
+body.vscode-dark {
+  --xr-font-color0: rgba(255, 255, 255, 1);
+  --xr-font-color2: rgba(255, 255, 255, 0.54);
+  --xr-font-color3: rgba(255, 255, 255, 0.38);
+  --xr-border-color: #1F1F1F;
+  --xr-disabled-color: #515151;
+  --xr-background-color: #111111;
+  --xr-background-color-row-even: #111111;
+  --xr-background-color-row-odd: #313131;
+}
+
+.xr-wrap {
+  display: block;
+  min-width: 300px;
+  max-width: 700px;
+}
+
+.xr-text-repr-fallback {
+  /* fallback to plain text repr when CSS is not injected (untrusted notebook) */
+  display: none;
+}
+
+.xr-header {
+  padding-top: 6px;
+  padding-bottom: 6px;
+  margin-bottom: 4px;
+  border-bottom: solid 1px var(--xr-border-color);
+}
+
+.xr-header > div,
+.xr-header > ul {
+  display: inline;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.xr-obj-type,
+.xr-array-name {
+  margin-left: 2px;
+  margin-right: 10px;
+}
+
+.xr-obj-type {
+  color: var(--xr-font-color2);
+}
+
+.xr-sections {
+  padding-left: 0 !important;
+  display: grid;
+  grid-template-columns: 150px auto auto 1fr 20px 20px;
+}
+
+.xr-section-item {
+  display: contents;
+}
+
+.xr-section-item input {
+  display: none;
+}
+
+.xr-section-item input + label {
+  color: var(--xr-disabled-color);
+}
+
+.xr-section-item input:enabled + label {
+  cursor: pointer;
+  color: var(--xr-font-color2);
+}
+
+.xr-section-item input:enabled + label:hover {
+  color: var(--xr-font-color0);
+}
+
+.xr-section-summary {
+  grid-column: 1;
+  color: var(--xr-font-color2);
+  font-weight: 500;
+}
+
+.xr-section-summary > span {
+  display: inline-block;
+  padding-left: 0.5em;
+}
+
+.xr-section-summary-in:disabled + label {
+  color: var(--xr-font-color2);
+}
+
+.xr-section-summary-in + label:before {
+  display: inline-block;
+  content: '►';
+  font-size: 11px;
+  width: 15px;
+  text-align: center;
+}
+
+.xr-section-summary-in:disabled + label:before {
+  color: var(--xr-disabled-color);
+}
+
+.xr-section-summary-in:checked + label:before {
+  content: '▼';
+}
+
+.xr-section-summary-in:checked + label > span {
+  display: none;
+}
+
+.xr-section-summary,
+.xr-section-inline-details {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+.xr-section-inline-details {
+  grid-column: 2 / -1;
+}
+
+.xr-section-details {
+  display: none;
+  grid-column: 1 / -1;
+  margin-bottom: 5px;
+}
+
+.xr-section-summary-in:checked ~ .xr-section-details {
+  display: contents;
+}
+
+.xr-array-wrap {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 20px auto;
+}
+
+.xr-array-wrap > label {
+  grid-column: 1;
+  vertical-align: top;
+}
+
+.xr-preview {
+  color: var(--xr-font-color3);
+}
+
+.xr-array-preview,
+.xr-array-data {
+  padding: 0 5px !important;
+  grid-column: 2;
+}
+
+.xr-array-data,
+.xr-array-in:checked ~ .xr-array-preview {
+  display: none;
+}
+
+.xr-array-in:checked ~ .xr-array-data,
+.xr-array-preview {
+  display: inline-block;
+}
+
+.xr-dim-list {
+  display: inline-block !important;
+  list-style: none;
+  padding: 0 !important;
+  margin: 0;
+}
+
+.xr-dim-list li {
+  display: inline-block;
+  padding: 0;
+  margin: 0;
+}
+
+.xr-dim-list:before {
+  content: '(';
+}
+
+.xr-dim-list:after {
+  content: ')';
+}
+
+.xr-dim-list li:not(:last-child):after {
+  content: ',';
+  padding-right: 5px;
+}
+
+.xr-has-index {
+  font-weight: bold;
+}
+
+.xr-var-list,
+.xr-var-item {
+  display: contents;
+}
+
+.xr-var-item > div,
+.xr-var-item label,
+.xr-var-item > .xr-var-name span {
+  background-color: var(--xr-background-color-row-even);
+  margin-bottom: 0;
+}
+
+.xr-var-item > .xr-var-name:hover span {
+  padding-right: 5px;
+}
+
+.xr-var-list > li:nth-child(odd) > div,
+.xr-var-list > li:nth-child(odd) > label,
+.xr-var-list > li:nth-child(odd) > .xr-var-name span {
+  background-color: var(--xr-background-color-row-odd);
+}
+
+.xr-var-name {
+  grid-column: 1;
+}
+
+.xr-var-dims {
+  grid-column: 2;
+}
+
+.xr-var-dtype {
+  grid-column: 3;
+  text-align: right;
+  color: var(--xr-font-color2);
+}
+
+.xr-var-preview {
+  grid-column: 4;
+}
+
+.xr-var-name,
+.xr-var-dims,
+.xr-var-dtype,
+.xr-preview,
+.xr-attrs dt {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-right: 10px;
+}
+
+.xr-var-name:hover,
+.xr-var-dims:hover,
+.xr-var-dtype:hover,
+.xr-attrs dt:hover {
+  overflow: visible;
+  width: auto;
+  z-index: 1;
+}
+
+.xr-var-attrs,
+.xr-var-data {
+  display: none;
+  background-color: var(--xr-background-color) !important;
+  padding-bottom: 5px !important;
+}
+
+.xr-var-attrs-in:checked ~ .xr-var-attrs,
+.xr-var-data-in:checked ~ .xr-var-data {
+  display: block;
+}
+
+.xr-var-data > table {
+  float: right;
+}
+
+.xr-var-name span,
+.xr-var-data,
+.xr-attrs {
+  padding-left: 25px !important;
+}
+
+.xr-attrs,
+.xr-var-attrs,
+.xr-var-data {
+  grid-column: 1 / -1;
+}
+
+dl.xr-attrs {
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: 125px auto;
+}
+
+.xr-attrs dt,
+.xr-attrs dd {
+  padding: 0;
+  margin: 0;
+  float: left;
+  padding-right: 10px;
+  width: auto;
+}
+
+.xr-attrs dt {
+  font-weight: normal;
+  grid-column: 1;
+}
+
+.xr-attrs dt:hover span {
+  display: inline-block;
+  background: var(--xr-background-color);
+  padding-right: 10px;
+}
+
+.xr-attrs dd {
+  grid-column: 2;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.xr-icon-database,
+.xr-icon-file-text2 {
+  display: inline-block;
+  vertical-align: middle;
+  width: 1em;
+  height: 1.5em !important;
+  stroke-width: 0;
+  stroke: currentColor;
+  fill: currentColor;
+}
+</style>
+<pre class='xr-text-repr-fallback'>&lt;xarray.DataArray &#x27;β&#x27; ()&gt;
+array(0.97777778)</pre>
+<div class="xr-wrap" hidden="">
+<div class="xr-header">
+<div class="xr-obj-type">
+xarray.DataArray
+</div>
+<div class="xr-array-name">
+‘β’
+</div>
+</div>
+<ul class="xr-sections">
+<li class="xr-section-item">
+<div class="xr-array-wrap">
+<input id='section-2b99fc40-1305-4580-bbea-8d7cff35ded0' class='xr-array-in' type='checkbox' checked><label for='section-2b99fc40-1305-4580-bbea-8d7cff35ded0' title='Show/hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label>
+<div class="xr-array-preview xr-preview">
+<span>0.9778</span>
+</div>
+<div class="xr-array-data">
+<pre>array(0.97777778)</pre>
+</div>
+</div>
+</li>
+<li class="xr-section-item">
+<input id='section-5b2d8178-0acf-402c-9407-8ddf7b0b0739' class='xr-section-summary-in' type='checkbox' disabled ><label for='section-5b2d8178-0acf-402c-9407-8ddf7b0b0739' class='xr-section-summary'  title='Expand/collapse section'>Coordinates: <span>(0)</span></label>
+<div class="xr-section-inline-details">
+
+</div>
+<div class="xr-section-details">
+<ul class="xr-var-list">
+</ul>
+</div>
+</li>
+<li class="xr-section-item">
+<input id='section-bdd78d8f-4da8-45e0-83cd-e77cd074bd7a' class='xr-section-summary-in' type='checkbox' disabled ><label for='section-bdd78d8f-4da8-45e0-83cd-e77cd074bd7a' class='xr-section-summary'  title='Expand/collapse section'>Attributes: <span>(0)</span></label>
+<div class="xr-section-inline-details">
+
+</div>
+<div class="xr-section-details">
+<dl class="xr-attrs">
+</dl>
+</div>
+</li>
+</ul>
+</div>
+</div>
+<p>This post is available as a Jupyter notebook <a href="https://nbviewer.jupyter.org/gist/AustinRochford/8838035ac87a080af3addbaf95f2a72f">here</a>.</p>
+<p>Many thanks to <a href="https://twitter.com/SueMarquezR">Sue Márquez</a> for pointing out that the original post spelled Aki’s name wrong, and sincere apologies to Aki.</p>
+<div class="sourceCode" id="cb33"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb33-1"><a href="#cb33-1" aria-hidden="true" tabindex="-1"></a><span class="op">%</span>load_ext watermark</span>
+<span id="cb33-2"><a href="#cb33-2" aria-hidden="true" tabindex="-1"></a><span class="op">%</span>watermark <span class="op">-</span>n <span class="op">-</span>u <span class="op">-</span>v <span class="op">-</span>iv</span></code></pre></div>
+<pre><code>Last updated: Sat May 29 2021
+
+Python implementation: CPython
+Python version       : 3.8.8
+IPython version      : 7.22.0
+
+matplotlib: 3.4.1
+arviz     : 0.11.2
+numpy     : 1.20.2
+pymc3     : 3.11.1
+aesara    : 2.0.6
+seaborn   : 0.11.1</code></pre>
+<section class="footnotes" role="doc-endnotes">
+<hr />
+<ol>
+<li id="fn1" role="doc-endnote"><p>Carvalho, C. M., Polson, N. G., &amp; Scott, J. G. (2009, April). Handling sparsity via the horseshoe. In <em>Artificial Intelligence and Statistics</em> (pp. 73-80). PMLR.<a href="#fnref1" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+<li id="fn2" role="doc-endnote"><p>Piironen, J., &amp; Vehtari, A. (2017). Sparsity information and regularization in the horseshoe and other shrinkage priors. <em>Electronic Journal of Statistics</em>, 11(2), 5018-5051.<a href="#fnref2" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+</ol>
+</section>

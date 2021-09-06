@@ -1,0 +1,182 @@
+<meta name="title" content="Robust Regression with t-Distributed Residuals" />
+<meta name="tags" content="Statistics, PyMC" />
+<meta name="date" content="2015-03-08" />
+<meta name="has_math" content="true" /><p>Ordinarly least squares (OLS) is, without a doubt, the most-well known linear regression model. Despite its wide applicability, it often gives undesireable results when the data deviate from its underlying normal model. In particular, it is quite sensitive to outliers in the data. In this post, we will illustrate this sensitivity and then show that changing the error distribution results in a more robust regression model.</p>
+<p>We will use one of the data sets from <a href="http://en.wikipedia.org/wiki/Anscombe%27s_quartet">Anscombe’s quartet</a> to illustrate these concepts. Anscombe’s quartet is a well-known group of four data sets that illustrates the importance of exploratory data analysis and visualization. In particular, we will use the third dataset from Anscombe’s quartet. This data set is shown below.</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> matplotlib <span class="im">import</span> pyplot <span class="im">as</span> plt</span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> numpy <span class="im">as</span> np</span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> pandas <span class="im">as</span> pd</span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> pymc3</span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> scipy <span class="im">import</span> stats</span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> seaborn <span class="im">as</span> sns</span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> statsmodels <span class="im">import</span> api <span class="im">as</span> sm</span></code></pre></div>
+<div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>x <span class="op">=</span> np.array([<span class="dv">10</span>, <span class="dv">8</span>, <span class="dv">13</span>, <span class="dv">9</span>, <span class="dv">11</span>, <span class="dv">14</span>, <span class="dv">6</span>, <span class="dv">4</span>, <span class="dv">12</span>, <span class="dv">7</span>, <span class="dv">5</span>])</span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>y <span class="op">=</span> np.array([<span class="fl">7.46</span>, <span class="fl">6.77</span>, <span class="fl">12.74</span>, <span class="fl">7.11</span>, <span class="fl">7.81</span>, <span class="fl">8.84</span>, <span class="fl">6.08</span>, <span class="fl">5.39</span>, <span class="fl">8.15</span>, <span class="fl">6.42</span>, <span class="fl">5.73</span>])</span></code></pre></div>
+<center>
+<img src="/resources/robust-regression/anscombe.png" title="fig:" alt="Data set from Anscombe’s quartet" />
+</center>
+<p>It is quite clear that this data set exhibits a highly linear relationship, with one outlier (when <code>x = 13</code>). Below, we show the results of two OLS models fit to this data. One is fit to all of the data, and the other is fit to the data with the outlier point removed.</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>X <span class="op">=</span> sm.add_constant(x)</span></code></pre></div>
+<div class="sourceCode" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>ols_result <span class="op">=</span> sm.OLS(y, X).fit()</span></code></pre></div>
+<div class="sourceCode" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>x_no_outlier <span class="op">=</span> x[x <span class="op">!=</span> <span class="dv">13</span>]</span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>X_no_outlier <span class="op">=</span> X[x <span class="op">!=</span> <span class="dv">13</span>]</span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>y_no_outlier <span class="op">=</span> y[x <span class="op">!=</span> <span class="dv">13</span>]</span></code></pre></div>
+<div class="sourceCode" id="cb6"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>no_outlier_result <span class="op">=</span> sm.OLS(y_no_outlier, X_no_outlier).fit()</span></code></pre></div>
+<center>
+<img src="/resources/robust-regression/ols_models.png" title="fig:" alt="OLS models" />
+</center>
+<p>One of the ways the OLS estimator can be derived is by minimizing the mean squared error (MSE) of the model on the training data. Below we show the MSE of both of these models on both the full data set and the data set without the outlier.</p>
+<div class="sourceCode" id="cb7"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> mse(actual, predicted):</span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> ((actual <span class="op">-</span> predicted)<span class="op">**</span><span class="dv">2</span>).mean()</span></code></pre></div>
+<div class="sourceCode" id="cb8"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>mse_df <span class="op">=</span> pd.DataFrame({</span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>                <span class="st">&#39;Full data set&#39;</span>: [</span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>                    mse(y, ols_result.predict(X)),</span>
+<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a>                    mse(y, no_outlier_result.predict(X))</span>
+<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a>                ],</span>
+<span id="cb8-6"><a href="#cb8-6" aria-hidden="true" tabindex="-1"></a>                <span class="st">&#39;Data set without outlier&#39;</span>: [</span>
+<span id="cb8-7"><a href="#cb8-7" aria-hidden="true" tabindex="-1"></a>                    mse(y_no_outlier, ols_result.predict(X_no_outlier)),</span>
+<span id="cb8-8"><a href="#cb8-8" aria-hidden="true" tabindex="-1"></a>                    mse(y_no_outlier, no_outlier_result.predict(X_no_outlier))</span>
+<span id="cb8-9"><a href="#cb8-9" aria-hidden="true" tabindex="-1"></a>                ]</span>
+<span id="cb8-10"><a href="#cb8-10" aria-hidden="true" tabindex="-1"></a>            },</span>
+<span id="cb8-11"><a href="#cb8-11" aria-hidden="true" tabindex="-1"></a>            index<span class="op">=</span>[<span class="st">&#39;Full model&#39;</span>, <span class="st">&#39;No outlier mdoel&#39;</span>]</span>
+<span id="cb8-12"><a href="#cb8-12" aria-hidden="true" tabindex="-1"></a>        )</span>
+<span id="cb8-13"><a href="#cb8-13" aria-hidden="true" tabindex="-1"></a>mse_df <span class="op">=</span> mse_df[mse_df.columns[::<span class="op">-</span><span class="dv">1</span>]]</span></code></pre></div>
+<div class="sourceCode" id="cb9"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a>mse_df</span></code></pre></div>
+<center>
+<table border="1">
+<thead>
+<tr style="text-align: right;">
+<th>
+</th>
+<th>
+Full data set
+</th>
+<th>
+Data set without outlier
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>
+Full model
+</th>
+<td>
+1.250563
+</td>
+<td>
+0.325152
+</td>
+</tr>
+<tr>
+<th>
+No outlier mdoel
+</th>
+<td>
+1.637640
+</td>
+<td>
+0.000008
+</td>
+</tr>
+</tbody>
+</table>
+</center>
+<p><br /> By simple visual inspection, we suspect that without the outlier (<code>x = 13</code>), the relationship between <code>x</code> and <code>y</code> is (almost) perfectly linear. This suspicion is confirmed by this model’s very small MSE on the reduced data set.</p>
+<h4 id="toward-robust-regression">Toward robust regression</h4>
+<p>Unfortunately, we will usually have many more than eleven points in our data set. In reality, the outliers may be more difficult to detect visually, and they may be harder to exclude manually. We would like a model that performs reasonably well, even in the presence of outliers.</p>
+<p>Before we define such a robust regression model, it will be helpful to consider the OLS model mathematically. In the OLS model, we have that</p>
+<p><span class="math display">\[y_i = \vec{\beta} \cdot \vec{x}_i + \varepsilon_i.\]</span></p>
+<p>Here, <span class="math inline">\(y_i\)</span> is the observation corresponding to the feature vector <span class="math inline">\(\vec{x}_i\)</span>, <span class="math inline">\(\vec{\beta}\)</span> is the vector of regression coefficients, and <span class="math inline">\(\varepsilon_i\)</span> is noise. In the OLS model, the noise terms are independent with identical normal distributions. It is the properties of these normally distributed errors that make OLS susceptible to outliers.</p>
+<p>The normal distribution is well-known to have <a href="http://en.wikipedia.org/wiki/Fat-tailed_distribution">thin tails</a>. That is, it assigns relatively little probability to observations far away from the mean. Students of basic statistics are quite familiar with the fact that approximately 95% of the mass of the normal distribution lies within two standard deviations of the mean.</p>
+<p>We find a robust regression model by choosing an error distribution with fatter tails; a common choice is <a href="https://www.google.com/webhp?sourceid=chrome-instant&amp;ion=1&amp;espv=2&amp;ie=UTF-8#q=student%27s%20t-distribution">Student’s t-distribution</a>.</p>
+<p>Below we define this model using <a href="https://github.com/pymc-devs/pymc3"><code>pymc3</code></a>.</p>
+<div class="sourceCode" id="cb10"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> pymc3.Model() <span class="im">as</span> model:</span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a>    <span class="co"># Regression coefficients</span></span>
+<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a>    alpha <span class="op">=</span> pymc3.Uniform(<span class="st">&#39;alpha&#39;</span>, <span class="op">-</span><span class="dv">100</span>, <span class="dv">100</span>)</span>
+<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a>    beta <span class="op">=</span> pymc3.Uniform(<span class="st">&#39;beta&#39;</span>, <span class="op">-</span><span class="dv">100</span>, <span class="dv">100</span>)</span>
+<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb10-6"><a href="#cb10-6" aria-hidden="true" tabindex="-1"></a>    <span class="co"># Expected value</span></span>
+<span id="cb10-7"><a href="#cb10-7" aria-hidden="true" tabindex="-1"></a>    y_hat <span class="op">=</span> alpha <span class="op">+</span> beta <span class="op">*</span> x</span>
+<span id="cb10-8"><a href="#cb10-8" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb10-9"><a href="#cb10-9" aria-hidden="true" tabindex="-1"></a>    <span class="co"># Observations with t-distributed error</span></span>
+<span id="cb10-10"><a href="#cb10-10" aria-hidden="true" tabindex="-1"></a>    y_obs <span class="op">=</span> pymc3.T(<span class="st">&#39;y_obs&#39;</span>, nu<span class="op">=</span><span class="dv">5</span>, mu<span class="op">=</span>y_hat, observed<span class="op">=</span>y)</span></code></pre></div>
+<p>Here we have given our t-distributed residuals five degrees of freedom. Customarily, these models will use <a href="http://en.wikipedia.org/wiki/Robust_regression#Parametric_alternatives">four, five, or six degrees of freedom</a>. It is important that the number of degrees of freedom, <span class="math inline">\(\nu\)</span>, be relatively small, because as <span class="math inline">\(\nu \to \infty\)</span>, the t-distribution converges to the normal distribution.</p>
+<p>We now fit this model using <a href="http://arxiv.org/abs/1111.4246">no-U-turn sampling</a>.</p>
+<div class="sourceCode" id="cb11"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> model:</span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a>    step <span class="op">=</span> pymc3.NUTS()</span>
+<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a>    trace_ <span class="op">=</span> pymc3.sample(<span class="dv">3000</span>, step)</span>
+<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb11-5"><a href="#cb11-5" aria-hidden="true" tabindex="-1"></a>burn <span class="op">=</span> <span class="dv">1000</span></span>
+<span id="cb11-6"><a href="#cb11-6" aria-hidden="true" tabindex="-1"></a>thin <span class="op">=</span> <span class="dv">2</span></span>
+<span id="cb11-7"><a href="#cb11-7" aria-hidden="true" tabindex="-1"></a>trace <span class="op">=</span> trace_[burn::thin]</span></code></pre></div>
+<pre><code> [-----------------100%-----------------] 3000 of 3000 complete in 8.7 sec</code></pre>
+<p>The following plots summarize the posterior distribution of the regression intercept (<span class="math inline">\(\alpha\)</span>) and slope (<span class="math inline">\(\beta\)</span>).</p>
+<center>
+<img src="/resources/robust-regression/mcmc.png" title="fig:" alt="MCMC summary" />
+</center>
+<p>We now plot the robust model along with the previous models.</p>
+<div class="sourceCode" id="cb13"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a>alpha <span class="op">=</span> trace[<span class="st">&#39;alpha&#39;</span>].mean()</span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a>beta <span class="op">=</span> trace[<span class="st">&#39;beta&#39;</span>].mean()</span></code></pre></div>
+<center>
+<img src="/resources/robust-regression/all_models.png" title="fig:" alt="All three models" />
+</center>
+<p>We see right away that, although the robust model has not completely captured the linear relationship between the non-outlier points, it is much less biased by the outlier than the OLS model on the full data set. Below we compare the MSE of this model to the previous models.</p>
+<div class="sourceCode" id="cb14"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a>robust_mse <span class="op">=</span> pd.Series([mse(y, alpha <span class="op">+</span> beta <span class="op">*</span> x), mse(y_no_outlier, alpha <span class="op">+</span> beta <span class="op">*</span> x_no_outlier)], index<span class="op">=</span>mse_df.columns)</span>
+<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a>robust_mse.name <span class="op">=</span> <span class="st">&#39;Robust model&#39;</span></span>
+<span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a>mse_df <span class="op">=</span> mse_df.append(robust_mse)</span></code></pre></div>
+<div class="sourceCode" id="cb15"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a>mse_df</span></code></pre></div>
+<center>
+<table border="1">
+<thead>
+<tr style="text-align: right;">
+<th>
+</th>
+<th>
+Full data set
+</th>
+<th>
+Data set without outlier
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>
+Full model
+</th>
+<td>
+1.250563
+</td>
+<td>
+0.325152
+</td>
+</tr>
+<tr>
+<th>
+No outlier mdoel
+</th>
+<td>
+1.637640
+</td>
+<td>
+0.000008
+</td>
+</tr>
+<tr>
+<th>
+Robust model
+</th>
+<td>
+1.432198
+</td>
+<td>
+0.032294
+</td>
+</tr>
+</tbody>
+</table>
+</center>
+<p><br /></p>
+<p>On the data set without the outlier, the robust model has a significantly larger MSE than the no outlier model, but, importantly, its MSE is an order of magnitude smaller than that of the full model.</p>
+<p>This post is available as an <a href="http://ipython.org">IPython</a> notebook <a href="http://nbviewer.ipython.org/gist/AustinRochford/50210506326e1cd73381">here</a>.</p>

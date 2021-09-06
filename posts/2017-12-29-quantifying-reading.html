@@ -1,0 +1,1469 @@
+<meta name="title" content="Quantifying Three Years of Reading" />
+<meta name="tags" content="Bayesian Statistics, PyMC3, Books, Personal" />
+<meta name="date" content="2017-12-29" />
+<meta name="has_math" content="true" /><style>
+.dataframe * {border-color: #c0c0c0 !important;}
+.dataframe th{background: #eee;}
+.dataframe td{
+    background: #fff;
+    text-align: right; 
+    min-width:5em;
+}
+
+/* Format summary rows */
+.dataframe-summary-row tr:last-child,
+.dataframe-summary-col td:last-child{
+background: #eee;
+    font-weight: 500;
+}
+</style>
+<p>Since December 2014, I have <a href="https://cdn.knightlab.com/libs/timeline3/latest/embed/index.html?source=1wNbJv1Zf4Oichj3-dEQXE_lXVCwuYQjaoyU1gGQQqk4&amp;font=Default&amp;lang=en&amp;start_at_end=true&amp;initial_zoom=2&amp;height=650">tracked</a> the books I read in a Google spreadsheet. It recently occurred to me to use this data to quantify how my reading habits have changed over time. This post will use <a href="https://github.com/pymc-devs/pymc3">PyMC3</a> to model my reading habits.</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="op">%</span>matplotlib inline</span></code></pre></div>
+<div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> itertools <span class="im">import</span> product</span></code></pre></div>
+<div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> matplotlib <span class="im">import</span> dates <span class="im">as</span> mdates</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> matplotlib <span class="im">import</span> pyplot <span class="im">as</span> plt</span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> numpy <span class="im">as</span> np</span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> pandas <span class="im">as</span> pd</span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> pymc3 <span class="im">as</span> pm</span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> scipy <span class="im">as</span> sp</span>
+<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> seaborn <span class="im">as</span> sns</span>
+<span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> theano <span class="im">import</span> shared, tensor <span class="im">as</span> tt</span></code></pre></div>
+<div class="sourceCode" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>sns.<span class="bu">set</span>()</span></code></pre></div>
+<div class="sourceCode" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>SEED <span class="op">=</span> <span class="dv">27432</span> <span class="co"># from random.org, for reproductibility</span></span></code></pre></div>
+<p>First we load the data from the Google Spreadsheet. Conveniently, <a href="https://github.com/pymc-devs/pymc3/pull/2766"><code>pandas</code></a> can load CSVs from a web link.</p>
+<div class="sourceCode" id="cb6"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>GDOC_URI <span class="op">=</span> <span class="st">&#39;https://docs.google.com/spreadsheets/d/1wNbJv1Zf4Oichj3-dEQXE_lXVCwuYQjaoyU1gGQQqk4/export?gid=0&amp;format=csv&#39;</span></span></code></pre></div>
+<div class="sourceCode" id="cb7"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a>raw_df <span class="op">=</span> (pd.read_csv(</span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a>                GDOC_URI,</span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>                usecols<span class="op">=</span>[</span>
+<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a>                    <span class="st">&#39;Year&#39;</span>, <span class="st">&#39;Month&#39;</span>, <span class="st">&#39;Day&#39;</span>,</span>
+<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a>                    <span class="st">&#39;End Year&#39;</span>, <span class="st">&#39;End Month&#39;</span>, <span class="st">&#39;End Day&#39;</span>,</span>
+<span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a>                    <span class="st">&#39;Headline&#39;</span>, <span class="st">&#39;Text&#39;</span></span>
+<span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a>                ]</span>
+<span id="cb7-8"><a href="#cb7-8" aria-hidden="true" tabindex="-1"></a>            )</span>
+<span id="cb7-9"><a href="#cb7-9" aria-hidden="true" tabindex="-1"></a>            .dropna(axis<span class="op">=</span><span class="dv">1</span>, how<span class="op">=</span><span class="st">&#39;all&#39;</span>)</span>
+<span id="cb7-10"><a href="#cb7-10" aria-hidden="true" tabindex="-1"></a>            .dropna(axis<span class="op">=</span><span class="dv">0</span>))</span></code></pre></div>
+<div class="sourceCode" id="cb8"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>raw_df.head()</span></code></pre></div>
+<div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<center>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th>
+</th>
+<th>
+Year
+</th>
+<th>
+Month
+</th>
+<th>
+Day
+</th>
+<th>
+End Year
+</th>
+<th>
+End Month
+</th>
+<th>
+End Day
+</th>
+<th>
+Headline
+</th>
+<th>
+Text
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>
+0
+</th>
+<td>
+2014
+</td>
+<td>
+12
+</td>
+<td>
+13
+</td>
+<td>
+2014.0
+</td>
+<td>
+12.0
+</td>
+<td>
+23.0
+</td>
+<td>
+The Bloody Chamber
+</td>
+<td>
+Angela Carter, 126 pages
+</td>
+</tr>
+<tr>
+<th>
+1
+</th>
+<td>
+2014
+</td>
+<td>
+12
+</td>
+<td>
+23
+</td>
+<td>
+2015.0
+</td>
+<td>
+1.0
+</td>
+<td>
+4.0
+</td>
+<td>
+The Last Place on Earth
+</td>
+<td>
+Roland Huntford, 564 pages
+</td>
+</tr>
+<tr>
+<th>
+2
+</th>
+<td>
+2015
+</td>
+<td>
+1
+</td>
+<td>
+24
+</td>
+<td>
+2015.0
+</td>
+<td>
+2.0
+</td>
+<td>
+13.0
+</td>
+<td>
+Empire Falls
+</td>
+<td>
+Richard Russo, 483 pages
+</td>
+</tr>
+<tr>
+<th>
+3
+</th>
+<td>
+2015
+</td>
+<td>
+2
+</td>
+<td>
+14
+</td>
+<td>
+2015.0
+</td>
+<td>
+2.0
+</td>
+<td>
+20.0
+</td>
+<td>
+Wonder Boys
+</td>
+<td>
+Michael Chabon, 368 pages
+</td>
+</tr>
+<tr>
+<th>
+4
+</th>
+<td>
+2015
+</td>
+<td>
+2
+</td>
+<td>
+25
+</td>
+<td>
+2015.0
+</td>
+<td>
+3.0
+</td>
+<td>
+4.0
+</td>
+<td>
+Red State, Blue State, Rich State, Poor State:…
+</td>
+<td>
+Andrew Gelman, 196 pages
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center>
+<div class="sourceCode" id="cb9"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a>raw_df.tail()</span></code></pre></div>
+<div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<center>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th>
+</th>
+<th>
+Year
+</th>
+<th>
+Month
+</th>
+<th>
+Day
+</th>
+<th>
+End Year
+</th>
+<th>
+End Month
+</th>
+<th>
+End Day
+</th>
+<th>
+Headline
+</th>
+<th>
+Text
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>
+58
+</th>
+<td>
+2017
+</td>
+<td>
+9
+</td>
+<td>
+16
+</td>
+<td>
+2017.0
+</td>
+<td>
+10.0
+</td>
+<td>
+14.0
+</td>
+<td>
+Civilization of the Middle Ages
+</td>
+<td>
+Norman F. Cantor, 566 pages
+</td>
+</tr>
+<tr>
+<th>
+59
+</th>
+<td>
+2017
+</td>
+<td>
+10
+</td>
+<td>
+14
+</td>
+<td>
+2017.0
+</td>
+<td>
+10.0
+</td>
+<td>
+16.0
+</td>
+<td>
+The Bloody Chamber
+</td>
+<td>
+Angela Carter, 126 pages
+</td>
+</tr>
+<tr>
+<th>
+60
+</th>
+<td>
+2017
+</td>
+<td>
+10
+</td>
+<td>
+16
+</td>
+<td>
+2017.0
+</td>
+<td>
+10.0
+</td>
+<td>
+27.0
+</td>
+<td>
+Big Data Baseball
+</td>
+<td>
+Travis Sawchik, 233 pages
+</td>
+</tr>
+<tr>
+<th>
+61
+</th>
+<td>
+2017
+</td>
+<td>
+10
+</td>
+<td>
+27
+</td>
+<td>
+2017.0
+</td>
+<td>
+12.0
+</td>
+<td>
+7.0
+</td>
+<td>
+The History of Statistics: The Measurement of …
+</td>
+<td>
+Stephen M. Stigler, 361 pages
+</td>
+</tr>
+<tr>
+<th>
+62
+</th>
+<td>
+2017
+</td>
+<td>
+12
+</td>
+<td>
+8
+</td>
+<td>
+2017.0
+</td>
+<td>
+12.0
+</td>
+<td>
+21.0
+</td>
+<td>
+An Arsonist’s Guide to Writers’ Homes in New E…
+</td>
+<td>
+Brock Clarke, 303 pages
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center>
+<p>The spreadhseet is formatted for use with <a href="https://knightlab.northwestern.edu/">Knight Lab’s</a> excellent <a href="https://timeline.knightlab.com/">TimelineJS</a> package. We transform the data to a more useful format for our purposes.</p>
+<div class="sourceCode" id="cb10"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a>df <span class="op">=</span> pd.DataFrame({</span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;start_date&#39;</span>: raw_df.<span class="bu">apply</span>(</span>
+<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a>        <span class="kw">lambda</span> s: pd.datetime(</span>
+<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a>            s[<span class="st">&#39;Year&#39;</span>],</span>
+<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a>            s[<span class="st">&#39;Month&#39;</span>],</span>
+<span id="cb10-6"><a href="#cb10-6" aria-hidden="true" tabindex="-1"></a>            s[<span class="st">&#39;Day&#39;</span>]</span>
+<span id="cb10-7"><a href="#cb10-7" aria-hidden="true" tabindex="-1"></a>        ),</span>
+<span id="cb10-8"><a href="#cb10-8" aria-hidden="true" tabindex="-1"></a>        axis<span class="op">=</span><span class="dv">1</span></span>
+<span id="cb10-9"><a href="#cb10-9" aria-hidden="true" tabindex="-1"></a>    ),</span>
+<span id="cb10-10"><a href="#cb10-10" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;end_date&#39;</span>: raw_df.<span class="bu">apply</span>(</span>
+<span id="cb10-11"><a href="#cb10-11" aria-hidden="true" tabindex="-1"></a>        <span class="kw">lambda</span> s: pd.datetime(</span>
+<span id="cb10-12"><a href="#cb10-12" aria-hidden="true" tabindex="-1"></a>            <span class="bu">int</span>(s[<span class="st">&#39;End Year&#39;</span>]),</span>
+<span id="cb10-13"><a href="#cb10-13" aria-hidden="true" tabindex="-1"></a>            <span class="bu">int</span>(s[<span class="st">&#39;End Month&#39;</span>]),</span>
+<span id="cb10-14"><a href="#cb10-14" aria-hidden="true" tabindex="-1"></a>            <span class="bu">int</span>(s[<span class="st">&#39;End Day&#39;</span>])</span>
+<span id="cb10-15"><a href="#cb10-15" aria-hidden="true" tabindex="-1"></a>        ),</span>
+<span id="cb10-16"><a href="#cb10-16" aria-hidden="true" tabindex="-1"></a>        axis<span class="op">=</span><span class="dv">1</span></span>
+<span id="cb10-17"><a href="#cb10-17" aria-hidden="true" tabindex="-1"></a>    ),</span>
+<span id="cb10-18"><a href="#cb10-18" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;title&#39;</span>: raw_df[<span class="st">&#39;Headline&#39;</span>],</span>
+<span id="cb10-19"><a href="#cb10-19" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;author&#39;</span>: (raw_df[<span class="st">&#39;Text&#39;</span>]</span>
+<span id="cb10-20"><a href="#cb10-20" aria-hidden="true" tabindex="-1"></a>                     .<span class="bu">str</span>.extract(<span class="st">&#39;(.*),.*&#39;</span>, expand<span class="op">=</span><span class="va">True</span>)</span>
+<span id="cb10-21"><a href="#cb10-21" aria-hidden="true" tabindex="-1"></a>                     .iloc[:, <span class="dv">0</span>]),</span>
+<span id="cb10-22"><a href="#cb10-22" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;pages&#39;</span>: (raw_df[<span class="st">&#39;Text&#39;</span>]</span>
+<span id="cb10-23"><a href="#cb10-23" aria-hidden="true" tabindex="-1"></a>                    .<span class="bu">str</span>.extract(<span class="vs">r&#39;.*, (\d+) pages&#39;</span>, expand<span class="op">=</span><span class="va">False</span>)</span>
+<span id="cb10-24"><a href="#cb10-24" aria-hidden="true" tabindex="-1"></a>                    .astype(np.int64))</span>
+<span id="cb10-25"><a href="#cb10-25" aria-hidden="true" tabindex="-1"></a>})</span>
+<span id="cb10-26"><a href="#cb10-26" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb10-27"><a href="#cb10-27" aria-hidden="true" tabindex="-1"></a>df[<span class="st">&#39;days&#39;</span>] <span class="op">=</span> (df[<span class="st">&#39;end_date&#39;</span>]</span>
+<span id="cb10-28"><a href="#cb10-28" aria-hidden="true" tabindex="-1"></a>                .sub(df[<span class="st">&#39;start_date&#39;</span>])</span>
+<span id="cb10-29"><a href="#cb10-29" aria-hidden="true" tabindex="-1"></a>                .dt.days)</span>
+<span id="cb10-30"><a href="#cb10-30" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb10-31"><a href="#cb10-31" aria-hidden="true" tabindex="-1"></a>df <span class="op">=</span> df[[</span>
+<span id="cb10-32"><a href="#cb10-32" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;author&#39;</span>, <span class="st">&#39;title&#39;</span>,</span>
+<span id="cb10-33"><a href="#cb10-33" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;start_date&#39;</span>, <span class="st">&#39;end_date&#39;</span>, <span class="st">&#39;days&#39;</span>,</span>
+<span id="cb10-34"><a href="#cb10-34" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;pages&#39;</span></span>
+<span id="cb10-35"><a href="#cb10-35" aria-hidden="true" tabindex="-1"></a>]]</span></code></pre></div>
+<p>Each row of the dataframe corresponds to a book I have read, and the columns are</p>
+<ul>
+<li><code>author</code>, the book’s author,</li>
+<li><code>title</code>, the book’s title,</li>
+<li><code>start_date</code>, the date I started reading the book,</li>
+<li><code>end_date</code>, the date I finished reading the book,</li>
+<li><code>days</code>, then number of days it took me to read the book, and</li>
+<li><code>pages</code>, the number of pages in the book.</li>
+</ul>
+<div class="sourceCode" id="cb11"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a>df.head()</span></code></pre></div>
+<div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<center>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th>
+</th>
+<th>
+author
+</th>
+<th>
+title
+</th>
+<th>
+start_date
+</th>
+<th>
+end_date
+</th>
+<th>
+days
+</th>
+<th>
+pages
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>
+0
+</th>
+<td>
+Angela Carter
+</td>
+<td>
+The Bloody Chamber
+</td>
+<td>
+2014-12-13
+</td>
+<td>
+2014-12-23
+</td>
+<td>
+10
+</td>
+<td>
+126
+</td>
+</tr>
+<tr>
+<th>
+1
+</th>
+<td>
+Roland Huntford
+</td>
+<td>
+The Last Place on Earth
+</td>
+<td>
+2014-12-23
+</td>
+<td>
+2015-01-04
+</td>
+<td>
+12
+</td>
+<td>
+564
+</td>
+</tr>
+<tr>
+<th>
+2
+</th>
+<td>
+Richard Russo
+</td>
+<td>
+Empire Falls
+</td>
+<td>
+2015-01-24
+</td>
+<td>
+2015-02-13
+</td>
+<td>
+20
+</td>
+<td>
+483
+</td>
+</tr>
+<tr>
+<th>
+3
+</th>
+<td>
+Michael Chabon
+</td>
+<td>
+Wonder Boys
+</td>
+<td>
+2015-02-14
+</td>
+<td>
+2015-02-20
+</td>
+<td>
+6
+</td>
+<td>
+368
+</td>
+</tr>
+<tr>
+<th>
+4
+</th>
+<td>
+Andrew Gelman
+</td>
+<td>
+Red State, Blue State, Rich State, Poor State:…
+</td>
+<td>
+2015-02-25
+</td>
+<td>
+2015-03-04
+</td>
+<td>
+7
+</td>
+<td>
+196
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center>
+<div class="sourceCode" id="cb12"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a>df.tail()</span></code></pre></div>
+<div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<center>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th>
+</th>
+<th>
+author
+</th>
+<th>
+title
+</th>
+<th>
+start_date
+</th>
+<th>
+end_date
+</th>
+<th>
+days
+</th>
+<th>
+pages
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>
+58
+</th>
+<td>
+Norman F. Cantor
+</td>
+<td>
+Civilization of the Middle Ages
+</td>
+<td>
+2017-09-16
+</td>
+<td>
+2017-10-14
+</td>
+<td>
+28
+</td>
+<td>
+566
+</td>
+</tr>
+<tr>
+<th>
+59
+</th>
+<td>
+Angela Carter
+</td>
+<td>
+The Bloody Chamber
+</td>
+<td>
+2017-10-14
+</td>
+<td>
+2017-10-16
+</td>
+<td>
+2
+</td>
+<td>
+126
+</td>
+</tr>
+<tr>
+<th>
+60
+</th>
+<td>
+Travis Sawchik
+</td>
+<td>
+Big Data Baseball
+</td>
+<td>
+2017-10-16
+</td>
+<td>
+2017-10-27
+</td>
+<td>
+11
+</td>
+<td>
+233
+</td>
+</tr>
+<tr>
+<th>
+61
+</th>
+<td>
+Stephen M. Stigler
+</td>
+<td>
+The History of Statistics: The Measurement of …
+</td>
+<td>
+2017-10-27
+</td>
+<td>
+2017-12-07
+</td>
+<td>
+41
+</td>
+<td>
+361
+</td>
+</tr>
+<tr>
+<th>
+62
+</th>
+<td>
+Brock Clarke
+</td>
+<td>
+An Arsonist’s Guide to Writers’ Homes in New E…
+</td>
+<td>
+2017-12-08
+</td>
+<td>
+2017-12-21
+</td>
+<td>
+13
+</td>
+<td>
+303
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center>
+<h2 id="modeling">Modeling</h2>
+<p>We will model the number of days it takes me to read a book using count regression models based on the number of pages. It would also be reasonable to analyze this data using <a href="https://en.wikipedia.org/wiki/Survival_analysis">survival models</a>.</p>
+<h3 id="negative-binomial-regression">Negative binomial regression</h3>
+<p>While <a href="https://en.wikipedia.org/wiki/Poisson_regression">Poisson regression</a> is perhaps the simplest count regression model, we see that these data are fairly <a href="https://en.wikipedia.org/wiki/Index_of_dispersion">overdispersed</a></p>
+<div class="sourceCode" id="cb13"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a>df[<span class="st">&#39;days&#39;</span>].var() <span class="op">/</span> df[<span class="st">&#39;days&#39;</span>].mean()</span></code></pre></div>
+<pre><code>14.466643655077199</code></pre>
+<p>so <a href="http://www.karlin.mff.cuni.cz/~pesta/NMFM404/NB.html">negative binomial regression</a> is more appropriate. We further verify that negative binomial regression is appropriate by plotting the logarithm of the number of pages versus the logarithm of the number of days it took me to read the book, since the logarithm is the <a href="https://en.wikipedia.org/wiki/Generalized_linear_model#Link_function">link function</a> for the negative binomial GLM.</p>
+<div class="sourceCode" id="cb15"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plt.subplots(figsize<span class="op">=</span>(<span class="dv">8</span>, <span class="dv">6</span>))</span>
+<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a>df.plot(</span>
+<span id="cb15-4"><a href="#cb15-4" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;pages&#39;</span>, <span class="st">&#39;days&#39;</span>,</span>
+<span id="cb15-5"><a href="#cb15-5" aria-hidden="true" tabindex="-1"></a>    s<span class="op">=</span><span class="dv">40</span>, kind<span class="op">=</span><span class="st">&#39;scatter&#39;</span>,</span>
+<span id="cb15-6"><a href="#cb15-6" aria-hidden="true" tabindex="-1"></a>    ax<span class="op">=</span>ax</span>
+<span id="cb15-7"><a href="#cb15-7" aria-hidden="true" tabindex="-1"></a>)<span class="op">;</span></span>
+<span id="cb15-8"><a href="#cb15-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb15-9"><a href="#cb15-9" aria-hidden="true" tabindex="-1"></a>ax.set_xscale(<span class="st">&#39;log&#39;</span>)<span class="op">;</span></span>
+<span id="cb15-10"><a href="#cb15-10" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="st">&quot;Number of pages&quot;</span>)<span class="op">;</span></span>
+<span id="cb15-11"><a href="#cb15-11" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb15-12"><a href="#cb15-12" aria-hidden="true" tabindex="-1"></a>ax.set_yscale(<span class="st">&#39;log&#39;</span>)<span class="op">;</span></span>
+<span id="cb15-13"><a href="#cb15-13" aria-hidden="true" tabindex="-1"></a>ax.set_ylim(top<span class="op">=</span><span class="fl">1.1e2</span>)<span class="op">;</span></span>
+<span id="cb15-14"><a href="#cb15-14" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="st">&quot;Number of days to read&quot;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/quantifying_reading/Quantifying%20Three%20Years%20of%20Reading_22_0.png" title="fig:" alt="png" />
+</center>
+<p>This approximately linear relationship confirms the suitability of a negative binomial model.</p>
+<p>Now we introduce some notation. Let <span class="math inline">\(y_i\)</span> be the number of days it took me to read the <span class="math inline">\(i\)</span>-th book and <span class="math inline">\(x^{\textrm{pages}}_i\)</span> be the (standardized) logarithm of the number of pages in the <span class="math inline">\(i\)</span>-th book. Our first model is</p>
+<p><span class="math display">\[
+\begin{align*}
+    \beta^0, \beta^{\textrm{pages}}
+        &amp; \sim N(0, 5^2) \\
+    \theta_i
+        &amp; \sim \beta^0 + \beta^{\textrm{pages}} \cdot x^{\textrm{pages}}_i \\
+    \mu_i
+        &amp; = \exp({\theta_i}) \\
+    \alpha
+        &amp; \sim \operatorname{Lognormal}(0, 5^2) \\
+    y_i - 1
+        &amp; \sim \operatorname{NegativeBinomial}(\mu_i, \alpha).
+\end{align*}
+\]</span></p>
+<p>This model is expressed in PyMC3 below.</p>
+<div class="sourceCode" id="cb16"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a>days <span class="op">=</span> df[<span class="st">&#39;days&#39;</span>].values</span>
+<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a>pages <span class="op">=</span> df[<span class="st">&#39;pages&#39;</span>].values</span>
+<span id="cb16-4"><a href="#cb16-4" aria-hidden="true" tabindex="-1"></a>pages_ <span class="op">=</span> shared(pages)</span></code></pre></div>
+<div class="sourceCode" id="cb17"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> pm.Model() <span class="im">as</span> nb_model:</span>
+<span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a>    β<span class="dv">0</span> <span class="op">=</span> pm.Normal(<span class="st">&#39;β0&#39;</span>, <span class="fl">0.</span>, <span class="fl">5.</span>)</span>
+<span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a>    β_pages <span class="op">=</span> pm.Normal(<span class="st">&#39;β_pages&#39;</span>, <span class="fl">0.</span>, <span class="fl">5.</span>)</span>
+<span id="cb17-4"><a href="#cb17-4" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb17-5"><a href="#cb17-5" aria-hidden="true" tabindex="-1"></a>    log_pages <span class="op">=</span> tt.log(pages_)</span>
+<span id="cb17-6"><a href="#cb17-6" aria-hidden="true" tabindex="-1"></a>    log_pages_std <span class="op">=</span> (log_pages <span class="op">-</span> log_pages.mean()) <span class="op">/</span> log_pages.std()</span>
+<span id="cb17-7"><a href="#cb17-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb17-8"><a href="#cb17-8" aria-hidden="true" tabindex="-1"></a>    θ <span class="op">=</span> β<span class="dv">0</span> <span class="op">+</span> β_pages <span class="op">*</span> log_pages_std</span>
+<span id="cb17-9"><a href="#cb17-9" aria-hidden="true" tabindex="-1"></a>    μ <span class="op">=</span> tt.exp(θ)</span>
+<span id="cb17-10"><a href="#cb17-10" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb17-11"><a href="#cb17-11" aria-hidden="true" tabindex="-1"></a>    α <span class="op">=</span> pm.Lognormal(<span class="st">&#39;α&#39;</span>, <span class="fl">0.</span>, <span class="fl">5.</span>)</span>
+<span id="cb17-12"><a href="#cb17-12" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb17-13"><a href="#cb17-13" aria-hidden="true" tabindex="-1"></a>    days_obs <span class="op">=</span> pm.NegativeBinomial(<span class="st">&#39;days_obs&#39;</span>, μ, α, observed<span class="op">=</span>days <span class="op">-</span> <span class="dv">1</span>)</span></code></pre></div>
+<p>We now sample from the model’s posterior distribution.</p>
+<div class="sourceCode" id="cb18"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a>NJOBS <span class="op">=</span> <span class="dv">3</span></span>
+<span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a>SAMPLE_KWARGS <span class="op">=</span> {</span>
+<span id="cb18-3"><a href="#cb18-3" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;njobs&#39;</span>: NJOBS,</span>
+<span id="cb18-4"><a href="#cb18-4" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;random_seed&#39;</span>: [SEED <span class="op">+</span> i <span class="cf">for</span> i <span class="kw">in</span> <span class="bu">range</span>(NJOBS)]</span>
+<span id="cb18-5"><a href="#cb18-5" aria-hidden="true" tabindex="-1"></a>}</span></code></pre></div>
+<div class="sourceCode" id="cb19"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> nb_model:</span>
+<span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a>    nb_trace <span class="op">=</span> pm.sample(<span class="op">**</span>SAMPLE_KWARGS)</span></code></pre></div>
+<pre><code>Auto-assigning NUTS sampler...
+Initializing NUTS using jitter+adapt_diag...
+Multiprocess sampling (3 chains in 3 jobs)
+NUTS: [α_log__, β_pages, β0]
+100%|██████████| 1000/1000 [00:05&lt;00:00, 190.41it/s]</code></pre>
+<p>We check a few convergence diagnostics. The BFMI and energy distributions for our samples show no cause for concern.</p>
+<div class="sourceCode" id="cb21"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a>ax <span class="op">=</span> pm.energyplot(nb_trace)</span>
+<span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a>bfmi <span class="op">=</span> pm.bfmi(nb_trace)</span>
+<span id="cb21-4"><a href="#cb21-4" aria-hidden="true" tabindex="-1"></a>ax.set_title(<span class="ss">f&quot;BFMI = </span><span class="sc">{</span>bfmi<span class="sc">:.2f}</span><span class="ss">&quot;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/quantifying_reading/Quantifying%20Three%20Years%20of%20Reading_30_0.png" title="fig:" alt="png" />
+</center>
+<p>The Gelman-Rubin statistics indicate that the chains have converged.</p>
+<div class="sourceCode" id="cb22"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb22-1"><a href="#cb22-1" aria-hidden="true" tabindex="-1"></a><span class="bu">max</span>(np.<span class="bu">max</span>(gr_stats) <span class="cf">for</span> gr_stats <span class="kw">in</span> pm.gelman_rubin(nb_trace).values())</span></code></pre></div>
+<pre><code>1.0003248725601743</code></pre>
+<p>We use the posterior samples to make predictions so that we can examine residuals.</p>
+<div class="sourceCode" id="cb24"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> nb_model:</span>
+<span id="cb24-2"><a href="#cb24-2" aria-hidden="true" tabindex="-1"></a>    nb_pred_trace <span class="op">=</span> pm.sample_ppc(nb_trace)</span>
+<span id="cb24-3"><a href="#cb24-3" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb24-4"><a href="#cb24-4" aria-hidden="true" tabindex="-1"></a>nb_pred_days <span class="op">=</span> nb_pred_trace[<span class="st">&#39;days_obs&#39;</span>].mean(axis<span class="op">=</span><span class="dv">0</span>)</span></code></pre></div>
+<pre><code>100%|██████████| 500/500 [00:00&lt;00:00, 1114.32it/s]</code></pre>
+<p>Since the mean and variance of the negative binomial distribution are <a href="https://en.wikipedia.org/wiki/Negative_binomial_distribution">related</a>, we use standardized residuals to untangle this relationship.</p>
+<div class="sourceCode" id="cb26"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb26-1"><a href="#cb26-1" aria-hidden="true" tabindex="-1"></a>nb_std_resid <span class="op">=</span> (days <span class="op">-</span> nb_pred_days) <span class="op">/</span> nb_pred_trace[<span class="st">&#39;days_obs&#39;</span>].std(axis<span class="op">=</span><span class="dv">0</span>)</span></code></pre></div>
+<p>We visualize these standardized residuals below.</p>
+<div class="sourceCode" id="cb27"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plt.subplots(figsize<span class="op">=</span>(<span class="dv">8</span>, <span class="dv">6</span>))</span>
+<span id="cb27-2"><a href="#cb27-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb27-3"><a href="#cb27-3" aria-hidden="true" tabindex="-1"></a>ax.scatter(nb_pred_days, nb_std_resid)<span class="op">;</span></span>
+<span id="cb27-4"><a href="#cb27-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb27-5"><a href="#cb27-5" aria-hidden="true" tabindex="-1"></a>ax.hlines(</span>
+<span id="cb27-6"><a href="#cb27-6" aria-hidden="true" tabindex="-1"></a>    sp.stats.norm.isf([<span class="fl">0.975</span>, <span class="fl">0.025</span>]),</span>
+<span id="cb27-7"><a href="#cb27-7" aria-hidden="true" tabindex="-1"></a>    <span class="dv">0</span>, <span class="dv">75</span>,</span>
+<span id="cb27-8"><a href="#cb27-8" aria-hidden="true" tabindex="-1"></a>    linestyles<span class="op">=</span><span class="st">&#39;--&#39;</span>, label<span class="op">=</span><span class="st">&quot;95</span><span class="sc">% c</span><span class="st">onfidence band&quot;</span></span>
+<span id="cb27-9"><a href="#cb27-9" aria-hidden="true" tabindex="-1"></a>)<span class="op">;</span></span>
+<span id="cb27-10"><a href="#cb27-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb27-11"><a href="#cb27-11" aria-hidden="true" tabindex="-1"></a>ax.set_xlim(<span class="dv">0</span>, <span class="dv">75</span>)<span class="op">;</span></span>
+<span id="cb27-12"><a href="#cb27-12" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="st">&quot;Predicted number of days to read&quot;</span>)<span class="op">;</span></span>
+<span id="cb27-13"><a href="#cb27-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb27-14"><a href="#cb27-14" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="st">&quot;Standardized residual&quot;</span>)<span class="op">;</span></span>
+<span id="cb27-15"><a href="#cb27-15" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb27-16"><a href="#cb27-16" aria-hidden="true" tabindex="-1"></a>ax.legend(loc<span class="op">=</span><span class="dv">1</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/quantifying_reading/Quantifying%20Three%20Years%20of%20Reading_38_0.png" title="fig:" alt="png" />
+</center>
+<p>If the model is correct, approximately 95% of the residuals should lie between the dotted horizontal lines, and indeed most residuals are in this band.</p>
+<p>We also plot the standardized residuals against the number of pages in the book, and notice no troubling patterns.</p>
+<div class="sourceCode" id="cb28"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plt.subplots(figsize<span class="op">=</span>(<span class="dv">8</span>, <span class="dv">6</span>))</span>
+<span id="cb28-2"><a href="#cb28-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb28-3"><a href="#cb28-3" aria-hidden="true" tabindex="-1"></a>ax.scatter(df[<span class="st">&#39;pages&#39;</span>], nb_std_resid)<span class="op">;</span></span>
+<span id="cb28-4"><a href="#cb28-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb28-5"><a href="#cb28-5" aria-hidden="true" tabindex="-1"></a>ax.hlines(</span>
+<span id="cb28-6"><a href="#cb28-6" aria-hidden="true" tabindex="-1"></a>    sp.stats.norm.isf([<span class="fl">0.975</span>, <span class="fl">0.025</span>]),</span>
+<span id="cb28-7"><a href="#cb28-7" aria-hidden="true" tabindex="-1"></a>    <span class="dv">0</span>, <span class="dv">900</span>,</span>
+<span id="cb28-8"><a href="#cb28-8" aria-hidden="true" tabindex="-1"></a>    linestyles<span class="op">=</span><span class="st">&#39;--&#39;</span>, label<span class="op">=</span><span class="st">&quot;95</span><span class="sc">% c</span><span class="st">onfidence band&quot;</span></span>
+<span id="cb28-9"><a href="#cb28-9" aria-hidden="true" tabindex="-1"></a>)<span class="op">;</span></span>
+<span id="cb28-10"><a href="#cb28-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb28-11"><a href="#cb28-11" aria-hidden="true" tabindex="-1"></a>ax.set_xlim(<span class="dv">0</span>, <span class="dv">900</span>)<span class="op">;</span></span>
+<span id="cb28-12"><a href="#cb28-12" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="st">&quot;Number of pages&quot;</span>)<span class="op">;</span></span>
+<span id="cb28-13"><a href="#cb28-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb28-14"><a href="#cb28-14" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="st">&quot;Standardized residual&quot;</span>)<span class="op">;</span></span>
+<span id="cb28-15"><a href="#cb28-15" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb28-16"><a href="#cb28-16" aria-hidden="true" tabindex="-1"></a>ax.legend(loc<span class="op">=</span><span class="dv">1</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/quantifying_reading/Quantifying%20Three%20Years%20of%20Reading_40_0.png" title="fig:" alt="png" />
+</center>
+<p>We now examine this model’s predictions directly by sampling from the posterior predictive distribution.</p>
+<div class="sourceCode" id="cb29"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb29-1"><a href="#cb29-1" aria-hidden="true" tabindex="-1"></a>PP_PAGES <span class="op">=</span> np.linspace(<span class="dv">1</span>, <span class="dv">1000</span>, <span class="dv">300</span>, dtype<span class="op">=</span>np.int64)</span>
+<span id="cb29-2"><a href="#cb29-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb29-3"><a href="#cb29-3" aria-hidden="true" tabindex="-1"></a>pages_.set_value(PP_PAGES)</span>
+<span id="cb29-4"><a href="#cb29-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb29-5"><a href="#cb29-5" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> nb_model:</span>
+<span id="cb29-6"><a href="#cb29-6" aria-hidden="true" tabindex="-1"></a>    pp_nb_trace <span class="op">=</span> pm.sample_ppc(nb_trace, samples<span class="op">=</span><span class="dv">5000</span>)</span></code></pre></div>
+<pre><code>100%|██████████| 5000/5000 [00:06&lt;00:00, 825.67it/s] </code></pre>
+<div class="sourceCode" id="cb31"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb31-1"><a href="#cb31-1" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plt.subplots(figsize<span class="op">=</span>(<span class="dv">8</span>, <span class="dv">6</span>))</span>
+<span id="cb31-2"><a href="#cb31-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb31-3"><a href="#cb31-3" aria-hidden="true" tabindex="-1"></a>ALPHA <span class="op">=</span> <span class="fl">0.05</span></span>
+<span id="cb31-4"><a href="#cb31-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb31-5"><a href="#cb31-5" aria-hidden="true" tabindex="-1"></a>low, high <span class="op">=</span> np.percentile(</span>
+<span id="cb31-6"><a href="#cb31-6" aria-hidden="true" tabindex="-1"></a>    pp_nb_trace[<span class="st">&#39;days_obs&#39;</span>],</span>
+<span id="cb31-7"><a href="#cb31-7" aria-hidden="true" tabindex="-1"></a>    [<span class="dv">100</span> <span class="op">*</span> ALPHA <span class="op">/</span> <span class="dv">2</span>, <span class="dv">100</span> <span class="op">*</span> (<span class="dv">1</span> <span class="op">-</span> ALPHA <span class="op">/</span> <span class="dv">2</span>)],</span>
+<span id="cb31-8"><a href="#cb31-8" aria-hidden="true" tabindex="-1"></a>    axis<span class="op">=</span><span class="dv">0</span></span>
+<span id="cb31-9"><a href="#cb31-9" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb31-10"><a href="#cb31-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb31-11"><a href="#cb31-11" aria-hidden="true" tabindex="-1"></a>ax.fill_between(</span>
+<span id="cb31-12"><a href="#cb31-12" aria-hidden="true" tabindex="-1"></a>    PP_PAGES, low, high,</span>
+<span id="cb31-13"><a href="#cb31-13" aria-hidden="true" tabindex="-1"></a>    alpha<span class="op">=</span><span class="fl">0.35</span>,</span>
+<span id="cb31-14"><a href="#cb31-14" aria-hidden="true" tabindex="-1"></a>    label<span class="op">=</span><span class="ss">f&quot;</span><span class="sc">{</span><span class="dv">1</span> <span class="op">-</span> ALPHA<span class="sc">:.0%}</span><span class="ss"> credible interval&quot;</span></span>
+<span id="cb31-15"><a href="#cb31-15" aria-hidden="true" tabindex="-1"></a>)<span class="op">;</span></span>
+<span id="cb31-16"><a href="#cb31-16" aria-hidden="true" tabindex="-1"></a>ax.plot(</span>
+<span id="cb31-17"><a href="#cb31-17" aria-hidden="true" tabindex="-1"></a>    PP_PAGES, pp_nb_trace[<span class="st">&#39;days_obs&#39;</span>].mean(axis<span class="op">=</span><span class="dv">0</span>),</span>
+<span id="cb31-18"><a href="#cb31-18" aria-hidden="true" tabindex="-1"></a>    label<span class="op">=</span><span class="st">&quot;Posterior expected value&quot;</span></span>
+<span id="cb31-19"><a href="#cb31-19" aria-hidden="true" tabindex="-1"></a>)<span class="op">;</span></span>
+<span id="cb31-20"><a href="#cb31-20" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb31-21"><a href="#cb31-21" aria-hidden="true" tabindex="-1"></a>df.plot(</span>
+<span id="cb31-22"><a href="#cb31-22" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;pages&#39;</span>, <span class="st">&#39;days&#39;</span>,</span>
+<span id="cb31-23"><a href="#cb31-23" aria-hidden="true" tabindex="-1"></a>    s<span class="op">=</span><span class="dv">40</span>, c<span class="op">=</span><span class="st">&#39;k&#39;</span>,</span>
+<span id="cb31-24"><a href="#cb31-24" aria-hidden="true" tabindex="-1"></a>    kind<span class="op">=</span><span class="st">&#39;scatter&#39;</span>,</span>
+<span id="cb31-25"><a href="#cb31-25" aria-hidden="true" tabindex="-1"></a>    label<span class="op">=</span><span class="st">&quot;Observed&quot;</span>,</span>
+<span id="cb31-26"><a href="#cb31-26" aria-hidden="true" tabindex="-1"></a>    ax<span class="op">=</span>ax</span>
+<span id="cb31-27"><a href="#cb31-27" aria-hidden="true" tabindex="-1"></a>)<span class="op">;</span></span>
+<span id="cb31-28"><a href="#cb31-28" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb31-29"><a href="#cb31-29" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="st">&quot;Number of pages&quot;</span>)<span class="op">;</span></span>
+<span id="cb31-30"><a href="#cb31-30" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="st">&quot;Number of days to read&quot;</span>)<span class="op">;</span></span>
+<span id="cb31-31"><a href="#cb31-31" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb31-32"><a href="#cb31-32" aria-hidden="true" tabindex="-1"></a>ax.legend(loc<span class="op">=</span><span class="dv">2</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/quantifying_reading/Quantifying%20Three%20Years%20of%20Reading_43_0.png" title="fig:" alt="png" />
+</center>
+<p>We see that most of the obserations fall within the 95% credible interval. An important feature of negative binomial regression is that the credible intervals expand as the predictions get larger. This feature is reflected in the fact that the predictions are less accurate for longer books.</p>
+<h3 id="book-effects">Book effects</h3>
+<p>One advantage to working with such a personal data set is that I can explain the factors that led to certain outliers. Below are the four books that I read at the slowest average rate of pages per day.</p>
+<div class="sourceCode" id="cb32"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb32-1"><a href="#cb32-1" aria-hidden="true" tabindex="-1"></a>(df.assign(pages_per_day<span class="op">=</span>df[<span class="st">&#39;pages&#39;</span>] <span class="op">/</span> df[<span class="st">&#39;days&#39;</span>])</span>
+<span id="cb32-2"><a href="#cb32-2" aria-hidden="true" tabindex="-1"></a>   .nsmallest(<span class="dv">4</span>, <span class="st">&#39;pages_per_day&#39;</span>)</span>
+<span id="cb32-3"><a href="#cb32-3" aria-hidden="true" tabindex="-1"></a>   [[<span class="st">&#39;title&#39;</span>, <span class="st">&#39;author&#39;</span>, <span class="st">&#39;start_date&#39;</span>, <span class="st">&#39;pages_per_day&#39;</span>]])</span></code></pre></div>
+<div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<center>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th>
+</th>
+<th>
+title
+</th>
+<th>
+author
+</th>
+<th>
+start_date
+</th>
+<th>
+pages_per_day
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>
+41
+</th>
+<td>
+The Handmaid’s Tale
+</td>
+<td>
+Margaret Atwood
+</td>
+<td>
+2016-10-16
+</td>
+<td>
+4.382353
+</td>
+</tr>
+<tr>
+<th>
+48
+</th>
+<td>
+The Shadow of the Torturer
+</td>
+<td>
+Gene Wolf
+</td>
+<td>
+2017-03-11
+</td>
+<td>
+7.046512
+</td>
+</tr>
+<tr>
+<th>
+24
+</th>
+<td>
+The Song of the Lark
+</td>
+<td>
+Willa Cather
+</td>
+<td>
+2016-02-14
+</td>
+<td>
+7.446429
+</td>
+</tr>
+<tr>
+<th>
+61
+</th>
+<td>
+The History of Statistics: The Measurement of …
+</td>
+<td>
+Stephen M. Stigler
+</td>
+<td>
+2017-10-27
+</td>
+<td>
+8.804878
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center>
+<p>Several of these books make sense; I found <a href="https://en.wikipedia.org/wiki/The_Shadow_of_the_Torturer"><em>The Shadow of the Torturer</em></a> to be an unpleasant slog and <a href="http://www.hup.harvard.edu/catalog.php?isbn=9780674403413"><em>The History of Statistics</em></a> was quite technical and dense. On the other hand, <a href="https://en.wikipedia.org/wiki/The_Handmaid%27s_Tale"><em>The Handmaid’s Tale</em></a> and <a href="https://en.wikipedia.org/wiki/The_Song_of_the_Lark"><em>The Song of the Lark</em></a> were both quite enjoyable, but my time reading them coincided with other notable life events. I was reading <em>The Handmaid’s Tale</em> when certain unfortunate American political developments distracted me for several weeks in November 2016, and I was reading <em>The Song of the Lark</em> when a family member passed away in March 2016.</p>
+<p>We modify the negative binomial regression model to include special factors for <em>The Handmaid’s Tale</em> and <em>The Song of the Lark</em>, in order to mitigate the influence of these unusual circumstances on our parameter estimates.</p>
+<p>We let</p>
+<p><span class="math display">\[
+x^{\textrm{handmaid}}_i = \begin{cases}
+    1 &amp; \textrm{if the } i\textrm{-th book is }\textit{The Handmaid&#39;s Tale} \\
+    0 &amp; \textrm{if the } i\textrm{-th book is not }\textit{The Handmaid&#39;s Tale}
+\end{cases},
+\]</span></p>
+<p>and similarly for <span class="math inline">\(x^{\textrm{lark}}_i\)</span>. We add the terms</p>
+<p><span class="math display">\[
+\begin{align*}
+    \beta^{\textrm{handmaid}}, \beta^{\textrm{lark}}
+        &amp; \sim N(0, 5^2) \\
+    \beta^{\textrm{book}}_i
+        &amp; = \beta^{\textrm{handmaid}} \cdot x^{\textrm{handmaid}}_i + \beta^{\textrm{lark}} \cdot x^{\textrm{lark}}_i \\
+    \theta_i
+        &amp; \sim \beta_0 + \beta^{\textrm{book}}_i + \beta^{\textrm{pages}} \cdot x^{\textrm{pages}}_i
+\end{align*}
+\]</span></p>
+<p>to the model below.</p>
+<div class="sourceCode" id="cb33"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb33-1"><a href="#cb33-1" aria-hidden="true" tabindex="-1"></a>is_lark <span class="op">=</span> (df[<span class="st">&#39;title&#39;</span>]</span>
+<span id="cb33-2"><a href="#cb33-2" aria-hidden="true" tabindex="-1"></a>             .eq(<span class="st">&quot;The Song of the Lark&quot;</span>)</span>
+<span id="cb33-3"><a href="#cb33-3" aria-hidden="true" tabindex="-1"></a>             .mul(<span class="fl">1.</span>)</span>
+<span id="cb33-4"><a href="#cb33-4" aria-hidden="true" tabindex="-1"></a>             .values)</span>
+<span id="cb33-5"><a href="#cb33-5" aria-hidden="true" tabindex="-1"></a>is_lark_ <span class="op">=</span> shared(is_lark)</span>
+<span id="cb33-6"><a href="#cb33-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb33-7"><a href="#cb33-7" aria-hidden="true" tabindex="-1"></a>is_handmaid <span class="op">=</span> (df[<span class="st">&#39;title&#39;</span>]</span>
+<span id="cb33-8"><a href="#cb33-8" aria-hidden="true" tabindex="-1"></a>                 .eq(<span class="st">&quot;The Handmaid&#39;s Tale&quot;</span>)</span>
+<span id="cb33-9"><a href="#cb33-9" aria-hidden="true" tabindex="-1"></a>                 .mul(<span class="fl">1.</span>)</span>
+<span id="cb33-10"><a href="#cb33-10" aria-hidden="true" tabindex="-1"></a>                 .values)</span>
+<span id="cb33-11"><a href="#cb33-11" aria-hidden="true" tabindex="-1"></a>is_handmaid_ <span class="op">=</span> shared(is_handmaid)</span></code></pre></div>
+<div class="sourceCode" id="cb34"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb34-1"><a href="#cb34-1" aria-hidden="true" tabindex="-1"></a>pages_.set_value(pages)</span></code></pre></div>
+<div class="sourceCode" id="cb35"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb35-1"><a href="#cb35-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> pm.Model() <span class="im">as</span> book_model:</span>
+<span id="cb35-2"><a href="#cb35-2" aria-hidden="true" tabindex="-1"></a>    β<span class="dv">0</span> <span class="op">=</span> pm.Normal(<span class="st">&#39;β0&#39;</span>, <span class="fl">0.</span>, <span class="fl">5.</span>)</span>
+<span id="cb35-3"><a href="#cb35-3" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb35-4"><a href="#cb35-4" aria-hidden="true" tabindex="-1"></a>    β_lark <span class="op">=</span> pm.Normal(<span class="st">&#39;β_lark&#39;</span>, <span class="fl">0.</span>, <span class="fl">5.</span>)</span>
+<span id="cb35-5"><a href="#cb35-5" aria-hidden="true" tabindex="-1"></a>    β_handmaid <span class="op">=</span> pm.Normal(<span class="st">&#39;β_handmaid&#39;</span>, <span class="fl">0.</span>, <span class="fl">5.</span>)</span>
+<span id="cb35-6"><a href="#cb35-6" aria-hidden="true" tabindex="-1"></a>    β_book <span class="op">=</span> β_lark <span class="op">*</span> is_lark_ <span class="op">+</span> β_handmaid <span class="op">*</span> is_handmaid_</span>
+<span id="cb35-7"><a href="#cb35-7" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb35-8"><a href="#cb35-8" aria-hidden="true" tabindex="-1"></a>    β_pages <span class="op">=</span> pm.Normal(<span class="st">&#39;β_pages&#39;</span>, <span class="fl">0.</span>, <span class="fl">5.</span>)</span>
+<span id="cb35-9"><a href="#cb35-9" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb35-10"><a href="#cb35-10" aria-hidden="true" tabindex="-1"></a>    log_pages <span class="op">=</span> tt.log(pages_)</span>
+<span id="cb35-11"><a href="#cb35-11" aria-hidden="true" tabindex="-1"></a>    log_pages_std <span class="op">=</span> (log_pages <span class="op">-</span> log_pages.mean()) <span class="op">/</span> log_pages.std()</span>
+<span id="cb35-12"><a href="#cb35-12" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb35-13"><a href="#cb35-13" aria-hidden="true" tabindex="-1"></a>    θ <span class="op">=</span> β<span class="dv">0</span> <span class="op">+</span> β_book <span class="op">+</span> β_pages <span class="op">*</span> log_pages_std</span>
+<span id="cb35-14"><a href="#cb35-14" aria-hidden="true" tabindex="-1"></a>    μ <span class="op">=</span> tt.exp(θ)</span>
+<span id="cb35-15"><a href="#cb35-15" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb35-16"><a href="#cb35-16" aria-hidden="true" tabindex="-1"></a>    α <span class="op">=</span> pm.Lognormal(<span class="st">&#39;α&#39;</span>, <span class="fl">0.</span>, <span class="fl">5.</span>)</span>
+<span id="cb35-17"><a href="#cb35-17" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb35-18"><a href="#cb35-18" aria-hidden="true" tabindex="-1"></a>    days_obs <span class="op">=</span> pm.NegativeBinomial(<span class="st">&#39;days_obs&#39;</span>, μ, α, observed<span class="op">=</span>days <span class="op">-</span> <span class="dv">1</span>)</span></code></pre></div>
+<p>We now sample from the model’s posterior distribution.</p>
+<div class="sourceCode" id="cb36"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb36-1"><a href="#cb36-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> book_model:</span>
+<span id="cb36-2"><a href="#cb36-2" aria-hidden="true" tabindex="-1"></a>    book_trace <span class="op">=</span> pm.sample(<span class="op">**</span>SAMPLE_KWARGS)</span></code></pre></div>
+<pre><code>Auto-assigning NUTS sampler...
+Initializing NUTS using jitter+adapt_diag...
+Multiprocess sampling (3 chains in 3 jobs)
+NUTS: [α_log__, β_pages, β_handmaid, β_lark, β0]
+100%|██████████| 1000/1000 [00:12&lt;00:00, 77.79it/s]</code></pre>
+<p>Again, the BFMI, energy plots and Gelman-Rubin statistics indicate convergence.</p>
+<div class="sourceCode" id="cb38"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb38-1"><a href="#cb38-1" aria-hidden="true" tabindex="-1"></a>ax <span class="op">=</span> pm.energyplot(book_trace)</span>
+<span id="cb38-2"><a href="#cb38-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb38-3"><a href="#cb38-3" aria-hidden="true" tabindex="-1"></a>bfmi <span class="op">=</span> pm.bfmi(book_trace)</span>
+<span id="cb38-4"><a href="#cb38-4" aria-hidden="true" tabindex="-1"></a>ax.set_title(<span class="ss">f&quot;BFMI = </span><span class="sc">{</span>bfmi<span class="sc">:.2f}</span><span class="ss">&quot;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/quantifying_reading/Quantifying%20Three%20Years%20of%20Reading_54_0.png" title="fig:" alt="png" />
+</center>
+<div class="sourceCode" id="cb39"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb39-1"><a href="#cb39-1" aria-hidden="true" tabindex="-1"></a><span class="bu">max</span>(np.<span class="bu">max</span>(gr_stats) <span class="cf">for</span> gr_stats <span class="kw">in</span> pm.gelman_rubin(book_trace).values())</span></code></pre></div>
+<pre><code>1.0012914523533143</code></pre>
+<p>We see that the special factors for <em>The Handmaid’s Tale</em> and <em>The Song of the Lark</em> were indeed notable.</p>
+<div class="sourceCode" id="cb41"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb41-1"><a href="#cb41-1" aria-hidden="true" tabindex="-1"></a>pm.forestplot(</span>
+<span id="cb41-2"><a href="#cb41-2" aria-hidden="true" tabindex="-1"></a>    book_trace, varnames<span class="op">=</span>[<span class="st">&#39;β_handmaid&#39;</span>, <span class="st">&#39;β_lark&#39;</span>],</span>
+<span id="cb41-3"><a href="#cb41-3" aria-hidden="true" tabindex="-1"></a>    chain_spacing<span class="op">=</span><span class="fl">0.025</span>,</span>
+<span id="cb41-4"><a href="#cb41-4" aria-hidden="true" tabindex="-1"></a>    rhat<span class="op">=</span><span class="va">False</span></span>
+<span id="cb41-5"><a href="#cb41-5" aria-hidden="true" tabindex="-1"></a>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/quantifying_reading/Quantifying%20Three%20Years%20of%20Reading_57_0.png" title="fig:" alt="png" />
+</center>
+<p>Again, we calculate the model’s predictions in order to examine standardized residuals.</p>
+<div class="sourceCode" id="cb42"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb42-1"><a href="#cb42-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> book_model:</span>
+<span id="cb42-2"><a href="#cb42-2" aria-hidden="true" tabindex="-1"></a>    book_pred_trace <span class="op">=</span> pm.sample_ppc(book_trace)</span>
+<span id="cb42-3"><a href="#cb42-3" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb42-4"><a href="#cb42-4" aria-hidden="true" tabindex="-1"></a>book_pred_days <span class="op">=</span> book_pred_trace[<span class="st">&#39;days_obs&#39;</span>].mean(axis<span class="op">=</span><span class="dv">0</span>)</span></code></pre></div>
+<pre><code>100%|██████████| 500/500 [00:01&lt;00:00, 463.09it/s]</code></pre>
+<div class="sourceCode" id="cb44"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb44-1"><a href="#cb44-1" aria-hidden="true" tabindex="-1"></a>book_std_resid <span class="op">=</span> (days <span class="op">-</span> book_pred_days) <span class="op">/</span> book_pred_trace[<span class="st">&#39;days_obs&#39;</span>].std(axis<span class="op">=</span><span class="dv">0</span>)</span></code></pre></div>
+<p>Both standardized residual plots show no cause for concern.</p>
+<div class="sourceCode" id="cb45"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb45-1"><a href="#cb45-1" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plt.subplots(figsize<span class="op">=</span>(<span class="dv">8</span>, <span class="dv">6</span>))</span>
+<span id="cb45-2"><a href="#cb45-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb45-3"><a href="#cb45-3" aria-hidden="true" tabindex="-1"></a>ax.scatter(book_pred_days, book_std_resid)<span class="op">;</span></span>
+<span id="cb45-4"><a href="#cb45-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb45-5"><a href="#cb45-5" aria-hidden="true" tabindex="-1"></a>ax.hlines(</span>
+<span id="cb45-6"><a href="#cb45-6" aria-hidden="true" tabindex="-1"></a>    sp.stats.norm.isf([<span class="fl">0.975</span>, <span class="fl">0.025</span>]),</span>
+<span id="cb45-7"><a href="#cb45-7" aria-hidden="true" tabindex="-1"></a>    <span class="dv">0</span>, <span class="dv">120</span>,</span>
+<span id="cb45-8"><a href="#cb45-8" aria-hidden="true" tabindex="-1"></a>    linestyles<span class="op">=</span><span class="st">&#39;--&#39;</span>, label<span class="op">=</span><span class="st">&quot;95</span><span class="sc">% c</span><span class="st">onfidence band&quot;</span></span>
+<span id="cb45-9"><a href="#cb45-9" aria-hidden="true" tabindex="-1"></a>)<span class="op">;</span></span>
+<span id="cb45-10"><a href="#cb45-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb45-11"><a href="#cb45-11" aria-hidden="true" tabindex="-1"></a>ax.set_xlim(<span class="dv">0</span>, <span class="dv">120</span>)<span class="op">;</span></span>
+<span id="cb45-12"><a href="#cb45-12" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="st">&quot;Predicted number of days to read&quot;</span>)<span class="op">;</span></span>
+<span id="cb45-13"><a href="#cb45-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb45-14"><a href="#cb45-14" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="st">&quot;Standardized residual&quot;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/quantifying_reading/Quantifying%20Three%20Years%20of%20Reading_62_0.png" title="fig:" alt="png" />
+</center>
+<div class="sourceCode" id="cb46"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb46-1"><a href="#cb46-1" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plt.subplots(figsize<span class="op">=</span>(<span class="dv">8</span>, <span class="dv">6</span>))</span>
+<span id="cb46-2"><a href="#cb46-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb46-3"><a href="#cb46-3" aria-hidden="true" tabindex="-1"></a>ax.scatter(df[<span class="st">&#39;pages&#39;</span>], book_std_resid)<span class="op">;</span></span>
+<span id="cb46-4"><a href="#cb46-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb46-5"><a href="#cb46-5" aria-hidden="true" tabindex="-1"></a>ax.hlines(</span>
+<span id="cb46-6"><a href="#cb46-6" aria-hidden="true" tabindex="-1"></a>    sp.stats.norm.isf([<span class="fl">0.975</span>, <span class="fl">0.025</span>]),</span>
+<span id="cb46-7"><a href="#cb46-7" aria-hidden="true" tabindex="-1"></a>    <span class="dv">0</span>, <span class="dv">900</span>,</span>
+<span id="cb46-8"><a href="#cb46-8" aria-hidden="true" tabindex="-1"></a>    linestyles<span class="op">=</span><span class="st">&#39;--&#39;</span>, label<span class="op">=</span><span class="st">&quot;95</span><span class="sc">% c</span><span class="st">onfidence band&quot;</span></span>
+<span id="cb46-9"><a href="#cb46-9" aria-hidden="true" tabindex="-1"></a>)<span class="op">;</span></span>
+<span id="cb46-10"><a href="#cb46-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb46-11"><a href="#cb46-11" aria-hidden="true" tabindex="-1"></a>ax.set_xlim(<span class="dv">0</span>, <span class="dv">900</span>)<span class="op">;</span></span>
+<span id="cb46-12"><a href="#cb46-12" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="st">&quot;Number of pages&quot;</span>)<span class="op">;</span></span>
+<span id="cb46-13"><a href="#cb46-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb46-14"><a href="#cb46-14" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="st">&quot;Standardized residual&quot;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/quantifying_reading/Quantifying%20Three%20Years%20of%20Reading_63_0.png" title="fig:" alt="png" />
+</center>
+<p>Since we now have two models, we use <a href="http://www.jmlr.org/papers/volume14/watanabe13a/watanabe13a.pdf">WAIC</a> to compare them.</p>
+<div class="sourceCode" id="cb47"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb47-1"><a href="#cb47-1" aria-hidden="true" tabindex="-1"></a>compare_df <span class="op">=</span> (pm.compare(</span>
+<span id="cb47-2"><a href="#cb47-2" aria-hidden="true" tabindex="-1"></a>                    [nb_trace, book_trace],</span>
+<span id="cb47-3"><a href="#cb47-3" aria-hidden="true" tabindex="-1"></a>                    [nb_model, book_model]</span>
+<span id="cb47-4"><a href="#cb47-4" aria-hidden="true" tabindex="-1"></a>                )</span>
+<span id="cb47-5"><a href="#cb47-5" aria-hidden="true" tabindex="-1"></a>                .rename(index<span class="op">=</span>{<span class="dv">0</span>: <span class="st">&#39;NB&#39;</span>, <span class="dv">1</span>: <span class="st">&#39;Book&#39;</span>}))</span></code></pre></div>
+<div class="sourceCode" id="cb48"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb48-1"><a href="#cb48-1" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plt.subplots(figsize<span class="op">=</span>(<span class="dv">8</span>, <span class="dv">6</span>))</span>
+<span id="cb48-2"><a href="#cb48-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb48-3"><a href="#cb48-3" aria-hidden="true" tabindex="-1"></a>pm.compareplot(</span>
+<span id="cb48-4"><a href="#cb48-4" aria-hidden="true" tabindex="-1"></a>    compare_df, </span>
+<span id="cb48-5"><a href="#cb48-5" aria-hidden="true" tabindex="-1"></a>    insample_dev<span class="op">=</span><span class="va">False</span>, dse<span class="op">=</span><span class="va">False</span>,</span>
+<span id="cb48-6"><a href="#cb48-6" aria-hidden="true" tabindex="-1"></a>    ax<span class="op">=</span>ax</span>
+<span id="cb48-7"><a href="#cb48-7" aria-hidden="true" tabindex="-1"></a>)<span class="op">;</span></span>
+<span id="cb48-8"><a href="#cb48-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb48-9"><a href="#cb48-9" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="st">&quot;WAIC&quot;</span>)<span class="op">;</span></span>
+<span id="cb48-10"><a href="#cb48-10" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="st">&quot;Model&quot;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/quantifying_reading/Quantifying%20Three%20Years%20of%20Reading_66_0.png" title="fig:" alt="png" />
+</center>
+<p>Since lower WAIC is better, we prefer the model with book effects, although not conclusively.</p>
+<p>Again, we examine this model’s predictions directly by sampling from the posterior predictive distribution.</p>
+<div class="sourceCode" id="cb49"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb49-1"><a href="#cb49-1" aria-hidden="true" tabindex="-1"></a>pages_.set_value(PP_PAGES)</span>
+<span id="cb49-2"><a href="#cb49-2" aria-hidden="true" tabindex="-1"></a>is_handmaid_.set_value(np.zeros_like(PP_PAGES))</span>
+<span id="cb49-3"><a href="#cb49-3" aria-hidden="true" tabindex="-1"></a>is_lark_.set_value(np.zeros_like(PP_PAGES))</span>
+<span id="cb49-4"><a href="#cb49-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb49-5"><a href="#cb49-5" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> book_model:</span>
+<span id="cb49-6"><a href="#cb49-6" aria-hidden="true" tabindex="-1"></a>    pp_book_trace <span class="op">=</span> pm.sample_ppc(book_trace, samples<span class="op">=</span><span class="dv">5000</span>)</span></code></pre></div>
+<pre><code>100%|██████████| 5000/5000 [00:07&lt;00:00, 640.09it/s]</code></pre>
+<div class="sourceCode" id="cb51"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb51-1"><a href="#cb51-1" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plt.subplots(figsize<span class="op">=</span>(<span class="dv">8</span>, <span class="dv">6</span>))</span>
+<span id="cb51-2"><a href="#cb51-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb51-3"><a href="#cb51-3" aria-hidden="true" tabindex="-1"></a>low, high <span class="op">=</span> np.percentile(</span>
+<span id="cb51-4"><a href="#cb51-4" aria-hidden="true" tabindex="-1"></a>    pp_book_trace[<span class="st">&#39;days_obs&#39;</span>],</span>
+<span id="cb51-5"><a href="#cb51-5" aria-hidden="true" tabindex="-1"></a>    [<span class="dv">100</span> <span class="op">*</span> ALPHA <span class="op">/</span> <span class="dv">2</span>, <span class="dv">100</span> <span class="op">*</span> (<span class="dv">1</span> <span class="op">-</span> ALPHA <span class="op">/</span> <span class="dv">2</span>)],</span>
+<span id="cb51-6"><a href="#cb51-6" aria-hidden="true" tabindex="-1"></a>    axis<span class="op">=</span><span class="dv">0</span></span>
+<span id="cb51-7"><a href="#cb51-7" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb51-8"><a href="#cb51-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb51-9"><a href="#cb51-9" aria-hidden="true" tabindex="-1"></a>ax.fill_between(</span>
+<span id="cb51-10"><a href="#cb51-10" aria-hidden="true" tabindex="-1"></a>    PP_PAGES, low, high,</span>
+<span id="cb51-11"><a href="#cb51-11" aria-hidden="true" tabindex="-1"></a>    alpha<span class="op">=</span><span class="fl">0.35</span>,</span>
+<span id="cb51-12"><a href="#cb51-12" aria-hidden="true" tabindex="-1"></a>    label<span class="op">=</span><span class="ss">f&quot;</span><span class="sc">{</span><span class="dv">1</span> <span class="op">-</span> ALPHA<span class="sc">:.0%}</span><span class="ss"> credible interval&quot;</span></span>
+<span id="cb51-13"><a href="#cb51-13" aria-hidden="true" tabindex="-1"></a>)<span class="op">;</span></span>
+<span id="cb51-14"><a href="#cb51-14" aria-hidden="true" tabindex="-1"></a>ax.plot(</span>
+<span id="cb51-15"><a href="#cb51-15" aria-hidden="true" tabindex="-1"></a>    PP_PAGES, pp_book_trace[<span class="st">&#39;days_obs&#39;</span>].mean(axis<span class="op">=</span><span class="dv">0</span>),</span>
+<span id="cb51-16"><a href="#cb51-16" aria-hidden="true" tabindex="-1"></a>    label<span class="op">=</span><span class="st">&quot;Posterior expected value&quot;</span></span>
+<span id="cb51-17"><a href="#cb51-17" aria-hidden="true" tabindex="-1"></a>)<span class="op">;</span></span>
+<span id="cb51-18"><a href="#cb51-18" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb51-19"><a href="#cb51-19" aria-hidden="true" tabindex="-1"></a>df.plot(</span>
+<span id="cb51-20"><a href="#cb51-20" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;pages&#39;</span>, <span class="st">&#39;days&#39;</span>,</span>
+<span id="cb51-21"><a href="#cb51-21" aria-hidden="true" tabindex="-1"></a>    s<span class="op">=</span><span class="dv">40</span>, c<span class="op">=</span><span class="st">&#39;k&#39;</span>,</span>
+<span id="cb51-22"><a href="#cb51-22" aria-hidden="true" tabindex="-1"></a>    kind<span class="op">=</span><span class="st">&#39;scatter&#39;</span>,</span>
+<span id="cb51-23"><a href="#cb51-23" aria-hidden="true" tabindex="-1"></a>    label<span class="op">=</span><span class="st">&quot;Observed&quot;</span>,</span>
+<span id="cb51-24"><a href="#cb51-24" aria-hidden="true" tabindex="-1"></a>    ax<span class="op">=</span>ax</span>
+<span id="cb51-25"><a href="#cb51-25" aria-hidden="true" tabindex="-1"></a>)<span class="op">;</span></span>
+<span id="cb51-26"><a href="#cb51-26" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb51-27"><a href="#cb51-27" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="st">&quot;Number of pages&quot;</span>)<span class="op">;</span></span>
+<span id="cb51-28"><a href="#cb51-28" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="st">&quot;Number of days to read&quot;</span>)<span class="op">;</span></span>
+<span id="cb51-29"><a href="#cb51-29" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb51-30"><a href="#cb51-30" aria-hidden="true" tabindex="-1"></a>ax.legend(loc<span class="op">=</span><span class="dv">2</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/quantifying_reading/Quantifying%20Three%20Years%20of%20Reading_69_0.png" title="fig:" alt="png" />
+</center>
+<p>The predictions are visually similar to those of the previous model. The plot below compares the two model’s predictions directly.</p>
+<div class="sourceCode" id="cb52"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb52-1"><a href="#cb52-1" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plt.subplots(figsize<span class="op">=</span>(<span class="dv">8</span>, <span class="dv">6</span>))</span>
+<span id="cb52-2"><a href="#cb52-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb52-3"><a href="#cb52-3" aria-hidden="true" tabindex="-1"></a>ax.plot(</span>
+<span id="cb52-4"><a href="#cb52-4" aria-hidden="true" tabindex="-1"></a>    PP_PAGES, pp_nb_trace[<span class="st">&#39;days_obs&#39;</span>].mean(axis<span class="op">=</span><span class="dv">0</span>),</span>
+<span id="cb52-5"><a href="#cb52-5" aria-hidden="true" tabindex="-1"></a>    label<span class="op">=</span><span class="st">&quot;Negative binomial model&quot;</span></span>
+<span id="cb52-6"><a href="#cb52-6" aria-hidden="true" tabindex="-1"></a>)<span class="op">;</span></span>
+<span id="cb52-7"><a href="#cb52-7" aria-hidden="true" tabindex="-1"></a>ax.plot(</span>
+<span id="cb52-8"><a href="#cb52-8" aria-hidden="true" tabindex="-1"></a>    PP_PAGES, pp_book_trace[<span class="st">&#39;days_obs&#39;</span>].mean(axis<span class="op">=</span><span class="dv">0</span>),</span>
+<span id="cb52-9"><a href="#cb52-9" aria-hidden="true" tabindex="-1"></a>    label<span class="op">=</span><span class="st">&quot;Book effect model&quot;</span></span>
+<span id="cb52-10"><a href="#cb52-10" aria-hidden="true" tabindex="-1"></a>)<span class="op">;</span></span>
+<span id="cb52-11"><a href="#cb52-11" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb52-12"><a href="#cb52-12" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="st">&quot;Number of pages&quot;</span>)<span class="op">;</span></span>
+<span id="cb52-13"><a href="#cb52-13" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="st">&quot;Number of days to read&quot;</span>)<span class="op">;</span></span>
+<span id="cb52-14"><a href="#cb52-14" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb52-15"><a href="#cb52-15" aria-hidden="true" tabindex="-1"></a>ax.legend(title<span class="op">=</span><span class="st">&quot;Posterior expected value&quot;</span>, loc<span class="op">=</span><span class="dv">2</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/quantifying_reading/Quantifying%20Three%20Years%20of%20Reading_71_0.png" title="fig:" alt="png" />
+</center>
+<p>The predictions are quite similar, with the book effect model predicting slightly shorter durations, which makes sense as that model explicitly accounts for two books that it took me an unusually long amount of time to read.</p>
+<h3 id="timeseries-model">Timeseries model</h3>
+<p>We now turn to the goal of this post, quantifying how my reading habits have changed over time. For computational simplicity, we operate on a time scale of weeks. Therefore, for each book, we calculate the number of weeks from the beginning of the observation period to when I started reading it.</p>
+<div class="sourceCode" id="cb53"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb53-1"><a href="#cb53-1" aria-hidden="true" tabindex="-1"></a>t_week <span class="op">=</span> (df[<span class="st">&#39;start_date&#39;</span>] </span>
+<span id="cb53-2"><a href="#cb53-2" aria-hidden="true" tabindex="-1"></a>            .sub(df[<span class="st">&#39;start_date&#39;</span>].<span class="bu">min</span>())</span>
+<span id="cb53-3"><a href="#cb53-3" aria-hidden="true" tabindex="-1"></a>            .dt.days</span>
+<span id="cb53-4"><a href="#cb53-4" aria-hidden="true" tabindex="-1"></a>            .floordiv(<span class="dv">7</span>)</span>
+<span id="cb53-5"><a href="#cb53-5" aria-hidden="true" tabindex="-1"></a>            .values)</span>
+<span id="cb53-6"><a href="#cb53-6" aria-hidden="true" tabindex="-1"></a>t_week_ <span class="op">=</span> shared(t_week)</span>
+<span id="cb53-7"><a href="#cb53-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb53-8"><a href="#cb53-8" aria-hidden="true" tabindex="-1"></a>n_week <span class="op">=</span> t_week.<span class="bu">max</span>() <span class="op">+</span> <span class="dv">1</span></span></code></pre></div>
+<p>We let the intercept <span class="math inline">\(\beta^0\)</span> and the (log standardized) pages coefficient <span class="math inline">\(\beta^{\textrm{pages}}\)</span> vary over time. We give these time-varying coefficient Gaussian random walk priors,</p>
+<p><span class="math display">\[
+\begin{align*}
+    \beta^0_t \sim N(\beta^0_{t - 1}, 10^{-2}), \\
+    \beta^{\textrm{pages}}_t \sim N(\beta^{\textrm{pages}}_{t - 1}, 10^{-2}).
+\end{align*}
+\]</span></p>
+<p>The small drift scale of <span class="math inline">\(10^{-1}\)</span> is justified by the intuition that reading habits should change gradually.</p>
+<div class="sourceCode" id="cb54"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb54-1"><a href="#cb54-1" aria-hidden="true" tabindex="-1"></a>pages_.set_value(pages)</span>
+<span id="cb54-2"><a href="#cb54-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb54-3"><a href="#cb54-3" aria-hidden="true" tabindex="-1"></a>is_handmaid_.set_value(is_handmaid)</span>
+<span id="cb54-4"><a href="#cb54-4" aria-hidden="true" tabindex="-1"></a>is_lark_.set_value(is_lark)</span></code></pre></div>
+<div class="sourceCode" id="cb55"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb55-1"><a href="#cb55-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> pm.Model() <span class="im">as</span> time_model:</span>
+<span id="cb55-2"><a href="#cb55-2" aria-hidden="true" tabindex="-1"></a>    β<span class="dv">0</span> <span class="op">=</span> pm.GaussianRandomWalk(</span>
+<span id="cb55-3"><a href="#cb55-3" aria-hidden="true" tabindex="-1"></a>        <span class="st">&#39;β0&#39;</span>, sd<span class="op">=</span><span class="fl">0.1</span>, shape<span class="op">=</span>n_week</span>
+<span id="cb55-4"><a href="#cb55-4" aria-hidden="true" tabindex="-1"></a>    )</span>
+<span id="cb55-5"><a href="#cb55-5" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb55-6"><a href="#cb55-6" aria-hidden="true" tabindex="-1"></a>    β_lark <span class="op">=</span> pm.Normal(<span class="st">&#39;β_lark&#39;</span>, <span class="fl">0.</span>, <span class="fl">5.</span>)</span>
+<span id="cb55-7"><a href="#cb55-7" aria-hidden="true" tabindex="-1"></a>    β_handmaid <span class="op">=</span> pm.Normal(<span class="st">&#39;β_handmaid&#39;</span>, <span class="fl">0.</span>, <span class="fl">5.</span>)</span>
+<span id="cb55-8"><a href="#cb55-8" aria-hidden="true" tabindex="-1"></a>    β_book <span class="op">=</span> β_lark <span class="op">*</span> is_lark_ <span class="op">+</span> β_handmaid <span class="op">*</span> is_handmaid_</span>
+<span id="cb55-9"><a href="#cb55-9" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb55-10"><a href="#cb55-10" aria-hidden="true" tabindex="-1"></a>    β_pages <span class="op">=</span> pm.GaussianRandomWalk(</span>
+<span id="cb55-11"><a href="#cb55-11" aria-hidden="true" tabindex="-1"></a>        <span class="st">&#39;β_pages&#39;</span>, sd<span class="op">=</span><span class="fl">0.1</span>, shape<span class="op">=</span>n_week</span>
+<span id="cb55-12"><a href="#cb55-12" aria-hidden="true" tabindex="-1"></a>    )</span>
+<span id="cb55-13"><a href="#cb55-13" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb55-14"><a href="#cb55-14" aria-hidden="true" tabindex="-1"></a>    log_pages <span class="op">=</span> tt.log(pages_)</span>
+<span id="cb55-15"><a href="#cb55-15" aria-hidden="true" tabindex="-1"></a>    log_pages_std <span class="op">=</span> (log_pages <span class="op">-</span> log_pages.mean()) <span class="op">/</span> log_pages.std()</span>
+<span id="cb55-16"><a href="#cb55-16" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb55-17"><a href="#cb55-17" aria-hidden="true" tabindex="-1"></a>    θ <span class="op">=</span> β<span class="dv">0</span>[t_week_] <span class="op">+</span> β_book <span class="op">+</span> β_pages[t_week_] <span class="op">*</span> log_pages_std</span>
+<span id="cb55-18"><a href="#cb55-18" aria-hidden="true" tabindex="-1"></a>    μ <span class="op">=</span> tt.exp(θ)</span>
+<span id="cb55-19"><a href="#cb55-19" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb55-20"><a href="#cb55-20" aria-hidden="true" tabindex="-1"></a>    α <span class="op">=</span> pm.Lognormal(<span class="st">&#39;α&#39;</span>, <span class="fl">0.</span>, <span class="fl">5.</span>)</span>
+<span id="cb55-21"><a href="#cb55-21" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb55-22"><a href="#cb55-22" aria-hidden="true" tabindex="-1"></a>    days_obs <span class="op">=</span> pm.NegativeBinomial(<span class="st">&#39;days_obs&#39;</span>, μ, α, observed<span class="op">=</span>days <span class="op">-</span> <span class="dv">1</span>)</span></code></pre></div>
+<p>Again, we sample from the model’s posterior distribution.</p>
+<div class="sourceCode" id="cb56"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb56-1"><a href="#cb56-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> time_model:</span>
+<span id="cb56-2"><a href="#cb56-2" aria-hidden="true" tabindex="-1"></a>    time_trace <span class="op">=</span> pm.sample(<span class="op">**</span>SAMPLE_KWARGS)</span></code></pre></div>
+<pre><code>Auto-assigning NUTS sampler...
+Initializing NUTS using jitter+adapt_diag...
+Multiprocess sampling (3 chains in 3 jobs)
+NUTS: [α_log__, β_pages, β_handmaid, β_lark, β0]
+100%|██████████| 1000/1000 [03:26&lt;00:00,  4.85it/s]</code></pre>
+<p>Again, the BFMI, energy plots, and Gelman-Rubin statistics indicate convergence.</p>
+<div class="sourceCode" id="cb58"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb58-1"><a href="#cb58-1" aria-hidden="true" tabindex="-1"></a>ax <span class="op">=</span> pm.energyplot(time_trace)</span>
+<span id="cb58-2"><a href="#cb58-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb58-3"><a href="#cb58-3" aria-hidden="true" tabindex="-1"></a>bfmi <span class="op">=</span> pm.bfmi(time_trace)</span>
+<span id="cb58-4"><a href="#cb58-4" aria-hidden="true" tabindex="-1"></a>ax.set_title(<span class="ss">f&quot;BFMI = </span><span class="sc">{</span>bfmi<span class="sc">:.2f}</span><span class="ss">&quot;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/quantifying_reading/Quantifying%20Three%20Years%20of%20Reading_81_0.png" title="fig:" alt="png" />
+</center>
+<div class="sourceCode" id="cb59"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb59-1"><a href="#cb59-1" aria-hidden="true" tabindex="-1"></a><span class="bu">max</span>(np.<span class="bu">max</span>(gr_stats) <span class="cf">for</span> gr_stats <span class="kw">in</span> pm.gelman_rubin(time_trace).values())</span></code></pre></div>
+<pre><code>1.0038733152191415</code></pre>
+<p>Once more, we examime the model’s standardized residuals.</p>
+<div class="sourceCode" id="cb61"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb61-1"><a href="#cb61-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> time_model:</span>
+<span id="cb61-2"><a href="#cb61-2" aria-hidden="true" tabindex="-1"></a>    time_pred_trace <span class="op">=</span> pm.sample_ppc(time_trace)</span>
+<span id="cb61-3"><a href="#cb61-3" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb61-4"><a href="#cb61-4" aria-hidden="true" tabindex="-1"></a>time_pred_days <span class="op">=</span> time_pred_trace[<span class="st">&#39;days_obs&#39;</span>].mean(axis<span class="op">=</span><span class="dv">0</span>)</span></code></pre></div>
+<pre><code>100%|██████████| 500/500 [00:00&lt;00:00, 913.23it/s]</code></pre>
+<div class="sourceCode" id="cb63"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb63-1"><a href="#cb63-1" aria-hidden="true" tabindex="-1"></a>time_std_resid <span class="op">=</span> (days <span class="op">-</span> time_pred_days) <span class="op">/</span> time_pred_trace[<span class="st">&#39;days_obs&#39;</span>].std(axis<span class="op">=</span><span class="dv">0</span>)</span></code></pre></div>
+<p>In general, the standardized residuals are now smaller and fewer are outside of the 95% confidence band.</p>
+<div class="sourceCode" id="cb64"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb64-1"><a href="#cb64-1" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plt.subplots(figsize<span class="op">=</span>(<span class="dv">8</span>, <span class="dv">6</span>))</span>
+<span id="cb64-2"><a href="#cb64-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb64-3"><a href="#cb64-3" aria-hidden="true" tabindex="-1"></a>ax.scatter(time_pred_days, time_std_resid)<span class="op">;</span></span>
+<span id="cb64-4"><a href="#cb64-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb64-5"><a href="#cb64-5" aria-hidden="true" tabindex="-1"></a>ax.hlines(</span>
+<span id="cb64-6"><a href="#cb64-6" aria-hidden="true" tabindex="-1"></a>    sp.stats.norm.isf([<span class="fl">0.975</span>, <span class="fl">0.025</span>]),</span>
+<span id="cb64-7"><a href="#cb64-7" aria-hidden="true" tabindex="-1"></a>    <span class="dv">0</span>, <span class="dv">120</span>,</span>
+<span id="cb64-8"><a href="#cb64-8" aria-hidden="true" tabindex="-1"></a>    linestyles<span class="op">=</span><span class="st">&#39;--&#39;</span>, label<span class="op">=</span><span class="st">&quot;95</span><span class="sc">% c</span><span class="st">onfidence band&quot;</span></span>
+<span id="cb64-9"><a href="#cb64-9" aria-hidden="true" tabindex="-1"></a>)<span class="op">;</span></span>
+<span id="cb64-10"><a href="#cb64-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb64-11"><a href="#cb64-11" aria-hidden="true" tabindex="-1"></a>ax.set_xlim(<span class="dv">0</span>, <span class="dv">120</span>)<span class="op">;</span></span>
+<span id="cb64-12"><a href="#cb64-12" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="st">&quot;Predicted number of days to read&quot;</span>)<span class="op">;</span></span>
+<span id="cb64-13"><a href="#cb64-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb64-14"><a href="#cb64-14" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="st">&quot;Standardized residual&quot;</span>)<span class="op">;</span></span>
+<span id="cb64-15"><a href="#cb64-15" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb64-16"><a href="#cb64-16" aria-hidden="true" tabindex="-1"></a>ax.legend(loc<span class="op">=</span><span class="dv">1</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/quantifying_reading/Quantifying%20Three%20Years%20of%20Reading_87_0.png" title="fig:" alt="png" />
+</center>
+<div class="sourceCode" id="cb65"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb65-1"><a href="#cb65-1" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plt.subplots(figsize<span class="op">=</span>(<span class="dv">8</span>, <span class="dv">6</span>))</span>
+<span id="cb65-2"><a href="#cb65-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb65-3"><a href="#cb65-3" aria-hidden="true" tabindex="-1"></a>ax.scatter(df[<span class="st">&#39;pages&#39;</span>], time_std_resid)<span class="op">;</span></span>
+<span id="cb65-4"><a href="#cb65-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb65-5"><a href="#cb65-5" aria-hidden="true" tabindex="-1"></a>ax.hlines(</span>
+<span id="cb65-6"><a href="#cb65-6" aria-hidden="true" tabindex="-1"></a>    sp.stats.norm.isf([<span class="fl">0.975</span>, <span class="fl">0.025</span>]),</span>
+<span id="cb65-7"><a href="#cb65-7" aria-hidden="true" tabindex="-1"></a>    <span class="dv">0</span>, <span class="dv">900</span>,</span>
+<span id="cb65-8"><a href="#cb65-8" aria-hidden="true" tabindex="-1"></a>    linestyles<span class="op">=</span><span class="st">&#39;--&#39;</span>, label<span class="op">=</span><span class="st">&quot;95</span><span class="sc">% c</span><span class="st">onfidence band&quot;</span></span>
+<span id="cb65-9"><a href="#cb65-9" aria-hidden="true" tabindex="-1"></a>)<span class="op">;</span></span>
+<span id="cb65-10"><a href="#cb65-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb65-11"><a href="#cb65-11" aria-hidden="true" tabindex="-1"></a>ax.set_xlim(<span class="dv">0</span>, <span class="dv">900</span>)<span class="op">;</span></span>
+<span id="cb65-12"><a href="#cb65-12" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="st">&quot;Number of pages&quot;</span>)<span class="op">;</span></span>
+<span id="cb65-13"><a href="#cb65-13" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="st">&quot;Standardized residual&quot;</span>)<span class="op">;</span></span>
+<span id="cb65-14"><a href="#cb65-14" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb65-15"><a href="#cb65-15" aria-hidden="true" tabindex="-1"></a>ax.legend(loc<span class="op">=</span><span class="dv">1</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/quantifying_reading/Quantifying%20Three%20Years%20of%20Reading_88_0.png" title="fig:" alt="png" />
+</center>
+<p>Again, we use WAIC to compare the three models.</p>
+<div class="sourceCode" id="cb66"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb66-1"><a href="#cb66-1" aria-hidden="true" tabindex="-1"></a>compare_df <span class="op">=</span> (pm.compare(</span>
+<span id="cb66-2"><a href="#cb66-2" aria-hidden="true" tabindex="-1"></a>                    [nb_trace, book_trace, time_trace],</span>
+<span id="cb66-3"><a href="#cb66-3" aria-hidden="true" tabindex="-1"></a>                    [nb_model, book_model, time_model]</span>
+<span id="cb66-4"><a href="#cb66-4" aria-hidden="true" tabindex="-1"></a>                )</span>
+<span id="cb66-5"><a href="#cb66-5" aria-hidden="true" tabindex="-1"></a>                .rename(index<span class="op">=</span>{<span class="dv">0</span>: <span class="st">&#39;NB&#39;</span>, <span class="dv">1</span>: <span class="st">&#39;Book&#39;</span>, <span class="dv">2</span>: <span class="st">&#39;Time&#39;</span>}))</span></code></pre></div>
+<div class="sourceCode" id="cb67"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb67-1"><a href="#cb67-1" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plt.subplots(figsize<span class="op">=</span>(<span class="dv">8</span>, <span class="dv">6</span>))</span>
+<span id="cb67-2"><a href="#cb67-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb67-3"><a href="#cb67-3" aria-hidden="true" tabindex="-1"></a>pm.compareplot(</span>
+<span id="cb67-4"><a href="#cb67-4" aria-hidden="true" tabindex="-1"></a>    compare_df, </span>
+<span id="cb67-5"><a href="#cb67-5" aria-hidden="true" tabindex="-1"></a>    insample_dev<span class="op">=</span><span class="va">False</span>, dse<span class="op">=</span><span class="va">False</span>,</span>
+<span id="cb67-6"><a href="#cb67-6" aria-hidden="true" tabindex="-1"></a>    ax<span class="op">=</span>ax</span>
+<span id="cb67-7"><a href="#cb67-7" aria-hidden="true" tabindex="-1"></a>)<span class="op">;</span></span>
+<span id="cb67-8"><a href="#cb67-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb67-9"><a href="#cb67-9" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="st">&quot;WAIC&quot;</span>)<span class="op">;</span></span>
+<span id="cb67-10"><a href="#cb67-10" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="st">&quot;Model&quot;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/quantifying_reading/Quantifying%20Three%20Years%20of%20Reading_91_0.png" title="fig:" alt="png" />
+</center>
+<p>The timeseries model performs marginally worse than the previous model. We proceed since only the timeseries model answers our original question.</p>
+<p>We now use the timeseries model to show how the amount of time it takes me to read a book has changed over time, conditioned on the length of the book.</p>
+<div class="sourceCode" id="cb68"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb68-1"><a href="#cb68-1" aria-hidden="true" tabindex="-1"></a>t_grid <span class="op">=</span> np.linspace(</span>
+<span id="cb68-2"><a href="#cb68-2" aria-hidden="true" tabindex="-1"></a>    mdates.date2num(df[<span class="st">&#39;start_date&#39;</span>].<span class="bu">min</span>()),</span>
+<span id="cb68-3"><a href="#cb68-3" aria-hidden="true" tabindex="-1"></a>    mdates.date2num(df[<span class="st">&#39;start_date&#39;</span>].<span class="bu">max</span>()),</span>
+<span id="cb68-4"><a href="#cb68-4" aria-hidden="true" tabindex="-1"></a>    n_week</span>
+<span id="cb68-5"><a href="#cb68-5" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
+<div class="sourceCode" id="cb69"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb69-1"><a href="#cb69-1" aria-hidden="true" tabindex="-1"></a>PP_TIME_PAGES <span class="op">=</span> np.array([<span class="dv">100</span>, <span class="dv">200</span>, <span class="dv">300</span>, <span class="dv">400</span>, <span class="dv">500</span>])</span>
+<span id="cb69-2"><a href="#cb69-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb69-3"><a href="#cb69-3" aria-hidden="true" tabindex="-1"></a>pp_df <span class="op">=</span> (pd.DataFrame(</span>
+<span id="cb69-4"><a href="#cb69-4" aria-hidden="true" tabindex="-1"></a>                <span class="bu">list</span>(product(</span>
+<span id="cb69-5"><a href="#cb69-5" aria-hidden="true" tabindex="-1"></a>                    np.arange(n_week),</span>
+<span id="cb69-6"><a href="#cb69-6" aria-hidden="true" tabindex="-1"></a>                    PP_TIME_PAGES</span>
+<span id="cb69-7"><a href="#cb69-7" aria-hidden="true" tabindex="-1"></a>                )),</span>
+<span id="cb69-8"><a href="#cb69-8" aria-hidden="true" tabindex="-1"></a>                columns<span class="op">=</span>[<span class="st">&#39;t_week&#39;</span>, <span class="st">&#39;pages&#39;</span>]</span>
+<span id="cb69-9"><a href="#cb69-9" aria-hidden="true" tabindex="-1"></a>           )</span>
+<span id="cb69-10"><a href="#cb69-10" aria-hidden="true" tabindex="-1"></a>           .assign(</span>
+<span id="cb69-11"><a href="#cb69-11" aria-hidden="true" tabindex="-1"></a>               is_handmaid<span class="op">=</span><span class="dv">0</span>,</span>
+<span id="cb69-12"><a href="#cb69-12" aria-hidden="true" tabindex="-1"></a>               is_lark<span class="op">=</span><span class="dv">0</span></span>
+<span id="cb69-13"><a href="#cb69-13" aria-hidden="true" tabindex="-1"></a>           ))</span></code></pre></div>
+<div class="sourceCode" id="cb70"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb70-1"><a href="#cb70-1" aria-hidden="true" tabindex="-1"></a>is_handmaid_.set_value(pp_df[<span class="st">&#39;is_handmaid&#39;</span>].values)</span>
+<span id="cb70-2"><a href="#cb70-2" aria-hidden="true" tabindex="-1"></a>is_lark_.set_value(pp_df[<span class="st">&#39;is_lark&#39;</span>].values)</span>
+<span id="cb70-3"><a href="#cb70-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb70-4"><a href="#cb70-4" aria-hidden="true" tabindex="-1"></a>t_week_.set_value(pp_df[<span class="st">&#39;t_week&#39;</span>].values)</span>
+<span id="cb70-5"><a href="#cb70-5" aria-hidden="true" tabindex="-1"></a>pages_.set_value(pp_df[<span class="st">&#39;pages&#39;</span>].values)</span></code></pre></div>
+<div class="sourceCode" id="cb71"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb71-1"><a href="#cb71-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> time_model:</span>
+<span id="cb71-2"><a href="#cb71-2" aria-hidden="true" tabindex="-1"></a>    pp_time_trace <span class="op">=</span> pm.sample_ppc(time_trace, samples<span class="op">=</span><span class="dv">10000</span>)</span></code></pre></div>
+<pre><code>100%|██████████| 10000/10000 [00:12&lt;00:00, 791.11it/s]</code></pre>
+<div class="sourceCode" id="cb73"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb73-1"><a href="#cb73-1" aria-hidden="true" tabindex="-1"></a>pp_df[<span class="st">&#39;pp_days&#39;</span>] <span class="op">=</span> pp_time_trace[<span class="st">&#39;days_obs&#39;</span>].mean(axis<span class="op">=</span><span class="dv">0</span>)</span>
+<span id="cb73-2"><a href="#cb73-2" aria-hidden="true" tabindex="-1"></a>pp_df[<span class="st">&#39;t_plot&#39;</span>] <span class="op">=</span> np.repeat(t_grid, <span class="dv">5</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb74"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb74-1"><a href="#cb74-1" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plt.subplots(figsize<span class="op">=</span>(<span class="dv">8</span>, <span class="dv">6</span>))</span>
+<span id="cb74-2"><a href="#cb74-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb74-3"><a href="#cb74-3" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> grp_pages, grp_df <span class="kw">in</span> pp_df.groupby(<span class="st">&#39;pages&#39;</span>):</span>
+<span id="cb74-4"><a href="#cb74-4" aria-hidden="true" tabindex="-1"></a>    grp_df.plot(</span>
+<span id="cb74-5"><a href="#cb74-5" aria-hidden="true" tabindex="-1"></a>        <span class="st">&#39;t_plot&#39;</span>, <span class="st">&#39;pp_days&#39;</span>,</span>
+<span id="cb74-6"><a href="#cb74-6" aria-hidden="true" tabindex="-1"></a>        label<span class="op">=</span><span class="ss">f&quot;</span><span class="sc">{</span>grp_pages<span class="sc">}</span><span class="ss"> pages&quot;</span>,</span>
+<span id="cb74-7"><a href="#cb74-7" aria-hidden="true" tabindex="-1"></a>        ax<span class="op">=</span>ax</span>
+<span id="cb74-8"><a href="#cb74-8" aria-hidden="true" tabindex="-1"></a>    )<span class="op">;</span></span>
+<span id="cb74-9"><a href="#cb74-9" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb74-10"><a href="#cb74-10" aria-hidden="true" tabindex="-1"></a>ax.set_xlim(t_grid.<span class="bu">min</span>(), t_grid.<span class="bu">max</span>())<span class="op">;</span></span>
+<span id="cb74-11"><a href="#cb74-11" aria-hidden="true" tabindex="-1"></a>ax.xaxis.set_major_formatter(mdates.DateFormatter(<span class="st">&#39;%b %Y&#39;</span>))<span class="op">;</span></span>
+<span id="cb74-12"><a href="#cb74-12" aria-hidden="true" tabindex="-1"></a>ax.xaxis.set_major_locator(mdates.MonthLocator(interval<span class="op">=</span><span class="dv">6</span>))<span class="op">;</span></span>
+<span id="cb74-13"><a href="#cb74-13" aria-hidden="true" tabindex="-1"></a>ax.xaxis.label.set_visible(<span class="va">False</span>)<span class="op">;</span></span>
+<span id="cb74-14"><a href="#cb74-14" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb74-15"><a href="#cb74-15" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="st">&quot;Predicted number of days to read&quot;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/quantifying_reading/Quantifying%20Three%20Years%20of%20Reading_98_0.png" title="fig:" alt="png" />
+</center>
+<p>The plot above exhibits a fascinating pattern; according to the timeseries model, I now read shorter books (fewer than approximately 300 pages) slightly faster than I did in 2015, but it takes me twice as long as before to read longer books. The trend for longer books is easier to explain; in the last 12-18 months, I have been doing much more public speaking and blogging than before, which naturally takes time away from reading. The trend for shorter books is a bit harder to explain, but upon some thought, I tend to read more purposefully as I approach the end of a book, looking forward to starting a new one. This effect occurs much earlier in shorter books than in longer ones, so it is a plausible explanation for the trend in shorter books.</p>
+<p>This post is available as a Jupyter notebook <a href="http://nbviewer.jupyter.org/gist/AustinRochford/722d4a98ba45f577b7e415e2b73cda0d">here</a>.</p>

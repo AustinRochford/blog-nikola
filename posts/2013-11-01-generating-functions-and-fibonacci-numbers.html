@@ -1,0 +1,159 @@
+<meta name="title" content="Generating Functions and the Fibonacci Numbers" />
+<meta name="tags" content="Math, Discrete Math, Generating Functions, Fibonacci Numbers" />
+<meta name="date" content="2013-11-01" />
+<meta name="has_math" content="true" /><div style="display:none">
+<span class="math inline">\(\renewcommand{\phi}{\varphi}\)</span>
+</div>
+<p>Wikipedia defines a <a href="http://en.wikipedia.org/wiki/Formal_power_series">generating function</a> as</p>
+<blockquote>
+<p>a formal power series in one indeterminate, whose coefficients encode information about a sequence of numbers an that is indexed by the natural numbers.</p>
+</blockquote>
+<p>Generating functions are useful tools with many applications to <a href="http://en.wikipedia.org/wiki/Discrete_mathematics">discrete mathematics</a>. In this post, we’ll show how they can be used to find a closed form expression for certain <a href="http://en.wikipedia.org/wiki/Recurrence_relation">recurrence relations</a> by proving that</p>
+<p><span class="math display">\[
+\begin{align*}
+F_n
+    &amp; = \frac{1}{\sqrt{5}} \left( \left( \frac{1 + \sqrt{5}}{2} \right)^n - \left( \frac{1 - \sqrt{5}}{2} \right)^n \right)
+\end{align*}
+\]</span></p>
+<p>where <span class="math inline">\(F_n\)</span> is the <span class="math inline">\(n\)</span>-th Fibonacci number. The derivation of this formula is quite accessible to anyone comfortable with algebra and <a href="http://en.wikipedia.org/wiki/Geometric_series">geometric series</a>. For a much broader introduction to many of the uses of generating functions, refer to <a href="http://www.math.upenn.edu/~wilf/">Prof. Herbert Wilf’s</a> excellent book <a href="http://www.math.upenn.edu/~wilf/DownldGF.html">generatingfunctionology</a>, the second edition of which is available as a free download.</p>
+<p>Recall that the Fibonacci numbers are defined by the recurrence relation <span class="math display">\[
+\begin{align*}
+F_n
+    &amp; = F_{n - 1} + F_{n - 2}
+\end{align*}
+\]</span></p>
+<p>for <span class="math inline">\(n \geq 2\)</span>, with <span class="math inline">\(F_0 = 0\)</span> and <span class="math inline">\(F_1 = 1\)</span>.</p>
+<p>We begin by defining the generating function for the Fibonacci numbers as the <a href="http://en.wikipedia.org/wiki/Formal_power_series">formal power series</a> whose coefficients are the Fibonacci numbers themselves,</p>
+<p><span class="math display">\[
+\begin{align*}
+F(x)
+    &amp; = \sum_{n = 0}^\infty F_n x^n
+      = \sum_{n = 1}^\infty F_n x^n,
+\end{align*}
+\]</span></p>
+<p>since <span class="math inline">\(F_0 = 0\)</span>.</p>
+<p>We then separate the two initial terms from the sum and subsitute the recurrence relation for <span class="math inline">\(F_n\)</span> into the coefficients of the sum.</p>
+<p><span class="math display">\[
+\begin{align*}
+F(x)
+    &amp; = x + \sum_{n = 2}^\infty F_n x^n \\
+    &amp; = x + \sum_{n = 2}^\infty (F_{n - 1} + F_{n - 2}) x^n \\
+    &amp; = x + \sum_{n = 2}^\infty F_{n - 1} x^n + \sum_{n = 2}^\infty F_{n - 2} x^n
+\end{align*}
+\]</span></p>
+<p>We now focus on rewriting each of these two sums in terms of the generating function. For the first sum, we have</p>
+<p><span class="math display">\[
+\begin{align*}
+\sum_{n = 2}^\infty F_{n - 1} x^n
+    &amp; = x \sum_{n = 2}^\infty F_{n - 1} x^{n - 1}
+      = x \sum_{n = 1}^\infty F_n x^n
+      = x F(x).
+\end{align*}
+\]</span></p>
+<p>Similarly, for the second sum, we have <span class="math display">\[
+\begin{align*}
+\sum_{n = 2}^\infty F_{n - 2} x^n
+    &amp; = x^2 \sum_{n = 2}^\infty F_{n - 2} x^{n - 2}
+      = x^2 \sum_{n = 0}^\infty F_n x^n
+      = x^2 F(x).
+\end{align*}
+\]</span></p>
+<p>We therefore have that</p>
+<p><span class="math display">\[
+\begin{align*}
+F(x)
+    &amp; = x + x F(x) + x^2 F(x).
+\end{align*}
+\]</span></p>
+<p>Sovling for the generating function, we get</p>
+<p><span class="math display">\[
+\begin{align*}
+F(x)
+    &amp; = \frac{x}{1 - x - x^2}.
+\end{align*}
+\]</span></p>
+<p>Now that we have found a closed form for the generating function, all that remains is to express this function as a power series. After doing so, we may match its coefficients term-by-term with the corresponding Fibonacci numbers. The roots of the polynomial <span class="math inline">\(1 - x - x^2\)</span> are <span class="math inline">\(-\phi\)</span> and <span class="math inline">\(-\psi\)</span>, where</p>
+<p><span class="math display">\[
+\begin{align*}
+\phi
+    &amp; = \frac{1 + \sqrt{5}}{2}
+\end{align*}
+\]</span></p>
+<p>and</p>
+<p><span class="math display">\[
+\begin{align*}
+\psi
+    &amp; = \frac{1 - \sqrt{5}}{2},
+\end{align*}
+\]</span></p>
+<p>so the polynomial factors as <span class="math inline">\(1 - x - x^2 = - (x + \phi) (x + \psi)\)</span>.</p>
+<p>In order to express the generating function as a power series, we will use the <a href="http://en.wikipedia.org/wiki/Partial_fraction_decomposition">partial fraction decomposition</a> to express it in the form</p>
+<p><span class="math display">\[
+\begin{align*}
+F(x)
+    &amp; = -\frac{x}{(x + \phi) (x + \psi)}
+      = \frac{A}{x + \phi} + \frac{B}{x + \psi},
+\end{align*}
+\]</span></p>
+<p>which is equivalent to</p>
+<p><span class="math display">\[
+\begin{align*}
+-x
+    &amp; = A (x + \psi) + B (x + \phi).
+\end{align*}
+\]</span></p>
+<p>Letting <span class="math inline">\(x = -\phi\)</span>, we find that <span class="math inline">\(A = -\frac{\phi}{\sqrt{5}}\)</span>. Similarly, letting <span class="math inline">\(x = -\psi\)</span>, we get that <span class="math inline">\(B = \frac{\psi}{\sqrt{5}}\)</span>. Therefore</p>
+<p><span class="math display">\[
+\begin{align*}
+F(x)
+    &amp; = \frac{1}{\sqrt{5}} \left( \frac{\psi}{x + \psi} - \frac{\phi}{x + \phi} \right).
+\end{align*}
+\]</span></p>
+<p>We now wish to express each of these two terms as the sum of a geometric series. Recall that the sum of a <a href="http://en.wikipedia.org/wiki/Geometric_series">geometric series</a> is given by</p>
+<p><span class="math display">\[
+\begin{align*}
+\frac{1}{1 - x}
+    &amp; = \sum_{n = 0}^\infty x^n.
+\end{align*}
+\]</span></p>
+<p>Note that this infinite sum converges if and only if <span class="math inline">\(|x| &lt; 1\)</span>. However, considered as a <a href="http://en.wikipedia.org/wiki/Formal_power_series">formal power series</a>, this identity always holds. We use this identity, and the fact that <span class="math inline">\(\phi = -\frac{1}{\psi}\)</span>, to rewrite the first term of the generating function as</p>
+<p><span class="math display">\[
+\begin{align*}
+\frac{\psi}{x + \psi}
+    &amp; = \frac{1}{1 + \frac{x}{\psi}}    \\
+    &amp; = \frac{1}{1 - \phi x}    \\
+    &amp; = \sum_{n = 0}^\infty \phi^n x^n.
+\end{align*}
+\]</span></p>
+<p>Similarly,</p>
+<p><span class="math display">\[
+\begin{align*}
+\frac{\phi}{x + \phi}
+    &amp; = \sum_{n = 0}^\infty \psi^n x^n,
+\end{align*}
+\]</span></p>
+<p>so</p>
+<p><span class="math display">\[
+\begin{align*}
+F(x)
+    &amp; = \frac{1}{\sqrt{5}} \left( \frac{\psi}{x + \psi} - \frac{\phi}{x + \phi} \right) \\
+    &amp; = \frac{1}{\sqrt{5}} \left( \sum_{n = 0}^\infty \phi^n x^n - \sum_{n = 0}^\infty \psi^n x^n \right)   \\
+    &amp; = \sum_{n = 0}^\infty \frac{1}{\sqrt{5}} \left( \phi^n - \psi^n \right) x^n.
+\end{align*}
+\]</span></p>
+<p>Since the definition of <span class="math inline">\(F(x)\)</span> was</p>
+<p><span class="math display">\[
+\begin{align*}
+F(x)
+    &amp; = \sum_{n = 0}^\infty F_n x^n,
+\end{align*}
+\]</span></p>
+<p>we match the coefficients on corresponding powers of <span class="math inline">\(x\)</span> in these two expressions for <span class="math inline">\(F(x)\)</span> to finally arrive at the desired closed form for the <span class="math inline">\(n\)</span>-th Fibonacci number,</p>
+<p><span class="math display">\[
+\begin{align*}
+F_n
+    &amp; = \frac{1}{\sqrt{5}} \left( \phi^n - \psi^n \right).
+\end{align*}
+\]</span></p>
+<p>Deriving this identity gives an excellent glimpse of the power of generating functions. Again, for a much more thorough treatment of their many applications, consult <a href="http://www.math.upenn.edu/~wilf/DownldGF.html">generatingfunctionology</a>.</p>
+<p>Discussion on <a href="https://news.ycombinator.com/item?id=6660311">Hacker News</a></p>

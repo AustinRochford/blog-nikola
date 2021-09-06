@@ -1,0 +1,511 @@
+<meta name="title" content="Evaluating Precision in Sports Analytics" />
+<meta name="tags" content="MLB, NHL, Bayesian Statistics, PyMC3" />
+<meta name="date" content="2018-12-20" />
+<meta name="has_math" content="true" /><style>
+.dataframe * {border-color: #c0c0c0 !important;}
+.dataframe th{background: #eee;}
+.dataframe td{
+    background: #fff;
+    text-align: right; 
+    min-width:5em;
+}
+
+/* Format summary rows */
+.dataframe-summary-row tr:last-child,
+.dataframe-summary-col td:last-child{
+background: #eee;
+    font-weight: 500;
+}
+</style>
+<p>One of my data anaylsis pet peeves is <a href="https://en.wikipedia.org/wiki/False_precision">false precision</a>. Just because it is possible calculate a quantity to three decimal places doesn’t mean all of those decimal places are meaningful. This post explores how much precision is justified in the context of two common sports statistics: batting average in Major League Baseball and save percentage in the National Hockey League. Using Bayesian hierarchical models, we find that though these quantities are conventionally calculated to three decimal places, only the first two decimal places of precision are justified.</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="op">%</span>matplotlib inline</span></code></pre></div>
+<div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> arviz <span class="im">as</span> az</span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> matplotlib <span class="im">import</span> pyplot <span class="im">as</span> plt</span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> matplotlib.ticker <span class="im">import</span> StrMethodFormatter</span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> numpy <span class="im">as</span> np</span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> pandas <span class="im">as</span> pd</span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> pymc3 <span class="im">as</span> pm</span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> scipy <span class="im">as</span> sp</span>
+<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> seaborn <span class="im">as</span> sns</span></code></pre></div>
+<div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>sns.<span class="bu">set</span>(color_codes<span class="op">=</span><span class="va">True</span>)</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>svpct_formatter <span class="op">=</span> ba_formatter <span class="op">=</span> StrMethodFormatter(<span class="st">&quot;</span><span class="sc">{x:.3f}</span><span class="st">&quot;</span>)</span></code></pre></div>
+<h2 id="batting-average">Batting average</h2>
+<p>We begin by loading hitting data for the 2018 MLB season from <a href="https://www.baseball-reference.com/leagues/MLB/2018-standard-batting.shtml#players_standard_batting::none">Baseball Reference</a>.</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> get_data_url(filename):</span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="ss">f&quot;https://www.austinrochford.com/resources/sports_precision/</span><span class="sc">{</span>filename<span class="sc">}</span><span class="ss">&quot;</span></span></code></pre></div>
+<div class="sourceCode" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> load_data(filepath, player_col, usecols):</span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>    df <span class="op">=</span> pd.read_csv(filepath, usecols<span class="op">=</span>[player_col] <span class="op">+</span> usecols)</span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> (pd.concat((df[player_col]</span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a>                         .<span class="bu">str</span>.split(<span class="st">&#39;</span><span class="ch">\\</span><span class="st">&#39;</span>, expand<span class="op">=</span><span class="va">True</span>)</span>
+<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a>                         .rename(columns<span class="op">=</span>{<span class="dv">0</span>: <span class="st">&#39;name&#39;</span>, <span class="dv">1</span>: <span class="st">&#39;player_id&#39;</span>}),</span>
+<span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a>                       df.drop(player_col, axis<span class="op">=</span><span class="dv">1</span>)),</span>
+<span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a>                      axis<span class="op">=</span><span class="dv">1</span>)</span>
+<span id="cb5-9"><a href="#cb5-9" aria-hidden="true" tabindex="-1"></a>              .rename(columns<span class="op">=</span><span class="bu">str</span>.lower)</span>
+<span id="cb5-10"><a href="#cb5-10" aria-hidden="true" tabindex="-1"></a>              .groupby([<span class="st">&#39;player_id&#39;</span>, <span class="st">&#39;name&#39;</span>])</span>
+<span id="cb5-11"><a href="#cb5-11" aria-hidden="true" tabindex="-1"></a>              .first() <span class="co"># players that switched teams have their entire season stats listed once per team</span></span>
+<span id="cb5-12"><a href="#cb5-12" aria-hidden="true" tabindex="-1"></a>              .reset_index(<span class="st">&#39;name&#39;</span>))</span></code></pre></div>
+<div class="sourceCode" id="cb6"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>mlb_df <span class="op">=</span> load_data(get_data_url(<span class="st">&#39;2018_batting.csv&#39;</span>), <span class="st">&#39;Name&#39;</span>, [<span class="st">&#39;AB&#39;</span>, <span class="st">&#39;H&#39;</span>])</span></code></pre></div>
+<div class="sourceCode" id="cb7"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a>mlb_df.head()</span></code></pre></div>
+<div>
+<center>
+<style scoped>
+.dataframe tbody tr th:only-of-type {
+vertical-align: middle;
+}
+
+.dataframe tbody tr th {
+vertical-align: top;
+}
+
+.dataframe thead th {
+text-align: right;
+}
+</style>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th>
+</th>
+<th>
+name
+</th>
+<th>
+ab
+</th>
+<th>
+h
+</th>
+</tr>
+<tr>
+<th>
+player_id
+</th>
+<th>
+</th>
+<th>
+</th>
+<th>
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>
+abreujo02
+</th>
+<td>
+Jose Abreu
+</td>
+<td>
+499
+</td>
+<td>
+132
+</td>
+</tr>
+<tr>
+<th>
+acunaro01
+</th>
+<td>
+Ronald Acuna
+</td>
+<td>
+433
+</td>
+<td>
+127
+</td>
+</tr>
+<tr>
+<th>
+adamewi01
+</th>
+<td>
+Willy Adames
+</td>
+<td>
+288
+</td>
+<td>
+80
+</td>
+</tr>
+<tr>
+<th>
+adamja01
+</th>
+<td>
+Jason Adam
+</td>
+<td>
+0
+</td>
+<td>
+0
+</td>
+</tr>
+<tr>
+<th>
+adamsau02
+</th>
+<td>
+Austin L. Adams
+</td>
+<td>
+0
+</td>
+<td>
+0
+</td>
+</tr>
+</tbody>
+</table>
+</center>
+</div>
+<div class="sourceCode" id="cb8"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>batter_df <span class="op">=</span> mlb_df[mlb_df[<span class="st">&#39;ab&#39;</span>] <span class="op">&gt;</span> <span class="dv">0</span>]</span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>n_player, _ <span class="op">=</span> batter_df.shape</span></code></pre></div>
+<p>This data set covers nearly 1,000 MLB players.</p>
+<div class="sourceCode" id="cb9"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a>n_player</span></code></pre></div>
+<pre><code>984</code></pre>
+<p><a href="#batting-average">Batting average</a>(https://en.wikipedia.org/wiki/Batting_average_(baseball%29) is the most basic summary of a player’s batting performance and is defined as their number of hits divided by their number of at bats. In order to assess the amount of precision that is justified when calculating batting average, we build a hierarchical logistic model. Let <span class="math inline">\(n_i\)</span> be the number of at bats for the <span class="math inline">\(i\)</span>-th player and let <span class="math inline">\(y_i\)</span> be their number of hits. Our model is</p>
+<p><span class="math display">\[
+\begin{align*}
+    \mu_{\eta}
+        &amp; \sim N(0, 5^2) \\
+    \sigma_{\eta}
+        &amp; \sim \textrm{Half-}N(2.5^2) \\
+    \eta_i
+        &amp; \sim N(\mu, \sigma_{\eta}^2) \\
+    \textrm{ba}_i
+        &amp; = \textrm{sigm}(\eta_i) \\
+    y_i\ |\ n_i
+        &amp; \sim \textrm{Binomial}(n_i, \textrm{ba}_i).
+\end{align*}
+\]</span></p>
+<p>We specify this model in <a href="https://docs.pymc.io/"><code>pymc3</code></a> below using a <a href="https://twiecki.github.io/blog/2017/02/08/bayesian-hierchical-non-centered/">non-centered parametrization</a>.</p>
+<div class="sourceCode" id="cb11"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> hierarchical_normal(name, shape, μ<span class="op">=</span><span class="va">None</span>):</span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> μ <span class="kw">is</span> <span class="va">None</span>:</span>
+<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a>        μ <span class="op">=</span> pm.Normal(<span class="ss">f&quot;μ_</span><span class="sc">{</span>name<span class="sc">}</span><span class="ss">&quot;</span>, <span class="fl">0.</span>, <span class="fl">5.</span>)</span>
+<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb11-5"><a href="#cb11-5" aria-hidden="true" tabindex="-1"></a>    Δ <span class="op">=</span> pm.Normal(<span class="ss">f&quot;Δ_</span><span class="sc">{</span>name<span class="sc">}</span><span class="ss">&quot;</span>, shape<span class="op">=</span>shape)</span>
+<span id="cb11-6"><a href="#cb11-6" aria-hidden="true" tabindex="-1"></a>    σ <span class="op">=</span> pm.HalfNormal(<span class="ss">f&quot;σ_</span><span class="sc">{</span>name<span class="sc">}</span><span class="ss">&quot;</span>, <span class="fl">2.5</span>)</span>
+<span id="cb11-7"><a href="#cb11-7" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb11-8"><a href="#cb11-8" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> pm.Deterministic(name, μ <span class="op">+</span> Δ <span class="op">*</span> σ)</span></code></pre></div>
+<div class="sourceCode" id="cb12"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> pm.Model() <span class="im">as</span> mlb_model:</span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a>    η <span class="op">=</span> hierarchical_normal(<span class="st">&quot;η&quot;</span>, n_player)</span>
+<span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a>    ba <span class="op">=</span> pm.Deterministic(<span class="st">&quot;ba&quot;</span>, pm.math.sigmoid(η))</span>
+<span id="cb12-4"><a href="#cb12-4" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb12-5"><a href="#cb12-5" aria-hidden="true" tabindex="-1"></a>    hits <span class="op">=</span> pm.Binomial(<span class="st">&quot;hits&quot;</span>, batter_df[<span class="st">&#39;ab&#39;</span>], ba, observed<span class="op">=</span>batter_df[<span class="st">&#39;h&#39;</span>])</span></code></pre></div>
+<p>We proceeed to sample from the model’s posterior distribution.</p>
+<div class="sourceCode" id="cb13"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a>CHAINS <span class="op">=</span> <span class="dv">3</span></span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a>SEED <span class="op">=</span> <span class="dv">88564</span> <span class="co"># from random.org, for reproducibility</span></span>
+<span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb13-4"><a href="#cb13-4" aria-hidden="true" tabindex="-1"></a>SAMPLE_KWARGS <span class="op">=</span> {</span>
+<span id="cb13-5"><a href="#cb13-5" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;draws&#39;</span>: <span class="dv">1000</span>,</span>
+<span id="cb13-6"><a href="#cb13-6" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;tune&#39;</span>: <span class="dv">1000</span>,</span>
+<span id="cb13-7"><a href="#cb13-7" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;chains&#39;</span>: CHAINS,</span>
+<span id="cb13-8"><a href="#cb13-8" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;cores&#39;</span>: CHAINS,</span>
+<span id="cb13-9"><a href="#cb13-9" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;random_seed&#39;</span>: <span class="bu">list</span>(SEED <span class="op">+</span> np.arange(CHAINS))</span>
+<span id="cb13-10"><a href="#cb13-10" aria-hidden="true" tabindex="-1"></a>}</span></code></pre></div>
+<div class="sourceCode" id="cb14"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> mlb_model:</span>
+<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a>    mlb_trace <span class="op">=</span> pm.sample(<span class="op">**</span>SAMPLE_KWARGS)</span></code></pre></div>
+<pre><code>Auto-assigning NUTS sampler...
+Initializing NUTS using jitter+adapt_diag...
+Multiprocess sampling (3 chains in 3 jobs)
+NUTS: [σ_η, Δ_η, μ_η]
+Sampling 3 chains: 100%|██████████| 6000/6000 [00:44&lt;00:00, 133.94draws/s]</code></pre>
+<p>Before drawing conclusions from the posterior samples, we use <a href="https://arviz-devs.github.io/arviz/index.html"><code>arviz</code></a> to verify that there are no obvious problems with the sampler diagnostics.</p>
+<div class="sourceCode" id="cb16"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a>az.plot_energy(mlb_trace)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/sports_precision/sports_precision_21_0.png" title="fig:" alt="png" />
+</center>
+<div class="sourceCode" id="cb17"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a>az.gelman_rubin(mlb_trace).<span class="bu">max</span>()</span></code></pre></div>
+<pre><code>&lt;xarray.Dataset&gt;
+Dimensions:  ()
+Data variables:
+    μ_η      float64 1.01
+    Δ_η      float64 1.0
+    σ_η      float64 1.0
+    η        float64 1.0
+    ba       float64 1.0</code></pre>
+<p>First we’ll examine the posterior distribution of <a href="https://www.baseball-reference.com/players/t/troutmi01.shtml">Mike Trout</a>’s batting average.</p>
+<div class="sourceCode" id="cb19"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plt.subplots(figsize<span class="op">=</span>(<span class="dv">8</span>, <span class="dv">6</span>))</span>
+<span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a>trout_ix <span class="op">=</span> (batter_df.index <span class="op">==</span> <span class="st">&#39;troutmi01&#39;</span>).argmax()</span>
+<span id="cb19-4"><a href="#cb19-4" aria-hidden="true" tabindex="-1"></a>ax.hist(mlb_trace[<span class="st">&#39;ba&#39;</span>][:, trout_ix], bins<span class="op">=</span><span class="dv">30</span>, alpha<span class="op">=</span><span class="fl">0.5</span>)<span class="op">;</span></span>
+<span id="cb19-5"><a href="#cb19-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb19-6"><a href="#cb19-6" aria-hidden="true" tabindex="-1"></a>ax.vlines(batter_df[<span class="st">&#39;h&#39;</span>]</span>
+<span id="cb19-7"><a href="#cb19-7" aria-hidden="true" tabindex="-1"></a>                   .div(batter_df[<span class="st">&#39;ab&#39;</span>])</span>
+<span id="cb19-8"><a href="#cb19-8" aria-hidden="true" tabindex="-1"></a>                   .loc[<span class="st">&#39;troutmi01&#39;</span>],</span>
+<span id="cb19-9"><a href="#cb19-9" aria-hidden="true" tabindex="-1"></a>          <span class="dv">0</span>, <span class="dv">275</span>,</span>
+<span id="cb19-10"><a href="#cb19-10" aria-hidden="true" tabindex="-1"></a>          linestyles<span class="op">=</span><span class="st">&#39;--&#39;</span>,</span>
+<span id="cb19-11"><a href="#cb19-11" aria-hidden="true" tabindex="-1"></a>          label<span class="op">=</span><span class="st">&quot;Actual batting average&quot;</span>)<span class="op">;</span></span>
+<span id="cb19-12"><a href="#cb19-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb19-13"><a href="#cb19-13" aria-hidden="true" tabindex="-1"></a>ax.xaxis.set_major_formatter(ba_formatter)<span class="op">;</span></span>
+<span id="cb19-14"><a href="#cb19-14" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="st">&quot;Batting average&quot;</span>)<span class="op">;</span></span>
+<span id="cb19-15"><a href="#cb19-15" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb19-16"><a href="#cb19-16" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="st">&quot;Posterior density&quot;</span>)<span class="op">;</span></span>
+<span id="cb19-17"><a href="#cb19-17" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb19-18"><a href="#cb19-18" aria-hidden="true" tabindex="-1"></a>ax.legend()<span class="op">;</span></span>
+<span id="cb19-19"><a href="#cb19-19" aria-hidden="true" tabindex="-1"></a>ax.set_title(<span class="st">&quot;Mike Trout&quot;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/sports_precision/sports_precision_24_0.png" title="fig:" alt="png" />
+</center>
+<p>We see that the posterior places significant mass between .260 and .320, quite a wide range of batting averages. This range roughly corresponds to the 95% credible interval for his 2018 batting average.</p>
+<div class="sourceCode" id="cb20"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a>np.percentile(mlb_trace[<span class="st">&#39;ba&#39;</span>][:, trout_ix], [<span class="fl">2.5</span>, <span class="fl">97.5</span>])</span></code></pre></div>
+<pre><code>array([ 0.25516468,  0.32704036])</code></pre>
+<p>We will use the width of the 95% credible interval for each player’s batting average to determine how many digits of precision are justified.</p>
+<div class="sourceCode" id="cb22"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb22-1"><a href="#cb22-1" aria-hidden="true" tabindex="-1"></a>mlb_df <span class="op">=</span> batter_df.assign(</span>
+<span id="cb22-2"><a href="#cb22-2" aria-hidden="true" tabindex="-1"></a>    width_95<span class="op">=</span>sp.stats.iqr(mlb_trace[<span class="st">&quot;ba&quot;</span>], axis<span class="op">=</span><span class="dv">0</span>, rng<span class="op">=</span>(<span class="fl">2.5</span>, <span class="fl">97.5</span>))</span>
+<span id="cb22-3"><a href="#cb22-3" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
+<p>The following plot shows the width of these intervals, grouped by the number of at bats the player had in 2018.</p>
+<div class="sourceCode" id="cb23"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb23-1"><a href="#cb23-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> plot_ci_width(grouped, width):</span>
+<span id="cb23-2"><a href="#cb23-2" aria-hidden="true" tabindex="-1"></a>    fig, ax <span class="op">=</span> plt.subplots(figsize<span class="op">=</span>(<span class="dv">8</span>, <span class="dv">6</span>))</span>
+<span id="cb23-3"><a href="#cb23-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb23-4"><a href="#cb23-4" aria-hidden="true" tabindex="-1"></a>    low <span class="op">=</span> grouped.quantile(<span class="fl">0.025</span>)</span>
+<span id="cb23-5"><a href="#cb23-5" aria-hidden="true" tabindex="-1"></a>    high <span class="op">=</span> grouped.quantile(<span class="fl">0.975</span>)</span>
+<span id="cb23-6"><a href="#cb23-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb23-7"><a href="#cb23-7" aria-hidden="true" tabindex="-1"></a>    ax.fill_between(low.index, low, high,</span>
+<span id="cb23-8"><a href="#cb23-8" aria-hidden="true" tabindex="-1"></a>                    alpha<span class="op">=</span><span class="fl">0.25</span>,</span>
+<span id="cb23-9"><a href="#cb23-9" aria-hidden="true" tabindex="-1"></a>                    label<span class="op">=</span><span class="ss">f&quot;</span><span class="sc">{</span>width<span class="sc">:.0%}</span><span class="ss"> interval&quot;</span>)<span class="op">;</span></span>
+<span id="cb23-10"><a href="#cb23-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb23-11"><a href="#cb23-11" aria-hidden="true" tabindex="-1"></a>    grouped.mean().plot(ax<span class="op">=</span>ax, label<span class="op">=</span><span class="st">&quot;Average&quot;</span>)</span>
+<span id="cb23-12"><a href="#cb23-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb23-13"><a href="#cb23-13" aria-hidden="true" tabindex="-1"></a>    ax.set_ylabel(<span class="st">&quot;Width of 95</span><span class="sc">% c</span><span class="st">redible interval&quot;</span>)<span class="op">;</span></span>
+<span id="cb23-14"><a href="#cb23-14" aria-hidden="true" tabindex="-1"></a>    ax.legend(loc<span class="op">=</span><span class="dv">0</span>)<span class="op">;</span></span>
+<span id="cb23-15"><a href="#cb23-15" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb23-16"><a href="#cb23-16" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> ax</span></code></pre></div>
+<div class="sourceCode" id="cb24"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a>ax <span class="op">=</span> plot_ci_width(mlb_df[<span class="st">&#39;width_95&#39;</span>].groupby(mlb_df[<span class="st">&#39;ab&#39;</span>].<span class="bu">round</span>(<span class="op">-</span><span class="dv">2</span>)), <span class="fl">0.95</span>)</span>
+<span id="cb24-2"><a href="#cb24-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb24-3"><a href="#cb24-3" aria-hidden="true" tabindex="-1"></a>ax.set_xlim(<span class="dv">0</span>, mlb_df[<span class="st">&#39;ab&#39;</span>].<span class="bu">max</span>())<span class="op">;</span></span>
+<span id="cb24-4"><a href="#cb24-4" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="st">&quot;At bats&quot;</span>)<span class="op">;</span></span>
+<span id="cb24-5"><a href="#cb24-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb24-6"><a href="#cb24-6" aria-hidden="true" tabindex="-1"></a>ax.set_ylim(bottom<span class="op">=</span><span class="fl">0.</span>)<span class="op">;</span></span>
+<span id="cb24-7"><a href="#cb24-7" aria-hidden="true" tabindex="-1"></a>ax.yaxis.set_major_formatter(ba_formatter)<span class="op">;</span></span>
+<span id="cb24-8"><a href="#cb24-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb24-9"><a href="#cb24-9" aria-hidden="true" tabindex="-1"></a>ax.set_title(<span class="st">&quot;Batting average&quot;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/sports_precision/sports_precision_31_0.png" title="fig:" alt="png" />
+</center>
+<p>We see that, on average, about 100 at bats are required to justify a single digit of precision in a player’s batting average. Even in the limit of very many at bats (600 at bats corresponds to just under four at bats per game across a 162 game season) the 95% credible interval has an average width approaching 0.060. This limit indicates that batting average is at most meaningful to the second digit, and even the second digit has a fair bit of uncertainty. This result is not surprising; calculating batting average to three decimal places is a historical convention, but I don’t think many analysts rely on the third digit for their decisions/arguments. While intuitive, it is pleasant to have a somewhat rigorous justification for this practice.</p>
+<h2 id="save-percentage">Save percentage</h2>
+<p>We apply a similar analysis to save percentage in the NHL. First we load 2018 goaltending data from <a href="https://www.hockey-reference.com/leagues/NHL_2018_goalies.html#stats::none">Hockey Reference</a>.</p>
+<div class="sourceCode" id="cb25"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb25-1"><a href="#cb25-1" aria-hidden="true" tabindex="-1"></a>nhl_df <span class="op">=</span> load_data(get_data_url(<span class="st">&#39;2017_2018_goalies.csv&#39;</span>), <span class="st">&#39;Player&#39;</span>, [<span class="st">&#39;SA&#39;</span>, <span class="st">&#39;SV&#39;</span>])</span></code></pre></div>
+<div class="sourceCode" id="cb26"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb26-1"><a href="#cb26-1" aria-hidden="true" tabindex="-1"></a>nhl_df.head()</span></code></pre></div>
+<div>
+<center>
+<style scoped>
+.dataframe tbody tr th:only-of-type {
+vertical-align: middle;
+}
+
+.dataframe tbody tr th {
+vertical-align: top;
+}
+
+.dataframe thead th {
+text-align: right;
+}
+</style>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th>
+</th>
+<th>
+name
+</th>
+<th>
+sa
+</th>
+<th>
+sv
+</th>
+</tr>
+<tr>
+<th>
+player_id
+</th>
+<th>
+</th>
+<th>
+</th>
+<th>
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>
+allenja01
+</th>
+<td>
+Jake Allen
+</td>
+<td>
+1614
+</td>
+<td>
+1462
+</td>
+</tr>
+<tr>
+<th>
+andercr01
+</th>
+<td>
+Craig Anderson
+</td>
+<td>
+1768
+</td>
+<td>
+1588
+</td>
+</tr>
+<tr>
+<th>
+anderfr01
+</th>
+<td>
+Frederik Andersen
+</td>
+<td>
+2211
+</td>
+<td>
+2029
+</td>
+</tr>
+<tr>
+<th>
+appleke01
+</th>
+<td>
+Ken Appleby
+</td>
+<td>
+55
+</td>
+<td>
+52
+</td>
+</tr>
+<tr>
+<th>
+bernijo01
+</th>
+<td>
+Jonathan Bernier
+</td>
+<td>
+1092
+</td>
+<td>
+997
+</td>
+</tr>
+</tbody>
+</table>
+</center>
+</div>
+<div class="sourceCode" id="cb27"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a>n_goalie, _ <span class="op">=</span> nhl_df.shape</span></code></pre></div>
+<p>This data set consists of the goaltending performance of just under 100 players.</p>
+<div class="sourceCode" id="cb28"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a>n_goalie</span></code></pre></div>
+<pre><code>95</code></pre>
+<p>Our <a href="https://en.wikipedia.org/wiki/Save_percentage">save percentage</a> model is almost identical to the batting average model. Let <span class="math inline">\(n_i\)</span> be the number of at shots the <span class="math inline">\(i\)</span>-th goalie faced and let <span class="math inline">\(y_i\)</span> be the number of saves they made. The model is</p>
+<p><span class="math display">\[
+\begin{align*}
+    \mu_{\eta}
+        &amp; \sim N(0, 5^2) \\
+    \sigma_{\eta}
+        &amp; \sim \textrm{Half-}N(2.5^2) \\
+    \eta_i
+        &amp; \sim N(\mu, \sigma_{\eta}^2) \\
+    \textrm{svp}_i
+        &amp; = \textrm{sigm}(\eta_i) \\
+    y_i\ |\ n_i
+        &amp; \sim \textrm{Binomial}(n_i, \textrm{svp}_i).
+\end{align*}
+\]</span></p>
+<div class="sourceCode" id="cb30"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb30-1"><a href="#cb30-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> pm.Model() <span class="im">as</span> nhl_model:</span>
+<span id="cb30-2"><a href="#cb30-2" aria-hidden="true" tabindex="-1"></a>    η <span class="op">=</span> hierarchical_normal(<span class="st">&quot;η&quot;</span>, n_goalie)</span>
+<span id="cb30-3"><a href="#cb30-3" aria-hidden="true" tabindex="-1"></a>    svp <span class="op">=</span> pm.Deterministic(<span class="st">&quot;svp&quot;</span>, pm.math.sigmoid(η))</span>
+<span id="cb30-4"><a href="#cb30-4" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb30-5"><a href="#cb30-5" aria-hidden="true" tabindex="-1"></a>    saves <span class="op">=</span> pm.Binomial(<span class="st">&quot;saves&quot;</span>, nhl_df[<span class="st">&#39;sa&#39;</span>], svp, observed<span class="op">=</span>nhl_df[<span class="st">&#39;sv&#39;</span>])</span></code></pre></div>
+<div class="sourceCode" id="cb31"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb31-1"><a href="#cb31-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> nhl_model:</span>
+<span id="cb31-2"><a href="#cb31-2" aria-hidden="true" tabindex="-1"></a>    nhl_trace <span class="op">=</span> pm.sample(nuts_kwargs<span class="op">=</span>{<span class="st">&#39;target_accept&#39;</span>: <span class="fl">0.9</span>}, <span class="op">**</span>SAMPLE_KWARGS)</span></code></pre></div>
+<pre><code>Auto-assigning NUTS sampler...
+Initializing NUTS using jitter+adapt_diag...
+Multiprocess sampling (3 chains in 3 jobs)
+NUTS: [σ_η, Δ_η, μ_η]
+Sampling 3 chains: 100%|██████████| 6000/6000 [00:17&lt;00:00, 338.38draws/s]</code></pre>
+<p>Once again, the convergence diagnostics show no cause for concern.</p>
+<div class="sourceCode" id="cb33"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb33-1"><a href="#cb33-1" aria-hidden="true" tabindex="-1"></a>az.plot_energy(nhl_trace)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/sports_precision/sports_precision_44_0.png" title="fig:" alt="png" />
+</center>
+<div class="sourceCode" id="cb34"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb34-1"><a href="#cb34-1" aria-hidden="true" tabindex="-1"></a>az.gelman_rubin(nhl_trace).<span class="bu">max</span>()</span></code></pre></div>
+<pre><code>&lt;xarray.Dataset&gt;
+Dimensions:  ()
+Data variables:
+    μ_η      float64 1.0
+    Δ_η      float64 1.0
+    σ_η      float64 1.0
+    η        float64 1.0
+    svp      float64 1.0</code></pre>
+<p>We examine the posterior distribution of <a href="https://www.hockey-reference.com/players/b/bobrose01.html">Sergei Bobrovsky</a>’s save percentage.</p>
+<div class="sourceCode" id="cb36"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb36-1"><a href="#cb36-1" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plt.subplots(figsize<span class="op">=</span>(<span class="dv">8</span>, <span class="dv">6</span>))</span>
+<span id="cb36-2"><a href="#cb36-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb36-3"><a href="#cb36-3" aria-hidden="true" tabindex="-1"></a>bobs_ix <span class="op">=</span> (nhl_df.index <span class="op">==</span> <span class="st">&#39;bobrose01&#39;</span>).argmax()</span>
+<span id="cb36-4"><a href="#cb36-4" aria-hidden="true" tabindex="-1"></a>ax.hist(nhl_trace[<span class="st">&#39;svp&#39;</span>][:, bobs_ix], bins<span class="op">=</span><span class="dv">30</span>, alpha<span class="op">=</span><span class="fl">0.5</span>)<span class="op">;</span></span>
+<span id="cb36-5"><a href="#cb36-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb36-6"><a href="#cb36-6" aria-hidden="true" tabindex="-1"></a>ax.vlines(nhl_df[<span class="st">&#39;sv&#39;</span>]</span>
+<span id="cb36-7"><a href="#cb36-7" aria-hidden="true" tabindex="-1"></a>                .div(nhl_df[<span class="st">&#39;sa&#39;</span>])</span>
+<span id="cb36-8"><a href="#cb36-8" aria-hidden="true" tabindex="-1"></a>                .loc[<span class="st">&#39;bobrose01&#39;</span>],</span>
+<span id="cb36-9"><a href="#cb36-9" aria-hidden="true" tabindex="-1"></a>          <span class="dv">0</span>, <span class="dv">325</span>,</span>
+<span id="cb36-10"><a href="#cb36-10" aria-hidden="true" tabindex="-1"></a>          linestyles<span class="op">=</span><span class="st">&#39;--&#39;</span>,</span>
+<span id="cb36-11"><a href="#cb36-11" aria-hidden="true" tabindex="-1"></a>          label<span class="op">=</span><span class="st">&quot;Actual save percentage&quot;</span>)<span class="op">;</span></span>
+<span id="cb36-12"><a href="#cb36-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb36-13"><a href="#cb36-13" aria-hidden="true" tabindex="-1"></a>ax.xaxis.set_major_formatter(ba_formatter)<span class="op">;</span></span>
+<span id="cb36-14"><a href="#cb36-14" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="st">&quot;Save percentage&quot;</span>)<span class="op">;</span></span>
+<span id="cb36-15"><a href="#cb36-15" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb36-16"><a href="#cb36-16" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="st">&quot;Posterior density&quot;</span>)<span class="op">;</span></span>
+<span id="cb36-17"><a href="#cb36-17" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb36-18"><a href="#cb36-18" aria-hidden="true" tabindex="-1"></a>ax.legend(loc<span class="op">=</span><span class="dv">2</span>)<span class="op">;</span></span>
+<span id="cb36-19"><a href="#cb36-19" aria-hidden="true" tabindex="-1"></a>ax.set_title(<span class="st">&quot;Sergei Bobrovsky&quot;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/sports_precision/sports_precision_47_0.png" title="fig:" alt="png" />
+</center>
+<p>We see that the posterior places significant mass between .905 and .925. We see below that the best and worst save percentages (for goalies that faced at least 200 shots in 2018) are separated by about 0.070.</p>
+<div class="sourceCode" id="cb37"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb37-1"><a href="#cb37-1" aria-hidden="true" tabindex="-1"></a>(nhl_df[<span class="st">&#39;sv&#39;</span>]</span>
+<span id="cb37-2"><a href="#cb37-2" aria-hidden="true" tabindex="-1"></a>       .div(nhl_df[<span class="st">&#39;sa&#39;</span>])</span>
+<span id="cb37-3"><a href="#cb37-3" aria-hidden="true" tabindex="-1"></a>       [nhl_df[<span class="st">&#39;sa&#39;</span>] <span class="op">&gt;</span> <span class="dv">200</span>]</span>
+<span id="cb37-4"><a href="#cb37-4" aria-hidden="true" tabindex="-1"></a>       .quantile([<span class="fl">0.</span>, <span class="fl">1.</span>]))</span></code></pre></div>
+<pre><code>0.0    0.866995
+1.0    0.933712
+dtype: float64</code></pre>
+<p>Sergei Bobrovsky’s 0.020-wide credible interval is a significant proportion of this 0.070 total range.</p>
+<div class="sourceCode" id="cb39"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb39-1"><a href="#cb39-1" aria-hidden="true" tabindex="-1"></a>np.percentile(nhl_trace[<span class="st">&#39;svp&#39;</span>][:, bobs_ix], [<span class="fl">2.5</span>, <span class="fl">97.5</span>])</span></code></pre></div>
+<pre><code>array([ 0.90683748,  0.92526507])</code></pre>
+<p>As with batting average, we plot the width of each goalie’s interval, grouped by the number of shots they faced.</p>
+<div class="sourceCode" id="cb41"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb41-1"><a href="#cb41-1" aria-hidden="true" tabindex="-1"></a>nhl_df <span class="op">=</span> nhl_df.assign(</span>
+<span id="cb41-2"><a href="#cb41-2" aria-hidden="true" tabindex="-1"></a>    width_95<span class="op">=</span>sp.stats.iqr(nhl_trace[<span class="st">&quot;svp&quot;</span>], axis<span class="op">=</span><span class="dv">0</span>, rng<span class="op">=</span>(<span class="fl">2.5</span>, <span class="fl">97.5</span>))</span>
+<span id="cb41-3"><a href="#cb41-3" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
+<div class="sourceCode" id="cb42"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb42-1"><a href="#cb42-1" aria-hidden="true" tabindex="-1"></a>ax <span class="op">=</span> plot_ci_width(nhl_df[<span class="st">&#39;width_95&#39;</span>].groupby(nhl_df[<span class="st">&#39;sa&#39;</span>].<span class="bu">round</span>(<span class="op">-</span><span class="dv">2</span>)), <span class="fl">0.95</span>)</span>
+<span id="cb42-2"><a href="#cb42-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb42-3"><a href="#cb42-3" aria-hidden="true" tabindex="-1"></a>ax.set_xlim(<span class="dv">0</span>, nhl_df[<span class="st">&#39;sa&#39;</span>].<span class="bu">max</span>())<span class="op">;</span></span>
+<span id="cb42-4"><a href="#cb42-4" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="st">&quot;Shots against&quot;</span>)<span class="op">;</span></span>
+<span id="cb42-5"><a href="#cb42-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb42-6"><a href="#cb42-6" aria-hidden="true" tabindex="-1"></a>ax.set_ylim(bottom<span class="op">=</span><span class="fl">0.</span>)<span class="op">;</span></span>
+<span id="cb42-7"><a href="#cb42-7" aria-hidden="true" tabindex="-1"></a>ax.yaxis.set_major_formatter(svpct_formatter)<span class="op">;</span></span>
+<span id="cb42-8"><a href="#cb42-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb42-9"><a href="#cb42-9" aria-hidden="true" tabindex="-1"></a>ax.set_title(<span class="st">&quot;Save percentage&quot;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/sports_precision/sports_precision_54_0.png" title="fig:" alt="png" />
+</center>
+<p>This plot shows that even goalies that face many (2000+) shots have credible intervals wider that 0.010, a signifcant proportion of the total variation between goalies.</p>
+<p>This post is available as a Jupyter notebook <a href="https://nbviewer.jupyter.org/gist/AustinRochford/36f072aedb7df368fdcf7d98998728e4/sports_precision.ipynb">here</a>.</p>

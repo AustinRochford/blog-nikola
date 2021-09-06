@@ -1,0 +1,217 @@
+<meta name="title" content="Prior Distributions for Bayesian Regression Using PyMC" />
+<meta name="tags" content="Probability, Bayesian Statistics, PyMC" />
+<meta name="date" content="2013-09-02" />
+<meta name="has_math" content="true" /><p>In this post, I’ll discuss the basics of Bayesian linear regression, exploring three different prior distributions on the regression coefficients. The models in question are defined by the equation</p>
+<p><span class="math display">\[y = x^T \beta + \varepsilon\]</span></p>
+<p>for <span class="math inline">\(x, \beta \in \mathbb{R}^p\)</span> and <span class="math inline">\(\varepsilon \sim N(0, \sigma^2),\)</span> where <span class="math inline">\(\sigma^2\)</span> is known. In this example, we will use <span class="math inline">\(\sigma^2 = 1.\)</span> If we have observed <span class="math inline">\(x_1, \ldots, x_n \in \mathbb{R}^p\)</span>, the conditional distribution is <span class="math inline">\(y | X, \beta \sim N(X \beta, \sigma^2 I),\)</span> where</p>
+<p><span class="math display">\[X = \begin{pmatrix}
+    x_1^T  \\
+    \vdots \\
+    x_n^T
+    \end{pmatrix} \in \mathbb{R}^{n \times p}\]</span></p>
+<p>and</p>
+<p><span class="math display">\[y = \begin{pmatrix}
+    y_1    \\
+    \vdots \\
+    y_n
+    \end{pmatrix} \in \mathbb{R}^n.\]</span></p>
+<p>To determine the regression coefficients, we will use <a href="http://en.wikipedia.org/wiki/Maximum_a_posteriori_estimation">maximum a posteriori esimation</a> (MAP), which is the Bayesian counterpart of <a href="http://en.wikipedia.org/wiki/Maximum_likelihood">maximum likelihod estimation</a>. The MAP estimate of a quantity is the value with the largest posterior likelihood. Before we can estimate the regression coefficients in this manner, we must place a prior distribution on them. We will explore three different choices of prior distribution and the Bayesian approaches to which they each lead.</p>
+<p>We will use each approach to examine data generated according to a model from the excellent blog post <a href="http://camdp.com/blogs/machine-learning-counter-examples-pt1">Machine Learning Counterexamples Part 1</a> by <a href="https://twitter.com/Cmrn_DP">Cam Davison-Pilon</a>. The data are generated according to the relation</p>
+<p><span class="math display">\[y = 10 x_1 + 10 x_2 + 0.1 x_3,\]</span></p>
+<p>where <span class="math inline">\(x_1 \sim N(0, 1)\)</span>, <span class="math inline">\(x_2 = -x_1 + N(0, 10^{-6})\)</span>, and <span class="math inline">\(x_3 \sim N(0, 1)\)</span>. We now generate data according to this model.</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> scipy.stats <span class="im">import</span> norm</span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>n <span class="op">=</span> <span class="dv">1000</span></span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a>x1 <span class="op">=</span> norm.rvs(<span class="dv">0</span>, <span class="dv">1</span>, size<span class="op">=</span>n)</span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a>x2 <span class="op">=</span> <span class="op">-</span>x1 <span class="op">+</span> norm.rvs(<span class="dv">0</span>, <span class="dv">10</span><span class="op">**-</span><span class="dv">3</span>, size<span class="op">=</span>n)</span>
+<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a>x3 <span class="op">=</span> norm.rvs(<span class="dv">0</span>, <span class="dv">1</span>, size<span class="op">=</span>n)</span>
+<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a>X <span class="op">=</span> np.column_stack([x1, x2, x3])</span>
+<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a>y <span class="op">=</span> <span class="dv">10</span> <span class="op">*</span> x1 <span class="op">+</span> <span class="dv">10</span> <span class="op">*</span> x2 <span class="op">+</span> <span class="fl">0.1</span> <span class="op">*</span> x3</span></code></pre></div>
+<p>Since <span class="math inline">\(x_1\)</span> and <span class="math inline">\(x_2\)</span> are highly correlated, we see that the model reduces to</p>
+<p><span class="math display">\[y = 0.1 x_3 + N(0, 10^{-6}).\]</span></p>
+<p>Each of the priors on the regression coefficients will predict this reduced model with varying amounts of accuracy. When estimating the regression coefficients, we assume the model has the form</p>
+<p><span class="math display">\[y = \beta_1 x_1 + \beta_2 x_2 + \beta_3 x_3,\]</span></p>
+<p>so the correct values of the coefficients are <span class="math inline">\(\beta_1 = 0 = \beta_2\)</span> and <span class="math inline">\(\beta_3 = 0.1.\)</span></p>
+<h2 id="ordinary-least-squares">Ordinary Least Squares</h2>
+<p>The simplest choice is the <a href="https://en.wikipedia.org/wiki/Prior_probability#Improper_priors">improper</a>, <a href="https://en.wikipedia.org/wiki/Prior_probability#Uninformative_prior%20s">un informative</a> prior <span class="math inline">\(\pi(\beta) = 1\)</span> for <span class="math inline">\(\beta \in \mathbb{R}^p.\)</span></p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> matplotlib.pyplot <span class="im">as</span> plt</span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>xmax <span class="op">=</span> <span class="dv">1000</span></span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a>fig <span class="op">=</span> plt.figure()</span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a>ax <span class="op">=</span> fig.add_subplot(<span class="dv">111</span>)</span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a>ax.plot((<span class="op">-</span>xmax, xmax), (<span class="dv">1</span>, <span class="dv">1</span>))<span class="op">;</span></span>
+<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a>ax.set_ylim(bottom<span class="op">=</span><span class="dv">0</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/bayesian-priors/uninformative.png" />
+</center>
+<p>This prior reflects a belief that all possible values of the regression coefficients are equally likely. It also induces significant simplication in Bayes’ Theorem:</p>
+<p><span class="math display">\[\begin{array}
+    {}f(\beta | y, X) &amp; = \frac{f(y | X, \beta)
+\pi(\beta)}{\int_{-\infty}^\infty f(y | X, \beta) \pi(\beta)\ d \beta} \\
+                    &amp; = \frac{f(y | X, \beta)}{\int_{-\infty}^\infty f(y | X,
+\beta) \ d \beta}.
+\end{array}\]</span></p>
+<p>The MAP estimate of <span class="math inline">\(\beta\)</span> is</p>
+<p><span class="math display">\[\begin{array}
+{}\hat{\beta}_{MAP} &amp; = \operatorname{max}_\beta f(\beta | y, X) \\
+                  &amp; = \operatorname{max}_\beta \frac{f(y | X,
+\beta)}{\int_{-\infty}^\infty f(y | X, \beta) \ d \beta} \\
+                  &amp; = \operatorname{max}_\beta f(y | X, \beta),
+\end{array}\]</span></p>
+<p>since the value of the integral is positive and does not depend on <span class="math inline">\(\beta\)</span>. We see that with the uninformative prior <span class="math inline">\(\pi(\beta) = 1\)</span>, the MAP estimate coincides with the maximum likelihood estimate.</p>
+<p>It is well-known that the maximum likelihood estimate of <span class="math inline">\(\beta\)</span> is the <a href="http://en.wikipedia.org/wiki/Ordinary_least_squares">ordinary least squares</a> estimate, <span class="math inline">\(\hat{\beta}_{OLS} = (X^T X)^{-1} X^T y.\)</span></p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> numpy <span class="im">as</span> np</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>np.dot(np.dot(np.linalg.inv(np.dot(X.T, X)), X.T), y)</span></code></pre></div>
+<pre><code>array([ 10. ,  10. ,   0.1])</code></pre>
+<p>We see here that ordinary least squares regression recovers the full model, <span class="math inline">\(y = 10 x_1 + 10 x_2 + 0.1 x_3\)</span>, not the more useful reduced model. The reason that ordinary least squares results in the full model is that it assumes the regressors are independent, and therefore cannot account for the fact that <span class="math inline">\(x_1\)</span> and <span class="math inline">\(x_2\)</span> are highly correlated.</p>
+<p>In order to derive the least squares coefficients from the Bayesian perspective, we must define the uninformative prior in pymc.</p>
+<div class="sourceCode" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> pymc</span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> sys</span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a>beta_min <span class="op">=</span> <span class="op">-</span><span class="dv">10</span><span class="op">**</span><span class="dv">6</span></span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a>beta_max <span class="op">=</span> <span class="dv">10</span><span class="op">**</span><span class="dv">6</span></span>
+<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a>beta1_ols <span class="op">=</span> pymc.Uniform(name<span class="op">=</span><span class="st">&#39;beta1&#39;</span>, lower<span class="op">=</span>beta_min, upper<span class="op">=</span>beta_max)</span>
+<span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a>beta2_ols <span class="op">=</span> pymc.Uniform(name<span class="op">=</span><span class="st">&#39;beta2&#39;</span>, lower<span class="op">=</span>beta_min, upper<span class="op">=</span>beta_max)</span>
+<span id="cb5-9"><a href="#cb5-9" aria-hidden="true" tabindex="-1"></a>beta3_ols <span class="op">=</span> pymc.Uniform(name<span class="op">=</span><span class="st">&#39;beta3&#39;</span>, lower<span class="op">=</span>beta_min, upper<span class="op">=</span>beta_max)</span></code></pre></div>
+<p>Here we use uniform distributions with support of <span class="math inline">\([-10^6, 10^6]\)</span> to approximate the uninformative prior while avoiding arithmetic overflows.</p>
+<p>Now we define the linear predictor in terms of the coefficients <span class="math inline">\(\beta_1\)</span>, <span class="math inline">\(\beta_2\)</span>, and <span class="math inline">\(\beta_3\)</span>.</p>
+<div class="sourceCode" id="cb6"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="at">@pymc.deterministic</span></span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> y_hat_ols(beta1<span class="op">=</span>beta1_ols, beta2<span class="op">=</span>beta2_ols, beta3<span class="op">=</span>beta3_ols, x1<span class="op">=</span>x1, x2<span class="op">=</span>x2, x3<span class="op">=</span>x3):</span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> beta1 <span class="op">*</span> x1 <span class="op">+</span> beta2 <span class="op">*</span> x2 <span class="op">+</span> beta3 <span class="op">*</span> x3</span></code></pre></div>
+<p>Note that we have applied the <a href="http://pymc-%20devs.github.io/pymc/modelbuilding.html#the-deterministic-class"><code>pymc.deterministic</code></a> decorator to <code>y_hat_ols</code> because it is a deterministic function of its inputs, even though these inputs are stochastic. We now define the response variable, pass its values to <code>pymc</code>, and indicate that these values were observed and therefore are fixed.</p>
+<div class="sourceCode" id="cb7"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a>Y_ols <span class="op">=</span> pymc.Normal(name<span class="op">=</span><span class="st">&#39;Y&#39;</span>, mu<span class="op">=</span>y_hat_ols, tau<span class="op">=</span><span class="fl">1.0</span>, value<span class="op">=</span>y, observed<span class="op">=</span><span class="va">True</span>)</span></code></pre></div>
+<p>We now initialze the <code>pymc</code> model and maximup a posteriori fitter.</p>
+<div class="sourceCode" id="cb8"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>ols_model <span class="op">=</span> pymc.Model([Y_ols, beta1_ols, beta2_ols, beta3_ols])</span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>ols_map <span class="op">=</span> pymc.MAP(ols_model)</span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>ols_map.fit()</span></code></pre></div>
+<p>We now retrieve the maximum a posteriori values of the coefficients.</p>
+<div class="sourceCode" id="cb9"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> get_coefficients(map_):</span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> [{<span class="bu">str</span>(variable): variable.value} <span class="cf">for</span> variable <span class="kw">in</span> map_.variables <span class="cf">if</span> <span class="bu">str</span>(variable).startswith(<span class="st">&#39;beta&#39;</span>)]</span>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a>get_coefficients(ols_map)</span></code></pre></div>
+<pre><code>[{&#39;beta2&#39;: array(10.00004405085075)},
+ {&#39;beta1&#39;: array(10.000044044812622)},
+ {&#39;beta3&#39;: array(0.10000003820538296)}]</code></pre>
+<p>We see that these values are within the algorithm’s step sizes,</p>
+<div class="sourceCode" id="cb11"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a>ols_map.eps</span></code></pre></div>
+<pre><code>array([ 0.001,  0.001,  0.001])</code></pre>
+<p>of the explicitly calculated ordinary least squares regression coefficients.</p>
+<h2 id="ridge-regression">Ridge Regression</h2>
+<p>The uninformative prior represents the belief that all combinations of regression coefficients are equally likely. In practice, this assumption is often not justified, and we may have reason to believe that many (or even most) of the regressors have little to no impact on the response. Such a belief can be interpreted as a preference for simple models with fewer regressors.</p>
+<p>Given that the <a href="http://en.wikipedia.org/wiki/Normal_distribution">normal distribution</a> is among the most studied objects in mathematics, a reasonable approach to quantifying this belief is to place zero-mean normal priors on the regression coefficients to indicate our preference for smaller values. This choice of prior distribution gives rise to the technique of <a href="http://en.wikipedia.org/wiki/Tikhonov_regularization">ridge regression</a>.</p>
+<div class="sourceCode" id="cb13"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a>xs <span class="op">=</span> np.linspace(<span class="op">-</span><span class="dv">5</span>, <span class="dv">5</span>, <span class="dv">250</span>)</span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a>fig <span class="op">=</span> plt.figure()</span>
+<span id="cb13-4"><a href="#cb13-4" aria-hidden="true" tabindex="-1"></a>ax <span class="op">=</span> fig.add_subplot(<span class="dv">111</span>)</span>
+<span id="cb13-5"><a href="#cb13-5" aria-hidden="true" tabindex="-1"></a>ax.plot(xs, norm.pdf(xs))<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/bayesian-priors/normal.png" />
+</center>
+<p>We now use <code>pymc</code> to give the coefficients standard normal priors.</p>
+<div class="sourceCode" id="cb14"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a>beta1_ridge <span class="op">=</span> pymc.Normal(<span class="st">&#39;beta1&#39;</span>, mu<span class="op">=</span><span class="dv">0</span>, tau<span class="op">=</span><span class="fl">1.0</span>)</span>
+<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a>beta2_ridge <span class="op">=</span> pymc.Normal(<span class="st">&#39;beta2&#39;</span>, mu<span class="op">=</span><span class="dv">0</span>, tau<span class="op">=</span><span class="fl">1.0</span>)</span>
+<span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a>beta3_ridge <span class="op">=</span> pymc.Normal(<span class="st">&#39;beta3&#39;</span>, mu<span class="op">=</span><span class="dv">0</span>, tau<span class="op">=</span><span class="fl">1.0</span>)</span></code></pre></div>
+<p>Just as with ordinary least squares, we define our linear predictor in terms of these coefficients.</p>
+<div class="sourceCode" id="cb15"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="at">@pymc.deterministic</span></span>
+<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> y_hat_ridge(beta1<span class="op">=</span>beta1_ridge, beta2<span class="op">=</span>beta2_ridge, beta3<span class="op">=</span>beta3_ridge, x1<span class="op">=</span>x1, x2<span class="op">=</span>x2, x3<span class="op">=</span>x3):</span>
+<span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> beta1 <span class="op">*</span> x1 <span class="op">+</span> beta2 <span class="op">*</span> x2 <span class="op">+</span> beta3 <span class="op">*</span> x3</span></code></pre></div>
+<p>We also set the distribution of the response.</p>
+<div class="sourceCode" id="cb16"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a>Y_ridge <span class="op">=</span> pymc.Normal(<span class="st">&#39;Y&#39;</span>, mu<span class="op">=</span>y_hat_ridge, tau<span class="op">=</span><span class="fl">1.0</span>, value<span class="op">=</span>y, observed<span class="op">=</span><span class="va">True</span>)</span></code></pre></div>
+<p>Again, we fit the model and find the MAP estimates.</p>
+<div class="sourceCode" id="cb17"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a>ridge_model <span class="op">=</span> pymc.Model([Y_ridge, beta1_ridge, beta2_ridge, beta3_ridge])</span>
+<span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a>ridge_map <span class="op">=</span> pymc.MAP(ridge_model)</span>
+<span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a>ridge_map.fit()</span>
+<span id="cb17-4"><a href="#cb17-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb17-5"><a href="#cb17-5" aria-hidden="true" tabindex="-1"></a>get_coefficients(ridge_map)</span></code></pre></div>
+<pre><code>[{&#39;beta1&#39;: array(0.004539760042452516)},
+ {&#39;beta2&#39;: array(0.004743440885490875)},
+ {&#39;beta3&#39;: array(0.09987676239942628)}]</code></pre>
+<p>These estimates are much closer the the reduced model, <span class="math inline">\(y = 0.1 x_3 + \varepsilon\)</span>, than the ordinary least squares estimates. The coefficients <span class="math inline">\(\beta_1\)</span> and <span class="math inline">\(\beta_2\)</span>, however, differ from their true values of zero by more than the aglorithm’s step sizes,</p>
+<div class="sourceCode" id="cb19"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a>ridge_map.eps</span></code></pre></div>
+<pre><code>array([ 0.001,  0.001,  0.001])</code></pre>
+<p>To be thorough, let’s compare these estimates to those computed by <code>scikit- learn</code>.</p>
+<div class="sourceCode" id="cb21"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> sklearn.linear_model <span class="im">import</span> RidgeCV</span>
+<span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a>skl_ridge_model <span class="op">=</span> RidgeCV(fit_intercept<span class="op">=</span><span class="va">False</span>)</span>
+<span id="cb21-4"><a href="#cb21-4" aria-hidden="true" tabindex="-1"></a>skl_ridge_model.fit(X, y)</span>
+<span id="cb21-5"><a href="#cb21-5" aria-hidden="true" tabindex="-1"></a>skl_ridge_model.coef_</span></code></pre></div>
+<pre><code>array([ 0.04630535,  0.04650529,  0.0999703 ])</code></pre>
+<p>These values are quite close to those produced by <code>pymc</code>.</p>
+<p>The reason that the ridge estimates of the regression coefficients are close to the true model, but not quite exactly in line with it, is that the standard normal prior causes all of the regression coefficients to shrink towards zero. While it is correct to shrink <span class="math inline">\(\beta_1\)</span> and <span class="math inline">\(\beta_2\)</span> to zero, this shrinkage must be balanced with the fact that <span class="math inline">\(\beta_3\)</span> is nonzero.</p>
+<h2 id="lasso-regression">LASSO Regression</h2>
+<p>The final Bayesian regression method we consider in this post is the LASSO. It is also based off the prior belief that most coefficients should be (close to) zero, but expresses this belief through a different, more exotic, prior distribution.</p>
+<p>The prior in question is the <a href="http://en.wikipedia.org/wiki/Laplace_distribution">Laplace distribution</a> (also known as the double exponential distribution). The following diagram contrasts the probability density functions of the normal distribution and the Laplace distribution.</p>
+<div class="sourceCode" id="cb23"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb23-1"><a href="#cb23-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> scipy.stats <span class="im">import</span> laplace</span>
+<span id="cb23-2"><a href="#cb23-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb23-3"><a href="#cb23-3" aria-hidden="true" tabindex="-1"></a>sigma2 <span class="op">=</span> <span class="fl">1.0</span></span>
+<span id="cb23-4"><a href="#cb23-4" aria-hidden="true" tabindex="-1"></a>b <span class="op">=</span> <span class="fl">1.0</span> <span class="op">/</span> np.sqrt(<span class="fl">2.0</span> <span class="op">*</span> sigma2)</span>
+<span id="cb23-5"><a href="#cb23-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb23-6"><a href="#cb23-6" aria-hidden="true" tabindex="-1"></a>fig <span class="op">=</span> plt.figure()</span>
+<span id="cb23-7"><a href="#cb23-7" aria-hidden="true" tabindex="-1"></a>ax <span class="op">=</span> fig.add_subplot(<span class="dv">111</span>)</span>
+<span id="cb23-8"><a href="#cb23-8" aria-hidden="true" tabindex="-1"></a>ax.plot(xs, norm.pdf(xs), label<span class="op">=</span><span class="st">&#39;Normal&#39;</span>)<span class="op">;</span></span>
+<span id="cb23-9"><a href="#cb23-9" aria-hidden="true" tabindex="-1"></a>ax.plot(xs, laplace.pdf(xs, shape<span class="op">=</span>b), label<span class="op">=</span><span class="st">&#39;Laplace&#39;</span>)<span class="op">;</span></span>
+<span id="cb23-10"><a href="#cb23-10" aria-hidden="true" tabindex="-1"></a>ax.legend()<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/bayesian-priors/laplace.png" />
+</center>
+<p>The shape parameter of the Laplace distribution in this figure was chosen so that it would have unit variance, the same as the normal distribution shown.</p>
+<p>The first notable feature of this diagram is that the Laplace distribution assigns a higher density to a neighborhood of zero than the normal distribution does. This fact serves to strengthen our prior assumption that the regression coefficients are likely to be zero. The second notable feature is that the Laplace distribution has fatter tails than the normal distribution, which will cause it to shrink all coefficients less than the normal prior does in ridge regression.</p>
+<p>We now fit the LASSO model in <code>pymc</code>.</p>
+<div class="sourceCode" id="cb24"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a>beta1_lasso <span class="op">=</span> pymc.Laplace(<span class="st">&#39;beta1&#39;</span>, mu<span class="op">=</span><span class="dv">0</span>, tau<span class="op">=</span><span class="fl">1.0</span> <span class="op">/</span> b)</span>
+<span id="cb24-2"><a href="#cb24-2" aria-hidden="true" tabindex="-1"></a>beta2_lasso <span class="op">=</span> pymc.Laplace(<span class="st">&#39;beta2&#39;</span>, mu<span class="op">=</span><span class="dv">0</span>, tau<span class="op">=</span><span class="fl">1.0</span> <span class="op">/</span> b)</span>
+<span id="cb24-3"><a href="#cb24-3" aria-hidden="true" tabindex="-1"></a>beta3_lasso <span class="op">=</span> pymc.Laplace(<span class="st">&#39;beta3&#39;</span>, mu<span class="op">=</span><span class="dv">0</span>, tau<span class="op">=</span><span class="fl">1.0</span> <span class="op">/</span> b)</span>
+<span id="cb24-4"><a href="#cb24-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb24-5"><a href="#cb24-5" aria-hidden="true" tabindex="-1"></a><span class="at">@pymc.deterministic</span></span>
+<span id="cb24-6"><a href="#cb24-6" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> y_hat_lasso(beta1<span class="op">=</span>beta1_lasso, beta2<span class="op">=</span>beta2_lasso, beta3<span class="op">=</span>beta3_lasso, x1<span class="op">=</span>x1, x2<span class="op">=</span>x2, x3<span class="op">=</span>x3):</span>
+<span id="cb24-7"><a href="#cb24-7" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> beta1 <span class="op">*</span> x1 <span class="op">+</span> beta2 <span class="op">*</span> x2 <span class="op">+</span> beta3 <span class="op">*</span> x3</span>
+<span id="cb24-8"><a href="#cb24-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb24-9"><a href="#cb24-9" aria-hidden="true" tabindex="-1"></a>Y_lasso <span class="op">=</span> pymc.Normal(<span class="st">&#39;Y&#39;</span>, mu<span class="op">=</span>y_hat_lasso, tau<span class="op">=</span><span class="fl">1.0</span>, value<span class="op">=</span>y, observed<span class="op">=</span><span class="va">True</span>)</span>
+<span id="cb24-10"><a href="#cb24-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb24-11"><a href="#cb24-11" aria-hidden="true" tabindex="-1"></a>lasso_model <span class="op">=</span> pymc.Model([Y_lasso, beta1_lasso, beta2_lasso, beta3_lasso])</span>
+<span id="cb24-12"><a href="#cb24-12" aria-hidden="true" tabindex="-1"></a>lasso_map <span class="op">=</span> pymc.MAP(lasso_model)</span>
+<span id="cb24-13"><a href="#cb24-13" aria-hidden="true" tabindex="-1"></a>lasso_map.fit()</span>
+<span id="cb24-14"><a href="#cb24-14" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb24-15"><a href="#cb24-15" aria-hidden="true" tabindex="-1"></a>get_coefficients(lasso_map)</span></code></pre></div>
+<pre><code>[{&#39;beta2&#39;: array(-9.289356796847342e-06)},
+ {&#39;beta3&#39;: array(0.09870141129637913)},
+ {&#39;beta1&#39;: array(1.811243155314106e-05)}]</code></pre>
+<p>These estimates are all within the algorithm’s step size,</p>
+<div class="sourceCode" id="cb26"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb26-1"><a href="#cb26-1" aria-hidden="true" tabindex="-1"></a>map_fitter.eps</span></code></pre></div>
+<pre><code>array([ 0.001,  0.001,  0.001])</code></pre>
+<p>of the reduced model’s true coefficients.</p>
+<p>We will once again verify these estimates using <code>scikit-learn</code>.</p>
+<div class="sourceCode" id="cb28"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> sklearn.linear_model <span class="im">import</span> LassoCV</span>
+<span id="cb28-2"><a href="#cb28-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb28-3"><a href="#cb28-3" aria-hidden="true" tabindex="-1"></a>skl_lasso_model <span class="op">=</span> LassoCV(fit_intercept<span class="op">=</span><span class="va">False</span>)</span>
+<span id="cb28-4"><a href="#cb28-4" aria-hidden="true" tabindex="-1"></a>skl_lasso_model.fit(X, y)</span>
+<span id="cb28-5"><a href="#cb28-5" aria-hidden="true" tabindex="-1"></a>skl_lasso_model.coef_</span></code></pre></div>
+<pre><code>array([-0.        ,  0.        ,  0.09952034])</code></pre>
+<p>These estimates are all fairly close to those produced by <code>pymc</code>. Here we also see one of the differences between the LASSO and ridge regression. While ridge regressionn tends to shrink all coefficients towards zero, the LASSO tends to set some coefficients exactly equal to zero. This behavior is one of the main practical differences between the two regression methods.</p>
+<h2 id="further-exploration">Further Exploration</h2>
+<p>We have only scratched the surface of Bayesian regression and <code>pymc</code> in this post. In my mind, finding maximum a posteriori estimates is only a secondary function of <code>pymc</code>. Its primary function is sampling from posterior distributions using <a href="http://en.wikipedia.org/wiki/Markov_chain_Monte_Carlo">Markov chain Monte Carlo sampling</a> for models whose posteriors are difficult or impossible to calculate explicity.</p>
+<p>Indeed, our reliance on MAP point estimates obscures one of the most powerful features of Bayesian inference, which is the ability to consider the posterior distribution as a whole. In the case of the LASSO, we may obtain samples from the posterior using pymc in the following manner.</p>
+<div class="sourceCode" id="cb30"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb30-1"><a href="#cb30-1" aria-hidden="true" tabindex="-1"></a>lasso_mcmc <span class="op">=</span> pymc.MCMC(lasso_model)</span>
+<span id="cb30-2"><a href="#cb30-2" aria-hidden="true" tabindex="-1"></a>lasso_mcmc.sample(<span class="dv">20000</span>, <span class="dv">5000</span>, <span class="dv">2</span>)</span>
+<span id="cb30-3"><a href="#cb30-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb30-4"><a href="#cb30-4" aria-hidden="true" tabindex="-1"></a>pymc.Matplot.plot(lasso_mcmc)</span></code></pre></div>
+<pre><code>[****************100%******************]  20000 of 20000 complete
+Plotting beta3
+Plotting beta2
+Plotting beta1</code></pre>
+<center>
+<img src="/resources/bayesian-priors/beta1.png" />
+</center>
+<center>
+<img src="/resources/bayesian-priors/beta2.png" />
+</center>
+<center>
+<img src="/resources/bayesian-priors/beta3.png" />
+</center>
+<p>To learn more abouy Bayesian statistis and <code>pymc</code>, I strongly recommend the fantastic open source book <a href="https://github.com/CamDavidsonPilon/Probabilistic-Programming-and-%20Bayesian-Methods-for-Hackers">Probabilistic Programming and Bayesian Methods for Hackers</a>.</p>
+<p>This post is written as an <a href="http://ipython.org/">IPython</a> notebook. The notebook is <a href="/resources/bayesian-priors/notebook.ipynb">available</a> under the <a href="http://opensource.org/licenses/MIT">MIT License</a>.</p>

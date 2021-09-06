@@ -1,0 +1,130 @@
+<meta name="title" content="Fitting a Multivariate Normal Model in PyMC3 with an LKJ Prior" />
+<meta name="tags" content="Bayesian Statistics, PyMC3" />
+<meta name="date" content="2015-09-16" />
+<meta name="has_math" content="true" /><p>Outside of the <a href="https://en.wikipedia.org/wiki/Beta_distribution">beta</a>-<a href="https://en.wikipedia.org/wiki/Binomial_distribution">binomial</a> model, the multivariate normal model is likely the most studied Bayesian model in history. Unfortunately, as this <a href="https://github.com/pymc-devs/pymc3/issues/538">issue</a> shows, <code>pymc3</code> cannot (yet) sample from the standard conjugate <a href="https://en.wikipedia.org/wiki/Normal-Wishart_distribution">normal-Wishart</a> model. Fortunately, <code>pymc3</code> <em>does</em> support sampling from the <a href="http://www.sciencedirect.com/science/article/pii/S0047259X09000876">LKJ distribution</a>. This post will show how to fit a simple multivariate normal model using <code>pymc3</code> with an normal-LKJ prior.</p>
+<p>The normal-Wishart prior is conjugate for the multivariate normal model, so we can find the posterior distribution in closed form. Even with this closed form solution, sampling from a multivariate normal model in <code>pymc3</code> is important as a building block for more complex models that will be discussed in future posts.</p>
+<p>First, we generate some two-dimensional sample data.</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="op">%</span>matplotlib inline</span></code></pre></div>
+<div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> matplotlib.patches <span class="im">import</span> Ellipse</span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> matplotlib <span class="im">import</span> pyplot <span class="im">as</span> plt</span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> numpy <span class="im">as</span> np</span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> pymc3 <span class="im">as</span> pm</span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> scipy <span class="im">as</span> sp</span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> seaborn <span class="im">as</span> sns</span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> theano <span class="im">import</span> tensor <span class="im">as</span> T</span></code></pre></div>
+<pre><code>Couldn&#39;t import dot_parser, loading of dot files will not be possible.</code></pre>
+<div class="sourceCode" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>np.random.seed(<span class="dv">3264602</span>) <span class="co"># from random.org</span></span></code></pre></div>
+<div class="sourceCode" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>N <span class="op">=</span> <span class="dv">100</span></span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>mu_actual <span class="op">=</span> sp.stats.uniform.rvs(<span class="op">-</span><span class="dv">5</span>, <span class="dv">10</span>, size<span class="op">=</span><span class="dv">2</span>)</span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a>cov_actual_sqrt <span class="op">=</span> sp.stats.uniform.rvs(<span class="dv">0</span>, <span class="dv">2</span>, size<span class="op">=</span>(<span class="dv">2</span>, <span class="dv">2</span>))</span>
+<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a>cov_actual <span class="op">=</span> np.dot(cov_actual_sqrt.T, cov_actual_sqrt)</span>
+<span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a>x <span class="op">=</span> sp.stats.multivariate_normal.rvs(mu_actual, cov_actual, size<span class="op">=</span>N)</span></code></pre></div>
+<div class="sourceCode" id="cb6"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>var, U <span class="op">=</span> np.linalg.eig(cov_actual)</span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>angle <span class="op">=</span> <span class="fl">180.</span> <span class="op">/</span> np.pi <span class="op">*</span> np.arccos(np.<span class="bu">abs</span>(U[<span class="dv">0</span>, <span class="dv">0</span>]))</span></code></pre></div>
+<div class="sourceCode" id="cb7"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plt.subplots(figsize<span class="op">=</span>(<span class="dv">8</span>, <span class="dv">6</span>))</span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>blue <span class="op">=</span> sns.color_palette()[<span class="dv">0</span>]</span>
+<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a>e <span class="op">=</span> Ellipse(mu_actual, <span class="dv">2</span> <span class="op">*</span> np.sqrt(<span class="fl">5.991</span> <span class="op">*</span> var[<span class="dv">0</span>]), <span class="dv">2</span> <span class="op">*</span> np.sqrt(<span class="fl">5.991</span> <span class="op">*</span> var[<span class="dv">1</span>]), angle<span class="op">=-</span>angle)</span>
+<span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a>e.set_alpha(<span class="fl">0.5</span>)</span>
+<span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a>e.set_facecolor(<span class="st">&#39;gray&#39;</span>)</span>
+<span id="cb7-8"><a href="#cb7-8" aria-hidden="true" tabindex="-1"></a>e.set_zorder(<span class="dv">10</span>)<span class="op">;</span></span>
+<span id="cb7-9"><a href="#cb7-9" aria-hidden="true" tabindex="-1"></a>ax.add_artist(e)<span class="op">;</span></span>
+<span id="cb7-10"><a href="#cb7-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-11"><a href="#cb7-11" aria-hidden="true" tabindex="-1"></a>ax.scatter(x[:, <span class="dv">0</span>], x[:, <span class="dv">1</span>], c<span class="op">=</span><span class="st">&#39;k&#39;</span>, alpha<span class="op">=</span><span class="fl">0.5</span>, zorder<span class="op">=</span><span class="dv">11</span>)<span class="op">;</span></span>
+<span id="cb7-12"><a href="#cb7-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-13"><a href="#cb7-13" aria-hidden="true" tabindex="-1"></a>rect <span class="op">=</span> plt.Rectangle((<span class="dv">0</span>, <span class="dv">0</span>), <span class="dv">1</span>, <span class="dv">1</span>, fc<span class="op">=</span><span class="st">&#39;gray&#39;</span>, alpha<span class="op">=</span><span class="fl">0.5</span>)</span>
+<span id="cb7-14"><a href="#cb7-14" aria-hidden="true" tabindex="-1"></a>ax.legend([rect], [<span class="st">&#39;95% true credible region&#39;</span>], loc<span class="op">=</span><span class="dv">2</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/mvn/mvn-pymc3-lkj_7_0.png" title="fig:" alt="png" />
+</center>
+<p>The sampling distribution for our model is <span class="math inline">\(x_i \sim N(\mu, \Lambda)\)</span>, where <span class="math inline">\(\Lambda\)</span> is the <a href="https://en.wikipedia.org/wiki/Precision_(statistics)">precision matrix</a> of the distribution. The precision matrix is the inverse of the covariance matrix. The support of the LKJ distribution is the set of <a href="https://en.wikipedia.org/wiki/Correlation_and_dependence#Correlation_matrices">correlation matrices</a>, not covariance matrices. We will use the separation strategy from <a href="http://www3.stat.sinica.edu.tw/statistica/oldpdf/A10n416.pdf">Barnard et al.</a> to combine an LKJ prior on the correlation matrix with a prior on the standard deviations of each dimension to produce a prior on the covariance matrix.</p>
+<p>Let <span class="math inline">\(\sigma\)</span> be the vector of standard deviations of each component of our normal distribution, and <span class="math inline">\(\mathbf{C}\)</span> be the correlation matrix. The relationship</p>
+<p><span class="math display">\[\Sigma = \operatorname{diag}(\sigma)\ \mathbf{C} \operatorname{diag}(\sigma)\]</span></p>
+<p>shows that priors on <span class="math inline">\(\sigma\)</span> and <span class="math inline">\(\mathbf{C}\)</span> will induce a prior on <span class="math inline">\(\Sigma\)</span>. Following Barnard et al., we place a standard <a href="https://en.wikipedia.org/wiki/Log-normal_distribution">lognormal</a> prior each the elements <span class="math inline">\(\sigma\)</span>, and an LKJ prior on the correlation matric <span class="math inline">\(\mathbf{C}\)</span>. The LKJ distribution requires a shape parameter <span class="math inline">\(\nu &gt; 0\)</span>. If <span class="math inline">\(\mathbf{C} \sim LKJ(\nu)\)</span>, then <span class="math inline">\(f(\mathbf{C}) \propto |\mathbf{C}|^{\nu - 1}\)</span> (here <span class="math inline">\(|\cdot|\)</span> is the determinant).</p>
+<p>We can now begin to build this model in <code>pymc3</code>.</p>
+<div class="sourceCode" id="cb8"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> pm.Model() <span class="im">as</span> model:</span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>    sigma <span class="op">=</span> pm.Lognormal(<span class="st">&#39;sigma&#39;</span>, np.zeros(<span class="dv">2</span>), np.ones(<span class="dv">2</span>), shape<span class="op">=</span><span class="dv">2</span>)</span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a>    nu <span class="op">=</span> pm.Uniform(<span class="st">&#39;nu&#39;</span>, <span class="dv">0</span>, <span class="dv">5</span>)</span>
+<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a>    C_triu <span class="op">=</span> pm.LKJCorr(<span class="st">&#39;C_triu&#39;</span>, nu, <span class="dv">2</span>) </span></code></pre></div>
+<p>There is a slight complication in <code>pymc3</code>’s handling of the <code>LKJCorr</code> distribution; <code>pymc3</code> represents the support of this distribution as a one-dimensional vector of the upper triangular elements of the full covariance matrix.</p>
+<div class="sourceCode" id="cb9"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a>C_triu.tag.test_value.shape</span></code></pre></div>
+<pre><code>(1,)</code></pre>
+<p>In order to build a the full correlation matric <span class="math inline">\(\mathbf{C}\)</span>, we first build a <span class="math inline">\(2 \times 2\)</span> tensor whose values are all <code>C_triu</code> and then set the diagonal entries to one. (Recall that a correlation matrix must be symmetric and positive definite with all diagonal entries equal to one.) We can then proceed to build the covariance matrix <span class="math inline">\(\Sigma\)</span> and the precision matrix <span class="math inline">\(\Lambda\)</span>.</p>
+<div class="sourceCode" id="cb11"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> model:</span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a>    C <span class="op">=</span> pm.Deterministic(<span class="st">&#39;C&#39;</span>, T.fill_diagonal(C_triu[np.zeros((<span class="dv">2</span>, <span class="dv">2</span>), dtype<span class="op">=</span>np.int64)], <span class="fl">1.</span>))</span>
+<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a>    sigma_diag <span class="op">=</span> pm.Deterministic(<span class="st">&#39;sigma_mat&#39;</span>, T.nlinalg.diag(sigma))</span>
+<span id="cb11-5"><a href="#cb11-5" aria-hidden="true" tabindex="-1"></a>    cov <span class="op">=</span> pm.Deterministic(<span class="st">&#39;cov&#39;</span>, T.nlinalg.matrix_dot(sigma_diag, C, sigma_diag))</span>
+<span id="cb11-6"><a href="#cb11-6" aria-hidden="true" tabindex="-1"></a>    tau <span class="op">=</span> pm.Deterministic(<span class="st">&#39;tau&#39;</span>, T.nlinalg.matrix_inverse(cov))</span></code></pre></div>
+<p>While defining <code>C</code> in terms of <code>C_triu</code> was simple in this case because our sampling distribution is two-dimensional, the example from this <a href="http://stackoverflow.com/questions/29759789/modified-bpmf-in-pymc3-using-lkjcorr-priors-positivedefiniteerror-using-nuts">StackOverflow question</a> shows how to generalize this transformation to arbitrarily many dimensions.</p>
+<p>Finally, we define the prior on <span class="math inline">\(\mu\)</span> and the sampling distribution.</p>
+<div class="sourceCode" id="cb12"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> model:</span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a>    mu <span class="op">=</span> pm.MvNormal(<span class="st">&#39;mu&#39;</span>, <span class="dv">0</span>, tau, shape<span class="op">=</span><span class="dv">2</span>)</span>
+<span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb12-4"><a href="#cb12-4" aria-hidden="true" tabindex="-1"></a>    x_ <span class="op">=</span> pm.MvNormal(<span class="st">&#39;x&#39;</span>, mu, tau, observed<span class="op">=</span>x)</span></code></pre></div>
+<p>We are now ready to fit this model using <code>pymc3</code>.</p>
+<div class="sourceCode" id="cb13"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a>n_samples <span class="op">=</span> <span class="dv">4000</span></span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a>n_burn <span class="op">=</span> <span class="dv">2000</span></span>
+<span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a>n_thin <span class="op">=</span> <span class="dv">2</span></span></code></pre></div>
+<div class="sourceCode" id="cb14"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> model:</span>
+<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a>    step <span class="op">=</span> pm.Metropolis()</span>
+<span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a>    trace_ <span class="op">=</span> pm.sample(n_samples, step)</span></code></pre></div>
+<pre><code> [-----------------100%-----------------] 4000 of 4000 complete in 5.8 sec</code></pre>
+<div class="sourceCode" id="cb16"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a>trace <span class="op">=</span> trace_[n_burn::n_thin]</span></code></pre></div>
+<p>We see that the posterior estimate of <span class="math inline">\(\mu\)</span> is reasonably accurate.</p>
+<div class="sourceCode" id="cb17"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a>pm.traceplot(trace, <span class="bu">vars</span><span class="op">=</span>[<span class="st">&#39;mu&#39;</span>])<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/mvn/mvn-pymc3-lkj_21_0.png" title="fig:" alt="png" />
+</center>
+<div class="sourceCode" id="cb18"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a>trace[<span class="st">&#39;mu&#39;</span>].mean(axis<span class="op">=</span><span class="dv">0</span>)</span></code></pre></div>
+<pre><code>array([-1.41086412, -4.6853101 ])</code></pre>
+<div class="sourceCode" id="cb20"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a>mu_actual</span></code></pre></div>
+<pre><code>array([-1.41866859, -4.8018335 ])</code></pre>
+<p>The estimates of the standard deviations are certainly biased.</p>
+<div class="sourceCode" id="cb22"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb22-1"><a href="#cb22-1" aria-hidden="true" tabindex="-1"></a>pm.traceplot(trace, <span class="bu">vars</span><span class="op">=</span>[<span class="st">&#39;sigma&#39;</span>])<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/mvn/mvn-pymc3-lkj_25_0.png" title="fig:" alt="png" />
+</center>
+<div class="sourceCode" id="cb23"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb23-1"><a href="#cb23-1" aria-hidden="true" tabindex="-1"></a>trace[<span class="st">&#39;sigma&#39;</span>].mean(axis<span class="op">=</span><span class="dv">0</span>)</span></code></pre></div>
+<pre><code>array([ 0.75736536,  1.49451149])</code></pre>
+<div class="sourceCode" id="cb25"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb25-1"><a href="#cb25-1" aria-hidden="true" tabindex="-1"></a>np.sqrt(var)</span></code></pre></div>
+<pre><code>array([ 0.3522422 ,  1.58192855])</code></pre>
+<p>However, the 95% posterior credible region is visuall quite close to the true credible region, so we can be fairly satisfied with our model.</p>
+<div class="sourceCode" id="cb27"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a>post_cov <span class="op">=</span> trace[<span class="st">&#39;cov&#39;</span>].mean(axis<span class="op">=</span><span class="dv">0</span>)</span>
+<span id="cb27-2"><a href="#cb27-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb27-3"><a href="#cb27-3" aria-hidden="true" tabindex="-1"></a>post_sigma, post_U <span class="op">=</span> np.linalg.eig(post_cov)</span>
+<span id="cb27-4"><a href="#cb27-4" aria-hidden="true" tabindex="-1"></a>post_angle <span class="op">=</span> <span class="fl">180.</span> <span class="op">/</span> np.pi <span class="op">*</span> np.arccos(np.<span class="bu">abs</span>(post_U[<span class="dv">0</span>, <span class="dv">0</span>]))</span></code></pre></div>
+<div class="sourceCode" id="cb28"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plt.subplots(figsize<span class="op">=</span>(<span class="dv">8</span>, <span class="dv">6</span>))</span>
+<span id="cb28-2"><a href="#cb28-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb28-3"><a href="#cb28-3" aria-hidden="true" tabindex="-1"></a>blue <span class="op">=</span> sns.color_palette()[<span class="dv">0</span>]</span>
+<span id="cb28-4"><a href="#cb28-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb28-5"><a href="#cb28-5" aria-hidden="true" tabindex="-1"></a>e <span class="op">=</span> Ellipse(mu_actual, <span class="dv">2</span> <span class="op">*</span> np.sqrt(<span class="fl">5.991</span> <span class="op">*</span> post_sigma[<span class="dv">0</span>]), <span class="dv">2</span> <span class="op">*</span> np.sqrt(<span class="fl">5.991</span> <span class="op">*</span> post_sigma[<span class="dv">1</span>]), angle<span class="op">=-</span>post_angle)</span>
+<span id="cb28-6"><a href="#cb28-6" aria-hidden="true" tabindex="-1"></a>e.set_alpha(<span class="fl">0.5</span>)</span>
+<span id="cb28-7"><a href="#cb28-7" aria-hidden="true" tabindex="-1"></a>e.set_facecolor(blue)</span>
+<span id="cb28-8"><a href="#cb28-8" aria-hidden="true" tabindex="-1"></a>e.set_zorder(<span class="dv">9</span>)<span class="op">;</span></span>
+<span id="cb28-9"><a href="#cb28-9" aria-hidden="true" tabindex="-1"></a>ax.add_artist(e)<span class="op">;</span></span>
+<span id="cb28-10"><a href="#cb28-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb28-11"><a href="#cb28-11" aria-hidden="true" tabindex="-1"></a>e <span class="op">=</span> Ellipse(mu_actual, <span class="dv">2</span> <span class="op">*</span> np.sqrt(<span class="fl">5.991</span> <span class="op">*</span> var[<span class="dv">0</span>]), <span class="dv">2</span> <span class="op">*</span> np.sqrt(<span class="fl">5.991</span> <span class="op">*</span> var[<span class="dv">1</span>]), angle<span class="op">=-</span>angle)</span>
+<span id="cb28-12"><a href="#cb28-12" aria-hidden="true" tabindex="-1"></a>e.set_alpha(<span class="fl">0.5</span>)</span>
+<span id="cb28-13"><a href="#cb28-13" aria-hidden="true" tabindex="-1"></a>e.set_facecolor(<span class="st">&#39;gray&#39;</span>)</span>
+<span id="cb28-14"><a href="#cb28-14" aria-hidden="true" tabindex="-1"></a>e.set_zorder(<span class="dv">10</span>)<span class="op">;</span></span>
+<span id="cb28-15"><a href="#cb28-15" aria-hidden="true" tabindex="-1"></a>ax.add_artist(e)<span class="op">;</span></span>
+<span id="cb28-16"><a href="#cb28-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb28-17"><a href="#cb28-17" aria-hidden="true" tabindex="-1"></a>ax.scatter(x[:, <span class="dv">0</span>], x[:, <span class="dv">1</span>], c<span class="op">=</span><span class="st">&#39;k&#39;</span>, alpha<span class="op">=</span><span class="fl">0.5</span>, zorder<span class="op">=</span><span class="dv">11</span>)<span class="op">;</span></span>
+<span id="cb28-18"><a href="#cb28-18" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb28-19"><a href="#cb28-19" aria-hidden="true" tabindex="-1"></a>rect <span class="op">=</span> plt.Rectangle((<span class="dv">0</span>, <span class="dv">0</span>), <span class="dv">1</span>, <span class="dv">1</span>, fc<span class="op">=</span><span class="st">&#39;gray&#39;</span>, alpha<span class="op">=</span><span class="fl">0.5</span>)</span>
+<span id="cb28-20"><a href="#cb28-20" aria-hidden="true" tabindex="-1"></a>post_rect <span class="op">=</span> plt.Rectangle((<span class="dv">0</span>, <span class="dv">0</span>), <span class="dv">1</span>, <span class="dv">1</span>, fc<span class="op">=</span>blue, alpha<span class="op">=</span><span class="fl">0.5</span>)</span>
+<span id="cb28-21"><a href="#cb28-21" aria-hidden="true" tabindex="-1"></a>ax.legend([rect, post_rect],</span>
+<span id="cb28-22"><a href="#cb28-22" aria-hidden="true" tabindex="-1"></a>          [<span class="st">&#39;95% true credible region&#39;</span>,</span>
+<span id="cb28-23"><a href="#cb28-23" aria-hidden="true" tabindex="-1"></a>           <span class="st">&#39;95% posterior credible region&#39;</span>],</span>
+<span id="cb28-24"><a href="#cb28-24" aria-hidden="true" tabindex="-1"></a>          loc<span class="op">=</span><span class="dv">2</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/mvn/mvn-pymc3-lkj_30_0.png" title="fig:" alt="png" />
+</center>
+<p>Again, this model is quite simple, but will be an important component of more complex models that I will blog about in the future.</p>
+<p>This post is available as an <a href="http://ipython.org/">IPython</a> notebook <a href="https://gist.github.com/AustinRochford/fa24221f09df20071c06">here</a>.</p>

@@ -1,0 +1,101 @@
+<meta name="title" content="Utility Theory and Logistic Regression" />
+<meta name="tags" content="Statistics, Econometrics" />
+<meta name="date" content="2015-01-12" />
+<meta name="has_math" content="true" /><p>Logistic regression is perhaps one of the most commonly used tools in all of statistics. While I have mathematically understood and used logistic regression for quite some time, it took me much longer to develop intution for it. It was only a few months ago that I learned about the connection between logistic regression and utility theory.</p>
+<p>Suppose a person must decide between two options, <span class="math inline">\(Y = 0\)</span> or <span class="math inline">\(Y = 1\)</span>. Utility theory posits that each option has an associated utility, <span class="math inline">\(U_0\)</span> and <span class="math inline">\(U_1\)</span>, respectively. The person chooses the option with the largest utility. My intuition for logistic regression arises from understanding that it arises from a specific utility model.</p>
+<p>In logistic regression, we are interested in modeling the effect of a covariate, <span class="math inline">\(X\)</span>, on the person’s choice. In this post, we will work with the logistic regression model</p>
+<p><span class="math display">\[\begin{align*}
+P(Y = 1 | X = x)
+    &amp; = \frac{e^x}{1 + e^x}.
+\end{align*}\]</span></p>
+<p>This model is shown graphically below.</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> __future__ <span class="im">import</span> division</span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> matplotlib <span class="im">import</span> pyplot <span class="im">as</span> plt</span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> numpy <span class="im">as</span> np</span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> scipy.stats <span class="im">import</span> gumbel_r</span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> logistic_probability(x):</span>
+<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a>    exp <span class="op">=</span> np.exp(x)</span>
+<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> exp <span class="op">/</span> (<span class="dv">1</span> <span class="op">+</span> exp)</span></code></pre></div>
+<center>
+<img src="/resources/utility/log.png" title="fig:" alt="The logistic function" />
+</center>
+<p>In terms of utility theory, we assume that each person’s utilities are related to <span class="math inline">\(X\)</span> by</p>
+<p><span class="math display">\[\begin{align*}
+U_0 | X
+    &amp; = \beta_0 X + \varepsilon_0 \\
+U_1 | X
+    &amp; = \beta_1 X + \varepsilon_1
+\end{align*}.\]</span></p>
+<p>Here, <span class="math inline">\(\beta_i X\)</span> represents the observed utility of option <span class="math inline">\(Y = i\)</span> (<span class="math inline">\(i = 0, 1\)</span>), and <span class="math inline">\(\varepsilon_i\)</span> represents btthe random fluctuation in the option’s utility. Logistic regression arises from the assumption that <span class="math inline">\(\varepsilon_0\)</span> and <span class="math inline">\(\varepsilon_0\)</span> are independent with <a href="http://en.wikipedia.org/wiki/Gumbel_distribution">Gumbel distributions</a>.</p>
+<p>The Gumbel distribution has the density function</p>
+<p><span class="math display">\[\begin{align*}
+f(\varepsilon)
+    &amp; = e^{-\varepsilon}\ \exp(-e^{-\varepsilon}).
+\end{align*}\]</span></p>
+<p>To show that this utility model gives rise to logistic regression, we see that</p>
+<p><span class="math display">\[\begin{align*}
+P(Y = 1 | X = x)
+    &amp; = P(U_1 &gt; U_0 | X = x) \\
+    &amp; = P(\beta_1 x + \varepsilon_1 &gt; \beta_0 x + \varepsilon_0) \\
+    &amp; = P((\beta_1 - \beta_0) x &gt; \varepsilon_0 - \varepsilon_1).
+\end{align*}\]</span></p>
+<p>It is useful to note that the difference of independent identically distributed Gumbel random variables follows a <a href="http://en.wikipedia.org/wiki/Logistic_distribution#Related_distributions">logistic distribution</a>, so</p>
+<p><span class="math display">\[f(\Delta) = \frac{e^{-\Delta}}{(1 + e^{-\Delta})^2},\]</span></p>
+<p>where <span class="math inline">\(\Delta = \varepsilon_1 - \varepsilon_0\)</span>.</p>
+<p>Therefore</p>
+<p><span class="math display">\[\begin{align*}
+P(Y = 1 | X = x)
+    &amp; = P((\beta_1 - \beta_0) x &gt; -\Delta) \\
+    &amp; = \int_{-(\beta_1 - \beta_0) x}^\infty \frac{e^{-\Delta}}{(1 + e^{-\Delta})^2}\ d\Delta.
+\end{align*}\]</span></p>
+<p>Making the substitution <span class="math inline">\(t = 1 + e^{-\Delta}\)</span>, with <span class="math inline">\(dt = -e^{-\Delta}\ dt\)</span>, we get that</p>
+<p><span class="math display">\[\begin{align*}
+P(Y = 1 | X = x)
+    &amp; = \int_1^{1 + \exp((\beta_1 - \beta_0) x)} t^{-2}\ dt \\
+    &amp; = \left.t^{-1}\right|_{1 + \exp((\beta_1 - \beta_0) x)}^1 \\
+    &amp; = 1 - \frac{1}{{1 + \exp((\beta_1 - \beta_0) x)}} \\
+    &amp; = \frac{{\exp((\beta_1 - \beta_0) x)}}{{1 + \exp((\beta_1 - \beta_0) x)}}.
+\end{align*}\]</span></p>
+<p>Recalling that</p>
+<p><span class="math display">\[\begin{align*}
+P(Y = 1 | X = x)
+    &amp; = \frac{e^{x}}{1 + e^{x}},
+\end{align*}\]</span></p>
+<p>we must have that <span class="math inline">\(\beta_1 - \beta_0 = 1\)</span>.</p>
+<p>The fact that there are infinitely many solutions of this equation is a subtle but important point of utility theory, that the difference in utility is both location and scale invariant. We will prove this statement in two parts.</p>
+<ol type="1">
+<li>For any <span class="math inline">\(\mu\)</span>, let <span class="math inline">\(\tilde{U}_i = U_i + \mu\)</span> for <span class="math inline">\(i = 0, 1\)</span>. Then <span class="math display">\[\begin{align*}
+\tilde{U_1} - \tilde{U_0}
+ &amp; = U_1 + \mu - (U_0 - \mu)
+   = U_1 - U_0,
+\end{align*}\]</span> so <span class="math inline">\(\tilde{U_1} - \tilde{U_0} &gt; 0\)</span> if and only if <span class="math inline">\(U_1 - U_0 &gt; 0\)</span>, and therefore the difference in utility is location invariant.</li>
+<li>For any <span class="math inline">\(\sigma &gt; 0\)</span>, let <span class="math inline">\(\tilde{U}_i = \frac{1}{\sigma} U_i\)</span> for <span class="math inline">\(i = 0, 1\)</span>. Then <span class="math display">\[\begin{align*}
+\tilde{U_1} - \tilde{U_0}
+ &amp; = \frac{1}{\sigma}\left(U_1 - U_0\right),
+\end{align*}\]</span> so <span class="math inline">\(\tilde{U_1} - \tilde{U_0} &gt; 0\)</span> if and only if <span class="math inline">\(U_1 - U_0 &gt; 0\)</span>, and therefore the difference in utility is scale invariant.</li>
+</ol>
+<p>Together, these invariances show that the units of utility are irrelevant, and the only quantity that matters is the difference in utilities. Due to the location invariance in utilities, we may as well set <span class="math inline">\(\beta_0 = 0\)</span>, so <span class="math inline">\(\beta_1 = 1\)</span> for convenience. Our utility model is therefore</p>
+<p><span class="math display">\[\begin{align*}
+U_0
+    &amp; = \varepsilon_0 \\
+U_1
+    &amp; = x + \varepsilon_1
+\end{align*}.\]</span></p>
+<p>To verify that this utility model is equivalent to logistic regression in a second way, we will simulate <span class="math inline">\(P(Y = 1 | X = x)\)</span> by generating Gumbel random variables.</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>N <span class="op">=</span> <span class="dv">500</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>eps0 <span class="op">=</span> gumbel_r.rvs(size<span class="op">=</span>(N, n))</span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>eps1 <span class="op">=</span> gumbel_r.rvs(size<span class="op">=</span>(N, n))</span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a>U0 <span class="op">=</span> eps0</span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a>U1 <span class="op">=</span> xs <span class="op">+</span> eps1</span>
+<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a>simulated_ps <span class="op">=</span> (U1 <span class="op">&gt;</span> U0).mean(axis<span class="op">=</span><span class="dv">0</span>)</span></code></pre></div>
+<center>
+<img src="/resources/utility/sim.png" title="fig:" alt="Simulated results" />
+</center>
+<p>The red simulated curve is reasonably close to the black actual curve. (Increasing <code>N</code> would cause the red curve to converge to the black one.)</p>
+<p>Aside from being an important tool in econometrics, utility theory helps shed light on logistic regression. The perspective it provides on logistic regression opens the door to generalization and related theories. If the random portions of utility, <span class="math inline">\(\varepsilon_1\)</span> and <span class="math inline">\(\varepsilon_0\)</span> are normally distributed instead of Gumbel distributed, the utility model gives rise to <a href="http://en.wikipedia.org/wiki/Probit_model">probit regression</a>. For a thorough introduction to utility/choice theory, consult the excellent book <a href="http://eml.berkeley.edu/books/choice2.html"><em>Discrete Choice Models with Simulation</em></a> by Kenneth Train, which is freely available online.</p>

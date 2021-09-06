@@ -1,0 +1,778 @@
+<meta name="title" content="A Fair Price for Darth Vader's Meditation Chamber? A Lego Price Analysis" />
+<meta name="tags" content="Lego, Python" />
+<meta name="date" content="2021-06-03" />
+<meta name="has_math" content="true" /><p>Earlier this week I was taking a break from work and browsing <a href="lego.com">lego.com</a> (as one does), and came across Darth Vader’s Meditation Chamber (<a href="https://www.lego.com/en-us/product/darth-vader-meditation-chamber-75296">75296</a>), which is newly available for preorder.</p>
+<center>
+<img src="https://www.lego.com/cdn/cs/set/assets/blt234378cdb80fb126/75296.jpg" width=600>
+</center>
+<p>My first thought was “this looks nice, but $69.99 feels a bit steep for 663 pieces.” Being both a Lego and data nerd, I decided to see how good or bad this price actually is compared to other sets.</p>
+<center>
+<figure>
+<table>
+<tr>
+<td>
+<img src="https://austinrochford.com/resources/lego/IMG_5696.png" width=300>
+</td>
+<td>
+<img src="https://austinrochford.com/resources/lego/IMG_5698.png" width=300>
+</td>
+</tr>
+<tr>
+<td>
+<img src="https://austinrochford.com/resources/lego/IMG_5702.png" width=300>
+</td>
+<td>
+<img src="https://austinrochford.com/resources/lego/IMG_5699.png" width=300>
+</td>
+</tr>
+</table>
+<caption>
+Most of my Lego collection
+</caption>
+</figure>
+</center>
+<p>I searched for a freely available source of data on Lego set prices, but didn’t find any that were suitable to answer my question. After a few hours of frustration, I wrote a small Python script using <a href="https://www.crummy.com/software/BeautifulSoup/">Beautiful Soup</a> to scrape <a href="brickset.com">brickset.com</a>’s historical data on Lego sets dating back to 1980. Out of respect for the hard and excellent work of the Brickset team, I won’t be sharing the scraper code, but I have made the data set (scraped on June 1, 2021) publicly available. This is the first post in a series analyzing this data.</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a>DATA_URL <span class="op">=</span> <span class="st">&#39;https://austinrochford.com/resources/lego/brickset_01011980_06012021.csv.gz&#39;</span></span></code></pre></div>
+<p>First we make some standard Python imports and load the data.</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="op">%</span>matplotlib inline</span></code></pre></div>
+<div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> datetime</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> functools <span class="im">import</span> <span class="bu">reduce</span></span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> warnings <span class="im">import</span> filterwarnings</span></code></pre></div>
+<div class="sourceCode" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> matplotlib <span class="im">import</span> MatplotlibDeprecationWarning, pyplot <span class="im">as</span> plt</span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> numpy <span class="im">as</span> np</span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> pandas <span class="im">as</span> pd</span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> seaborn <span class="im">as</span> sns</span></code></pre></div>
+<div class="sourceCode" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>filterwarnings(<span class="st">&#39;ignore&#39;</span>, category<span class="op">=</span>MatplotlibDeprecationWarning)</span></code></pre></div>
+<div class="sourceCode" id="cb6"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>plt.rcParams[<span class="st">&#39;figure.figsize&#39;</span>] <span class="op">=</span> (<span class="dv">8</span>, <span class="dv">6</span>)</span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>sns.<span class="bu">set</span>(color_codes<span class="op">=</span><span class="va">True</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb7"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> to_datetime(year):</span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> np.datetime64(<span class="ss">f&quot;</span><span class="sc">{</span><span class="bu">round</span>(year)<span class="sc">}</span><span class="ss">-01-01&quot;</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb8"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>full_df <span class="op">=</span> (pd.read_csv(DATA_URL,</span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>                       usecols<span class="op">=</span>[</span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>                           <span class="st">&quot;Year released&quot;</span>, <span class="st">&quot;Set number&quot;</span>,</span>
+<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a>                           <span class="st">&quot;Name&quot;</span>, <span class="st">&quot;Set type&quot;</span>, <span class="st">&quot;Theme&quot;</span>, <span class="st">&quot;Subtheme&quot;</span>,</span>
+<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a>                           <span class="st">&quot;Pieces&quot;</span>, <span class="st">&quot;RRP&quot;</span></span>
+<span id="cb8-6"><a href="#cb8-6" aria-hidden="true" tabindex="-1"></a>                       ])</span>
+<span id="cb8-7"><a href="#cb8-7" aria-hidden="true" tabindex="-1"></a>             .dropna(subset<span class="op">=</span>[</span>
+<span id="cb8-8"><a href="#cb8-8" aria-hidden="true" tabindex="-1"></a>                 <span class="st">&quot;Year released&quot;</span>, <span class="st">&quot;Set number&quot;</span>,</span>
+<span id="cb8-9"><a href="#cb8-9" aria-hidden="true" tabindex="-1"></a>                 <span class="st">&quot;Name&quot;</span>, <span class="st">&quot;Set type&quot;</span>, <span class="st">&quot;Theme&quot;</span>,</span>
+<span id="cb8-10"><a href="#cb8-10" aria-hidden="true" tabindex="-1"></a>                 <span class="st">&quot;Pieces&quot;</span>, <span class="st">&quot;RRP&quot;</span></span>
+<span id="cb8-11"><a href="#cb8-11" aria-hidden="true" tabindex="-1"></a>             ]))</span>
+<span id="cb8-12"><a href="#cb8-12" aria-hidden="true" tabindex="-1"></a>full_df[<span class="st">&quot;Year released&quot;</span>] <span class="op">=</span> full_df[<span class="st">&quot;Year released&quot;</span>].<span class="bu">apply</span>(to_datetime)</span>
+<span id="cb8-13"><a href="#cb8-13" aria-hidden="true" tabindex="-1"></a>full_df <span class="op">=</span> (full_df.set_index([<span class="st">&quot;Year released&quot;</span>, <span class="st">&quot;Set number&quot;</span>])</span>
+<span id="cb8-14"><a href="#cb8-14" aria-hidden="true" tabindex="-1"></a>                  .sort_index())</span></code></pre></div>
+<div class="sourceCode" id="cb9"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a>full_df.head()</span></code></pre></div>
+<center>
+<div>
+<style scoped>
+.dataframe tbody tr th:only-of-type {
+vertical-align: middle;
+}
+
+.dataframe tbody tr th {
+vertical-align: top;
+}
+
+.dataframe thead th {
+text-align: right;
+}
+</style>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th>
+</th>
+<th>
+</th>
+<th>
+Name
+</th>
+<th>
+Set type
+</th>
+<th>
+Theme
+</th>
+<th>
+Pieces
+</th>
+<th>
+RRP
+</th>
+<th>
+Subtheme
+</th>
+</tr>
+<tr>
+<th>
+Year released
+</th>
+<th>
+Set number
+</th>
+<th>
+</th>
+<th>
+</th>
+<th>
+</th>
+<th>
+</th>
+<th>
+</th>
+<th>
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th rowspan="5" valign="top">
+1980-01-01
+</th>
+<th>
+1041-2
+</th>
+<td>
+Educational Duplo Building Set
+</td>
+<td>
+Normal
+</td>
+<td>
+Dacta
+</td>
+<td>
+68.0
+</td>
+<td>
+36.50
+</td>
+<td>
+NaN
+</td>
+</tr>
+<tr>
+<th>
+1075-1
+</th>
+<td>
+LEGO People Supplementary Set
+</td>
+<td>
+Normal
+</td>
+<td>
+Dacta
+</td>
+<td>
+304.0
+</td>
+<td>
+14.50
+</td>
+<td>
+NaN
+</td>
+</tr>
+<tr>
+<th>
+1101-1
+</th>
+<td>
+Replacement 4.5V Motor
+</td>
+<td>
+Normal
+</td>
+<td>
+Service Packs
+</td>
+<td>
+1.0
+</td>
+<td>
+5.65
+</td>
+<td>
+NaN
+</td>
+</tr>
+<tr>
+<th>
+1123-1
+</th>
+<td>
+Ball and Socket Couplings &amp; One Articulated Joint
+</td>
+<td>
+Normal
+</td>
+<td>
+Service Packs
+</td>
+<td>
+8.0
+</td>
+<td>
+16.00
+</td>
+<td>
+NaN
+</td>
+</tr>
+<tr>
+<th>
+1130-1
+</th>
+<td>
+Plastic Folder for Building Instructions
+</td>
+<td>
+Normal
+</td>
+<td>
+Service Packs
+</td>
+<td>
+1.0
+</td>
+<td>
+14.00
+</td>
+<td>
+NaN
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center>
+<p><br></p>
+<div class="sourceCode" id="cb10"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a>full_df.tail()</span></code></pre></div>
+<center>
+<div>
+<style scoped>
+.dataframe tbody tr th:only-of-type {
+vertical-align: middle;
+}
+
+.dataframe tbody tr th {
+vertical-align: top;
+}
+
+.dataframe thead th {
+text-align: right;
+}
+</style>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th>
+</th>
+<th>
+</th>
+<th>
+Name
+</th>
+<th>
+Set type
+</th>
+<th>
+Theme
+</th>
+<th>
+Pieces
+</th>
+<th>
+RRP
+</th>
+<th>
+Subtheme
+</th>
+</tr>
+<tr>
+<th>
+Year released
+</th>
+<th>
+Set number
+</th>
+<th>
+</th>
+<th>
+</th>
+<th>
+</th>
+<th>
+</th>
+<th>
+</th>
+<th>
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th rowspan="5" valign="top">
+2021-01-01
+</th>
+<th>
+80022-1
+</th>
+<td>
+Spider Queen’s Arachnoid Base
+</td>
+<td>
+Normal
+</td>
+<td>
+Monkie Kid
+</td>
+<td>
+1170.0
+</td>
+<td>
+119.99
+</td>
+<td>
+Season 2
+</td>
+</tr>
+<tr>
+<th>
+80023-1
+</th>
+<td>
+Monkie Kid’s Team Dronecopter
+</td>
+<td>
+Normal
+</td>
+<td>
+Monkie Kid
+</td>
+<td>
+1462.0
+</td>
+<td>
+149.99
+</td>
+<td>
+Season 2
+</td>
+</tr>
+<tr>
+<th>
+80024-1
+</th>
+<td>
+The Legendary Flower Fruit Mountain
+</td>
+<td>
+Normal
+</td>
+<td>
+Monkie Kid
+</td>
+<td>
+1949.0
+</td>
+<td>
+169.99
+</td>
+<td>
+Season 2
+</td>
+</tr>
+<tr>
+<th>
+80106-1
+</th>
+<td>
+Story of Nian
+</td>
+<td>
+Normal
+</td>
+<td>
+Seasonal
+</td>
+<td>
+1067.0
+</td>
+<td>
+79.99
+</td>
+<td>
+Chinese Traditional Festivals
+</td>
+</tr>
+<tr>
+<th>
+80107-1
+</th>
+<td>
+Spring Lantern Festival
+</td>
+<td>
+Normal
+</td>
+<td>
+Seasonal
+</td>
+<td>
+1793.0
+</td>
+<td>
+119.99
+</td>
+<td>
+Chinese Traditional Festivals
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center>
+<p><br></p>
+<p>Most of the fields are fairly self-explanatory. <code>RRP</code> is the recommended retail price of the set in dollars.</p>
+<p>For fun, I have also exported my Lego collection from Brickset and load it now.</p>
+<div class="sourceCode" id="cb11"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a>MY_COLLECTION_URL <span class="op">=</span> <span class="st">&#39;https://austinrochford.com/resources/lego/Brickset-MySets-owned-20210602.csv&#39;</span></span></code></pre></div>
+<div class="sourceCode" id="cb12"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a>my_df <span class="op">=</span> pd.read_csv(MY_COLLECTION_URL)</span></code></pre></div>
+<div class="sourceCode" id="cb13"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a>my_df.index</span></code></pre></div>
+<pre><code>Index([&#39;8092-1&#39;, &#39;10221-1&#39;, &#39;10266-1&#39;, &#39;10281-1&#39;, &#39;10283-1&#39;, &#39;21309-1&#39;,
+       &#39;21312-1&#39;, &#39;21320-1&#39;, &#39;21321-1&#39;, &#39;31091-1&#39;, &#39;40174-1&#39;, &#39;40268-1&#39;,
+       &#39;40391-1&#39;, &#39;40431-1&#39;, &#39;40440-1&#39;, &#39;41602-1&#39;, &#39;41608-1&#39;, &#39;41609-1&#39;,
+       &#39;41628-1&#39;, &#39;75030-1&#39;, &#39;75049-1&#39;, &#39;75074-1&#39;, &#39;75075-1&#39;, &#39;75093-1&#39;,
+       &#39;75099-1&#39;, &#39;75136-1&#39;, &#39;75137-1&#39;, &#39;75138-1&#39;, &#39;75162-1&#39;, &#39;75176-1&#39;,
+       &#39;75187-1&#39;, &#39;75229-1&#39;, &#39;75243-1&#39;, &#39;75244-1&#39;, &#39;75248-1&#39;, &#39;75254-1&#39;,
+       &#39;75255-1&#39;, &#39;75263-1&#39;, &#39;75264-1&#39;, &#39;75266-1&#39;, &#39;75267-1&#39;, &#39;75269-1&#39;,
+       &#39;75273-1&#39;, &#39;75277-1&#39;, &#39;75278-1&#39;, &#39;75283-1&#39;, &#39;75292-1&#39;, &#39;75297-1&#39;,
+       &#39;75302-1&#39;, &#39;75306-1&#39;, &#39;75308-1&#39;, &#39;75317-1&#39;, &#39;75318-1&#39;],
+      dtype=&#39;object&#39;)</code></pre>
+<p>We add a column to <code>full_df</code> indicating whether or not I own the set represented by each row.</p>
+<div class="sourceCode" id="cb15"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a>full_df[<span class="st">&quot;austin&quot;</span>] <span class="op">=</span> (full_df.index</span>
+<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a>                            .get_level_values(<span class="st">&quot;Set number&quot;</span>)</span>
+<span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a>                            .isin(my_df.index))</span></code></pre></div>
+<h2 id="exploratory-data-analysis">Exploratory Data Analysis</h2>
+<p>First we check for any missing data.</p>
+<div class="sourceCode" id="cb16"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a>full_df.isnull().mean()</span></code></pre></div>
+<pre><code>Name        0.000000
+Set type    0.000000
+Theme       0.000000
+Pieces      0.000000
+RRP         0.000000
+Subtheme    0.241825
+austin      0.000000
+dtype: float64</code></pre>
+<p>About a quarter of the sets do not have a <code>Subtheme</code>, but each set has data for every other column. We see below that most sets are classified as “normal” building sets, but there are some books and other types of sets present in the data.</p>
+<div class="sourceCode" id="cb18"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a>ax <span class="op">=</span> (full_df[<span class="st">&quot;Set type&quot;</span>]</span>
+<span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a>             .value_counts(ascending<span class="op">=</span><span class="va">True</span>)</span>
+<span id="cb18-3"><a href="#cb18-3" aria-hidden="true" tabindex="-1"></a>             .plot(kind<span class="op">=</span><span class="st">&#39;barh&#39;</span>))</span>
+<span id="cb18-4"><a href="#cb18-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb18-5"><a href="#cb18-5" aria-hidden="true" tabindex="-1"></a>ax.set_xscale(<span class="st">&#39;log&#39;</span>)<span class="op">;</span></span>
+<span id="cb18-6"><a href="#cb18-6" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="st">&quot;Number of sets&quot;</span>)<span class="op">;</span></span>
+<span id="cb18-7"><a href="#cb18-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb18-8"><a href="#cb18-8" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="st">&quot;Set type&quot;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/lego/vader_meditation_files/vader_meditation_22_0.png" title="fig:" alt="png" />
+</center>
+<p>For simplicity, we will focus only on “normal” sets.</p>
+<div class="sourceCode" id="cb19"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a>FILTERS <span class="op">=</span> [full_df[<span class="st">&quot;Set type&quot;</span>] <span class="op">==</span> <span class="st">&quot;Normal&quot;</span>]</span></code></pre></div>
+<div class="sourceCode" id="cb20"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a>df <span class="op">=</span> full_df[<span class="bu">reduce</span>(np.logical_and, FILTERS)]</span></code></pre></div>
+<p>We still have information on over 8,000 sets.</p>
+<div class="sourceCode" id="cb21"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a>df[<span class="st">&quot;Pieces&quot;</span>].describe()</span></code></pre></div>
+<pre><code>count     8163.000000
+mean       265.848095
+std        489.269642
+min          1.000000
+25%         34.000000
+50%        102.000000
+75%        310.000000
+max      11695.000000
+Name: Pieces, dtype: float64</code></pre>
+<p>The set with the most pieces is the recently released World Map, (<a href="https://www.lego.com/en-my/themes/art/world-map">31203-1</a>).</p>
+<div class="sourceCode" id="cb23"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb23-1"><a href="#cb23-1" aria-hidden="true" tabindex="-1"></a>df.loc[df[<span class="st">&quot;Pieces&quot;</span>].idxmax()]</span></code></pre></div>
+<pre><code>Name            World Map
+Set type           Normal
+Theme                 Art
+Pieces            11695.0
+RRP                249.99
+Subtheme    Miscellaneous
+austin              False
+Name: (2021-01-01 00:00:00, 31203-1), dtype: object</code></pre>
+<center>
+<img src="https://www.lego.com/cdn/cs/set/assets/blt6e4605758d75ce41/31203.jpg" width=500>
+</center>
+<p>I love the idea of a Lego world map, but I’m not in love with the ocean color, so I’ll probably pass on this beast.</p>
+<p>We see below that here are many sets with very few pieces (presumably replacement parts, minifigures, and promotional sets).</p>
+<div class="sourceCode" id="cb25"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb25-1"><a href="#cb25-1" aria-hidden="true" tabindex="-1"></a>max_pieces <span class="op">=</span> df[<span class="st">&quot;Pieces&quot;</span>].<span class="bu">max</span>()</span>
+<span id="cb25-2"><a href="#cb25-2" aria-hidden="true" tabindex="-1"></a>plt_max_pieces <span class="op">=</span> <span class="fl">1.1</span> <span class="op">*</span> max_pieces</span>
+<span id="cb25-3"><a href="#cb25-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb25-4"><a href="#cb25-4" aria-hidden="true" tabindex="-1"></a>ax <span class="op">=</span> sns.kdeplot(data<span class="op">=</span>full_df, x<span class="op">=</span><span class="st">&quot;Pieces&quot;</span>,</span>
+<span id="cb25-5"><a href="#cb25-5" aria-hidden="true" tabindex="-1"></a>                 label<span class="op">=</span><span class="st">&quot;All sets&quot;</span>)</span>
+<span id="cb25-6"><a href="#cb25-6" aria-hidden="true" tabindex="-1"></a>sns.rugplot(data<span class="op">=</span>full_df, x<span class="op">=</span><span class="st">&quot;Pieces&quot;</span>,</span>
+<span id="cb25-7"><a href="#cb25-7" aria-hidden="true" tabindex="-1"></a>            c<span class="op">=</span><span class="st">&#39;k&#39;</span>, alpha<span class="op">=</span><span class="fl">0.1</span>, ax<span class="op">=</span>ax)<span class="op">;</span></span>
+<span id="cb25-8"><a href="#cb25-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb25-9"><a href="#cb25-9" aria-hidden="true" tabindex="-1"></a>THRESHES <span class="op">=</span> [<span class="dv">1</span>, <span class="dv">10</span>, <span class="dv">25</span>, <span class="dv">50</span>, <span class="dv">100</span>]</span>
+<span id="cb25-10"><a href="#cb25-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb25-11"><a href="#cb25-11" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> thresh <span class="kw">in</span> THRESHES:</span>
+<span id="cb25-12"><a href="#cb25-12" aria-hidden="true" tabindex="-1"></a>    sns.kdeplot(data<span class="op">=</span>full_df[full_df[<span class="st">&quot;Pieces&quot;</span>] <span class="op">&gt;</span> thresh],</span>
+<span id="cb25-13"><a href="#cb25-13" aria-hidden="true" tabindex="-1"></a>                x<span class="op">=</span><span class="st">&quot;Pieces&quot;</span>,</span>
+<span id="cb25-14"><a href="#cb25-14" aria-hidden="true" tabindex="-1"></a>                clip<span class="op">=</span>(thresh, plt_max_pieces),</span>
+<span id="cb25-15"><a href="#cb25-15" aria-hidden="true" tabindex="-1"></a>                label<span class="op">=</span><span class="ss">f&quot;Sets with more</span><span class="ch">\n</span><span class="ss">than </span><span class="sc">{</span>thresh<span class="sc">}</span><span class="ss"> pieces&quot;</span>,</span>
+<span id="cb25-16"><a href="#cb25-16" aria-hidden="true" tabindex="-1"></a>                ax<span class="op">=</span>ax)<span class="op">;</span></span>
+<span id="cb25-17"><a href="#cb25-17" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb25-18"><a href="#cb25-18" aria-hidden="true" tabindex="-1"></a>ax.set_xscale(<span class="st">&#39;log&#39;</span>)<span class="op">;</span></span>
+<span id="cb25-19"><a href="#cb25-19" aria-hidden="true" tabindex="-1"></a>ax.set_xticks(THRESHES <span class="op">+</span> [<span class="dv">10</span><span class="op">**</span><span class="dv">3</span>, <span class="dv">10</span><span class="op">**</span><span class="dv">4</span>])</span>
+<span id="cb25-20"><a href="#cb25-20" aria-hidden="true" tabindex="-1"></a>ax.set_xlim(<span class="fl">0.9</span>, plt_max_pieces)<span class="op">;</span></span>
+<span id="cb25-21"><a href="#cb25-21" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb25-22"><a href="#cb25-22" aria-hidden="true" tabindex="-1"></a>ax.set_yticks([])<span class="op">;</span></span>
+<span id="cb25-23"><a href="#cb25-23" aria-hidden="true" tabindex="-1"></a>ax.legend()<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/lego/vader_meditation_files/vader_meditation_32_0.png" title="fig:" alt="png" />
+</center>
+<p>We filter our analysis to sets with more than 10 pieces.</p>
+<div class="sourceCode" id="cb26"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb26-1"><a href="#cb26-1" aria-hidden="true" tabindex="-1"></a>FILTERS.append(full_df[<span class="st">&quot;Pieces&quot;</span>] <span class="op">&gt;</span> <span class="dv">10</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb27"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a>df <span class="op">=</span> full_df[<span class="bu">reduce</span>(np.logical_and, FILTERS)]</span></code></pre></div>
+<p>Note that by using <code>FILTERS.append</code> the order of execution of cells in this notebook becomes very important (<a href="https://www.youtube.com/watch?v=7jiPeIFXb6U">notebooks are bad</a>, etc., but I love them anyway).</p>
+<p>We now examine the distribution of sets across themes.</p>
+<div class="sourceCode" id="cb28"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a>(df[<span class="st">&quot;Theme&quot;</span>]</span>
+<span id="cb28-2"><a href="#cb28-2" aria-hidden="true" tabindex="-1"></a>   .value_counts()</span>
+<span id="cb28-3"><a href="#cb28-3" aria-hidden="true" tabindex="-1"></a>   .describe())</span></code></pre></div>
+<pre><code>count    134.000000
+mean      52.992537
+std       94.157163
+min        1.000000
+25%        7.000000
+50%       19.000000
+75%       52.500000
+max      556.000000
+Name: Theme, dtype: float64</code></pre>
+<div class="sourceCode" id="cb30"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb30-1"><a href="#cb30-1" aria-hidden="true" tabindex="-1"></a>n_theme <span class="op">=</span> df[<span class="st">&quot;Theme&quot;</span>].nunique()</span>
+<span id="cb30-2"><a href="#cb30-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb30-3"><a href="#cb30-3" aria-hidden="true" tabindex="-1"></a>N_THEME_PLOTS <span class="op">=</span> <span class="dv">12</span></span>
+<span id="cb30-4"><a href="#cb30-4" aria-hidden="true" tabindex="-1"></a>N_THEME_COLS <span class="op">=</span> <span class="dv">2</span></span>
+<span id="cb30-5"><a href="#cb30-5" aria-hidden="true" tabindex="-1"></a>n_theme_rows <span class="op">=</span> N_THEME_PLOTS <span class="op">//</span> N_THEME_COLS</span>
+<span id="cb30-6"><a href="#cb30-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb30-7"><a href="#cb30-7" aria-hidden="true" tabindex="-1"></a>n_themes_per_plot <span class="op">=</span> <span class="bu">int</span>(np.ceil(n_theme <span class="op">/</span> N_THEME_PLOTS))</span></code></pre></div>
+<div class="sourceCode" id="cb31"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb31-1"><a href="#cb31-1" aria-hidden="true" tabindex="-1"></a>fig, axes <span class="op">=</span> plt.subplots(nrows<span class="op">=</span>n_theme_rows, ncols<span class="op">=</span>N_THEME_COLS,</span>
+<span id="cb31-2"><a href="#cb31-2" aria-hidden="true" tabindex="-1"></a>                         sharex<span class="op">=</span><span class="va">True</span>, sharey<span class="op">=</span><span class="va">False</span>,</span>
+<span id="cb31-3"><a href="#cb31-3" aria-hidden="true" tabindex="-1"></a>                         figsize<span class="op">=</span>(<span class="dv">16</span>, n_theme_rows <span class="op">*</span> <span class="dv">6</span>))</span>
+<span id="cb31-4"><a href="#cb31-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb31-5"><a href="#cb31-5" aria-hidden="true" tabindex="-1"></a>theme_ct <span class="op">=</span> df[<span class="st">&quot;Theme&quot;</span>].value_counts()</span>
+<span id="cb31-6"><a href="#cb31-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb31-7"><a href="#cb31-7" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> i, ax <span class="kw">in</span> <span class="bu">zip</span>(<span class="bu">range</span>(<span class="dv">0</span>, n_theme, n_themes_per_plot),</span>
+<span id="cb31-8"><a href="#cb31-8" aria-hidden="true" tabindex="-1"></a>                 axes.flatten()):</span>
+<span id="cb31-9"><a href="#cb31-9" aria-hidden="true" tabindex="-1"></a>    (theme_ct.iloc[i:i <span class="op">+</span> n_themes_per_plot]</span>
+<span id="cb31-10"><a href="#cb31-10" aria-hidden="true" tabindex="-1"></a>             .plot(kind<span class="op">=</span><span class="st">&#39;barh&#39;</span>, ax<span class="op">=</span>ax))<span class="op">;</span></span>
+<span id="cb31-11"><a href="#cb31-11" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb31-12"><a href="#cb31-12" aria-hidden="true" tabindex="-1"></a>    ax.set_xscale(<span class="st">&#39;log&#39;</span>)<span class="op">;</span></span>
+<span id="cb31-13"><a href="#cb31-13" aria-hidden="true" tabindex="-1"></a>    ax.set_xlabel(<span class="st">&quot;Number of sets&quot;</span>)<span class="op">;</span></span>
+<span id="cb31-14"><a href="#cb31-14" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb31-15"><a href="#cb31-15" aria-hidden="true" tabindex="-1"></a>    ax.invert_yaxis()<span class="op">;</span></span>
+<span id="cb31-16"><a href="#cb31-16" aria-hidden="true" tabindex="-1"></a>    ax.set_ylabel(<span class="st">&quot;Theme&quot;</span>)<span class="op">;</span></span>
+<span id="cb31-17"><a href="#cb31-17" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb31-18"><a href="#cb31-18" aria-hidden="true" tabindex="-1"></a>fig.tight_layout()<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/lego/vader_meditation_files/vader_meditation_39_0.png" title="fig:" alt="png" />
+</center>
+<p>Unsurprisingly, the Star Wars theme has the most sets historically. That Duplo comes in second is interesting. We filter out Duplo sets, service pack, and bulk brick sets from our analysis.</p>
+<div class="sourceCode" id="cb32"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb32-1"><a href="#cb32-1" aria-hidden="true" tabindex="-1"></a>FILTERS.append(full_df[<span class="st">&quot;Theme&quot;</span>] <span class="op">!=</span> <span class="st">&quot;Duplo&quot;</span>)</span>
+<span id="cb32-2"><a href="#cb32-2" aria-hidden="true" tabindex="-1"></a>FILTERS.append(full_df[<span class="st">&quot;Theme&quot;</span>] <span class="op">!=</span> <span class="st">&quot;Service Packs&quot;</span>)</span>
+<span id="cb32-3"><a href="#cb32-3" aria-hidden="true" tabindex="-1"></a>FILTERS.append(full_df[<span class="st">&quot;Theme&quot;</span>] <span class="op">!=</span> <span class="st">&quot;Bulk Bricks&quot;</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb33"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb33-1"><a href="#cb33-1" aria-hidden="true" tabindex="-1"></a>df <span class="op">=</span> full_df[<span class="bu">reduce</span>(np.logical_and, FILTERS)]</span></code></pre></div>
+<h2 id="set-price">Set Price</h2>
+<p>We now turn to the question that prompted this work, whether or not Darth Vader’s Meditation Chamber is overpriced. Our set data spans 1980-2021, and we see that the number of sets released has been increasing fairly steadily over the years.</p>
+<div class="sourceCode" id="cb34"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb34-1"><a href="#cb34-1" aria-hidden="true" tabindex="-1"></a>ax <span class="op">=</span> (df.index</span>
+<span id="cb34-2"><a href="#cb34-2" aria-hidden="true" tabindex="-1"></a>        .get_level_values(<span class="st">&quot;Year released&quot;</span>)</span>
+<span id="cb34-3"><a href="#cb34-3" aria-hidden="true" tabindex="-1"></a>        .value_counts()</span>
+<span id="cb34-4"><a href="#cb34-4" aria-hidden="true" tabindex="-1"></a>        .sort_index()</span>
+<span id="cb34-5"><a href="#cb34-5" aria-hidden="true" tabindex="-1"></a>        .plot())</span>
+<span id="cb34-6"><a href="#cb34-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb34-7"><a href="#cb34-7" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="st">&quot;Year released&quot;</span>)<span class="op">;</span></span>
+<span id="cb34-8"><a href="#cb34-8" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="st">&quot;Number of sets&quot;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/lego/vader_meditation_files/vader_meditation_44_0.png" title="fig:" alt="png" />
+</center>
+<p>Since the data spans more than 40 years, it is important to adjust for inflation. We use the <a href="https://fred.stlouisfed.org/series/CPIAUCNS">Consumer Price Index for All Urban Consumers: All Items in U.S. City Average</a> from the U.S. Federal Reserve to adjust for inflation.</p>
+<div class="sourceCode" id="cb35"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb35-1"><a href="#cb35-1" aria-hidden="true" tabindex="-1"></a>CPI_URL <span class="op">=</span> <span class="st">&#39;https://austinrochford.com/resources/lego/CPIAUCNS202100401.csv&#39;</span></span></code></pre></div>
+<div class="sourceCode" id="cb36"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb36-1"><a href="#cb36-1" aria-hidden="true" tabindex="-1"></a>years <span class="op">=</span> pd.date_range(<span class="st">&#39;1979-01-01&#39;</span>, <span class="st">&#39;2021-01-01&#39;</span>, freq<span class="op">=</span><span class="st">&#39;Y&#39;</span>) <span class="op">\</span></span>
+<span id="cb36-2"><a href="#cb36-2" aria-hidden="true" tabindex="-1"></a>            <span class="op">+</span> datetime.timedelta(days<span class="op">=</span><span class="dv">1</span>)</span>
+<span id="cb36-3"><a href="#cb36-3" aria-hidden="true" tabindex="-1"></a>cpi_df <span class="op">=</span> (pd.read_csv(CPI_URL, index_col<span class="op">=</span><span class="st">&quot;DATE&quot;</span>, parse_dates<span class="op">=</span>[<span class="st">&quot;DATE&quot;</span>])</span>
+<span id="cb36-4"><a href="#cb36-4" aria-hidden="true" tabindex="-1"></a>            .loc[years])</span>
+<span id="cb36-5"><a href="#cb36-5" aria-hidden="true" tabindex="-1"></a>cpi_df[<span class="st">&quot;to2021&quot;</span>] <span class="op">=</span> cpi_df.loc[<span class="st">&quot;2021-01-01&quot;</span>] <span class="op">/</span> cpi_df</span></code></pre></div>
+<div class="sourceCode" id="cb37"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb37-1"><a href="#cb37-1" aria-hidden="true" tabindex="-1"></a>fig, (cpi_ax, factor_ax) <span class="op">=</span> plt.subplots(ncols<span class="op">=</span><span class="dv">2</span>, sharex<span class="op">=</span><span class="va">True</span>, sharey<span class="op">=</span><span class="va">False</span>,</span>
+<span id="cb37-2"><a href="#cb37-2" aria-hidden="true" tabindex="-1"></a>                                        figsize<span class="op">=</span>(<span class="dv">16</span>, <span class="dv">6</span>))</span>
+<span id="cb37-3"><a href="#cb37-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb37-4"><a href="#cb37-4" aria-hidden="true" tabindex="-1"></a>cpi_df[<span class="st">&quot;CPIAUCNS&quot;</span>].plot(ax<span class="op">=</span>cpi_ax)<span class="op">;</span></span>
+<span id="cb37-5"><a href="#cb37-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb37-6"><a href="#cb37-6" aria-hidden="true" tabindex="-1"></a>cpi_ax.set_xlabel(<span class="st">&quot;Year&quot;</span>)<span class="op">;</span></span>
+<span id="cb37-7"><a href="#cb37-7" aria-hidden="true" tabindex="-1"></a>cpi_ax.set_ylabel(<span class="st">&quot;CPIAUCNS&quot;</span>)<span class="op">;</span></span>
+<span id="cb37-8"><a href="#cb37-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb37-9"><a href="#cb37-9" aria-hidden="true" tabindex="-1"></a>cpi_df[<span class="st">&quot;to2021&quot;</span>].plot(ax<span class="op">=</span>factor_ax)<span class="op">;</span></span>
+<span id="cb37-10"><a href="#cb37-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb37-11"><a href="#cb37-11" aria-hidden="true" tabindex="-1"></a>factor_ax.set_xlabel(<span class="st">&quot;Year&quot;</span>)<span class="op">;</span></span>
+<span id="cb37-12"><a href="#cb37-12" aria-hidden="true" tabindex="-1"></a>factor_ax.set_ylabel(<span class="st">&quot;Inflation multiple to 2021 dollars&quot;</span>)<span class="op">;</span></span>
+<span id="cb37-13"><a href="#cb37-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb37-14"><a href="#cb37-14" aria-hidden="true" tabindex="-1"></a>fig.tight_layout()<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/lego/vader_meditation_files/vader_meditation_48_0.png" title="fig:" alt="png" />
+</center>
+<p>We now add a column <code>RRP2021</code>, which is <code>RRP</code> adjusted to 2021 dollars.</p>
+<div class="sourceCode" id="cb38"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb38-1"><a href="#cb38-1" aria-hidden="true" tabindex="-1"></a>full_df[<span class="st">&quot;RRP2021&quot;</span>] <span class="op">=</span> (pd.merge(full_df, cpi_df,</span>
+<span id="cb38-2"><a href="#cb38-2" aria-hidden="true" tabindex="-1"></a>                               left_on<span class="op">=</span>[<span class="st">&quot;Year released&quot;</span>],</span>
+<span id="cb38-3"><a href="#cb38-3" aria-hidden="true" tabindex="-1"></a>                               right_index<span class="op">=</span><span class="va">True</span>)</span>
+<span id="cb38-4"><a href="#cb38-4" aria-hidden="true" tabindex="-1"></a>                        .<span class="bu">apply</span>(<span class="kw">lambda</span> df: df[<span class="st">&quot;RRP&quot;</span>] <span class="op">*</span> df[<span class="st">&quot;to2021&quot;</span>],</span>
+<span id="cb38-5"><a href="#cb38-5" aria-hidden="true" tabindex="-1"></a>                               axis<span class="op">=</span><span class="dv">1</span>))</span></code></pre></div>
+<div class="sourceCode" id="cb39"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb39-1"><a href="#cb39-1" aria-hidden="true" tabindex="-1"></a>df <span class="op">=</span> full_df[<span class="bu">reduce</span>(np.logical_and, FILTERS)]</span></code></pre></div>
+<p>Here we plot the most obvious relationship pertinent to my initial question about Darth Vader’s Meditation Chamber, price versus number of pieces.</p>
+<div class="sourceCode" id="cb40"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb40-1"><a href="#cb40-1" aria-hidden="true" tabindex="-1"></a>ax <span class="op">=</span> sns.scatterplot(x<span class="op">=</span><span class="st">&quot;Pieces&quot;</span>, y<span class="op">=</span><span class="st">&quot;RRP2021&quot;</span>, data<span class="op">=</span>df, alpha<span class="op">=</span><span class="fl">0.1</span>)</span>
+<span id="cb40-2"><a href="#cb40-2" aria-hidden="true" tabindex="-1"></a>sns.scatterplot(x<span class="op">=</span><span class="st">&quot;Pieces&quot;</span>, y<span class="op">=</span><span class="st">&quot;RRP2021&quot;</span>,</span>
+<span id="cb40-3"><a href="#cb40-3" aria-hidden="true" tabindex="-1"></a>                data<span class="op">=</span>df[df[<span class="st">&quot;austin&quot;</span>] <span class="op">==</span> <span class="va">True</span>],</span>
+<span id="cb40-4"><a href="#cb40-4" aria-hidden="true" tabindex="-1"></a>                alpha<span class="op">=</span><span class="fl">0.5</span>, label<span class="op">=</span><span class="st">&quot;My sets&quot;</span>)<span class="op">;</span></span>
+<span id="cb40-5"><a href="#cb40-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb40-6"><a href="#cb40-6" aria-hidden="true" tabindex="-1"></a>ax.set_xscale(<span class="st">&#39;log&#39;</span>)<span class="op">;</span></span>
+<span id="cb40-7"><a href="#cb40-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb40-8"><a href="#cb40-8" aria-hidden="true" tabindex="-1"></a>ax.set_yscale(<span class="st">&#39;log&#39;</span>)<span class="op">;</span></span>
+<span id="cb40-9"><a href="#cb40-9" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="st">&quot;Retail price (2021 $)&quot;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/lego/vader_meditation_files/vader_meditation_53_0.png" title="fig:" alt="png" />
+</center>
+<p>The relationship is fairly linear on a log-log scale, which will be important in subsequent posts when we introduce more complex statistical models. The sets in my collection are highlighted in this plot.</p>
+<p>We can also highlight certain themes of interest to see where the sets from those themes fall.</p>
+<div class="sourceCode" id="cb41"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb41-1"><a href="#cb41-1" aria-hidden="true" tabindex="-1"></a>PLOT_THEMES <span class="op">=</span> [</span>
+<span id="cb41-2"><a href="#cb41-2" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;Creator Expert&quot;</span>,</span>
+<span id="cb41-3"><a href="#cb41-3" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;Disney&quot;</span>,</span>
+<span id="cb41-4"><a href="#cb41-4" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;Star Wars&quot;</span>,</span>
+<span id="cb41-5"><a href="#cb41-5" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;Harry Potter&quot;</span>,</span>
+<span id="cb41-6"><a href="#cb41-6" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;Marvel Super Heroes&quot;</span>,</span>
+<span id="cb41-7"><a href="#cb41-7" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;Ninjago&quot;</span>,</span>
+<span id="cb41-8"><a href="#cb41-8" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;City&quot;</span>,</span>
+<span id="cb41-9"><a href="#cb41-9" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;Space&quot;</span>,</span>
+<span id="cb41-10"><a href="#cb41-10" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;Jurassic World&quot;</span></span>
+<span id="cb41-11"><a href="#cb41-11" aria-hidden="true" tabindex="-1"></a>]</span></code></pre></div>
+<div class="sourceCode" id="cb42"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb42-1"><a href="#cb42-1" aria-hidden="true" tabindex="-1"></a>grid <span class="op">=</span> sns.relplot(x<span class="op">=</span><span class="st">&quot;Pieces&quot;</span>, y<span class="op">=</span><span class="st">&quot;RRP2021&quot;</span>, col<span class="op">=</span><span class="st">&quot;Theme&quot;</span>,</span>
+<span id="cb42-2"><a href="#cb42-2" aria-hidden="true" tabindex="-1"></a>                   data<span class="op">=</span>df[df[<span class="st">&quot;Theme&quot;</span>].isin(PLOT_THEMES)],</span>
+<span id="cb42-3"><a href="#cb42-3" aria-hidden="true" tabindex="-1"></a>                   color<span class="op">=</span><span class="st">&#39;C1&#39;</span>, alpha<span class="op">=</span><span class="fl">0.5</span>, col_wrap<span class="op">=</span><span class="dv">3</span>, zorder<span class="op">=</span><span class="dv">5</span>)</span>
+<span id="cb42-4"><a href="#cb42-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb42-5"><a href="#cb42-5" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> ax <span class="kw">in</span> grid.axes.flatten():</span>
+<span id="cb42-6"><a href="#cb42-6" aria-hidden="true" tabindex="-1"></a>    sns.scatterplot(x<span class="op">=</span><span class="st">&quot;Pieces&quot;</span>, y<span class="op">=</span><span class="st">&quot;RRP2021&quot;</span>, data<span class="op">=</span>df,</span>
+<span id="cb42-7"><a href="#cb42-7" aria-hidden="true" tabindex="-1"></a>                   color<span class="op">=</span><span class="st">&#39;C0&#39;</span>, alpha<span class="op">=</span><span class="fl">0.05</span>,</span>
+<span id="cb42-8"><a href="#cb42-8" aria-hidden="true" tabindex="-1"></a>                   ax<span class="op">=</span>ax)<span class="op">;</span></span>
+<span id="cb42-9"><a href="#cb42-9" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb42-10"><a href="#cb42-10" aria-hidden="true" tabindex="-1"></a>    ax.set_xscale(<span class="st">&#39;log&#39;</span>)<span class="op">;</span></span>
+<span id="cb42-11"><a href="#cb42-11" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb42-12"><a href="#cb42-12" aria-hidden="true" tabindex="-1"></a>    ax.set_yscale(<span class="st">&#39;log&#39;</span>)<span class="op">;</span></span>
+<span id="cb42-13"><a href="#cb42-13" aria-hidden="true" tabindex="-1"></a>    ax.set_ylabel(<span class="st">&quot;Retail price (2021 $)&quot;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/lego/vader_meditation_files/vader_meditation_56_0.png" title="fig:" alt="png" />
+</center>
+<p>There are some interesting relationships here.</p>
+<ul>
+<li>Space sets seem to be more expensive per piece than average.</li>
+<li>Star Wars, City, Harry Potter, and Jurassic World sets seem to be fairly uniformly distributed around the average price per piece.</li>
+<li>Marvel Super Heroes and Ninjago seem to be less expensive per piece than average.</li>
+<li>Creator Expert sets have many pieces, which makes perfect sense.</li>
+</ul>
+<p>We’ll dig deeper into these observations in a subsequent post.</p>
+<p>We now add a <code>DPP2021</code> column to the data frame which represents the set’s price per piece in 2021 dollars.</p>
+<div class="sourceCode" id="cb43"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb43-1"><a href="#cb43-1" aria-hidden="true" tabindex="-1"></a>full_df[<span class="st">&quot;DPP2021&quot;</span>] <span class="op">=</span> (df[<span class="st">&quot;RRP2021&quot;</span>]</span>
+<span id="cb43-2"><a href="#cb43-2" aria-hidden="true" tabindex="-1"></a>                        .div(df[<span class="st">&quot;Pieces&quot;</span>])</span>
+<span id="cb43-3"><a href="#cb43-3" aria-hidden="true" tabindex="-1"></a>                        .rename(<span class="st">&quot;DPP2021&quot;</span>))</span></code></pre></div>
+<div class="sourceCode" id="cb44"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb44-1"><a href="#cb44-1" aria-hidden="true" tabindex="-1"></a>df <span class="op">=</span> full_df[<span class="bu">reduce</span>(np.logical_and, FILTERS)]</span></code></pre></div>
+<p>In order to decide whether or not Darth Vader’s Meditation Chamber is overpriced, we look at the percentile of its adjusted price per piece in various populations of sets.</p>
+<div class="sourceCode" id="cb45"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb45-1"><a href="#cb45-1" aria-hidden="true" tabindex="-1"></a>VADER_MEDITATION <span class="op">=</span> <span class="st">&quot;75296-1&quot;</span></span></code></pre></div>
+<p>We see that this set is in the 25th percentile of adjusted price per piece among all sets, and the 13th percentile among Star Wars sets.</p>
+<div class="sourceCode" id="cb46"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb46-1"><a href="#cb46-1" aria-hidden="true" tabindex="-1"></a>(df[<span class="st">&quot;DPP2021&quot;</span>]</span>
+<span id="cb46-2"><a href="#cb46-2" aria-hidden="true" tabindex="-1"></a>   .lt(df[<span class="st">&quot;DPP2021&quot;</span>]</span>
+<span id="cb46-3"><a href="#cb46-3" aria-hidden="true" tabindex="-1"></a>         .xs(VADER_MEDITATION, level<span class="op">=</span><span class="st">&quot;Set number&quot;</span>)</span>
+<span id="cb46-4"><a href="#cb46-4" aria-hidden="true" tabindex="-1"></a>         .values[<span class="dv">0</span>])</span>
+<span id="cb46-5"><a href="#cb46-5" aria-hidden="true" tabindex="-1"></a>   .mean())</span></code></pre></div>
+<pre><code>0.25019669551534224</code></pre>
+<div class="sourceCode" id="cb48"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb48-1"><a href="#cb48-1" aria-hidden="true" tabindex="-1"></a>(df[<span class="st">&quot;DPP2021&quot;</span>]</span>
+<span id="cb48-2"><a href="#cb48-2" aria-hidden="true" tabindex="-1"></a>   [df[<span class="st">&quot;Theme&quot;</span>] <span class="op">==</span> <span class="st">&quot;Star Wars&quot;</span>]</span>
+<span id="cb48-3"><a href="#cb48-3" aria-hidden="true" tabindex="-1"></a>   .lt(df[<span class="st">&quot;DPP2021&quot;</span>]</span>
+<span id="cb48-4"><a href="#cb48-4" aria-hidden="true" tabindex="-1"></a>         .xs(VADER_MEDITATION, level<span class="op">=</span><span class="st">&quot;Set number&quot;</span>)</span>
+<span id="cb48-5"><a href="#cb48-5" aria-hidden="true" tabindex="-1"></a>         .values[<span class="dv">0</span>])</span>
+<span id="cb48-6"><a href="#cb48-6" aria-hidden="true" tabindex="-1"></a>   .mean())</span></code></pre></div>
+<pre><code>0.13309352517985612</code></pre>
+<p>Its adjusted price per piece is near the median for my collection (apparently I’m relatively cheap), but still nowhere near a bad value by this metric.</p>
+<div class="sourceCode" id="cb50"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb50-1"><a href="#cb50-1" aria-hidden="true" tabindex="-1"></a>(df[df[<span class="st">&quot;austin&quot;</span>] <span class="op">==</span> <span class="va">True</span>]</span>
+<span id="cb50-2"><a href="#cb50-2" aria-hidden="true" tabindex="-1"></a>   [<span class="st">&quot;DPP2021&quot;</span>]</span>
+<span id="cb50-3"><a href="#cb50-3" aria-hidden="true" tabindex="-1"></a>   .lt(df[<span class="st">&quot;DPP2021&quot;</span>]</span>
+<span id="cb50-4"><a href="#cb50-4" aria-hidden="true" tabindex="-1"></a>         .xs(VADER_MEDITATION, level<span class="op">=</span><span class="st">&quot;Set number&quot;</span>)</span>
+<span id="cb50-5"><a href="#cb50-5" aria-hidden="true" tabindex="-1"></a>         .values[<span class="dv">0</span>])</span>
+<span id="cb50-6"><a href="#cb50-6" aria-hidden="true" tabindex="-1"></a>   .mean())</span></code></pre></div>
+<pre><code>0.46153846153846156</code></pre>
+<div class="sourceCode" id="cb52"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb52-1"><a href="#cb52-1" aria-hidden="true" tabindex="-1"></a>ax <span class="op">=</span> sns.scatterplot(x<span class="op">=</span><span class="st">&quot;Pieces&quot;</span>, y<span class="op">=</span><span class="st">&quot;RRP2021&quot;</span>, data<span class="op">=</span>df,</span>
+<span id="cb52-2"><a href="#cb52-2" aria-hidden="true" tabindex="-1"></a>                color<span class="op">=</span><span class="st">&#39;C0&#39;</span>, alpha<span class="op">=</span><span class="fl">0.05</span>,</span>
+<span id="cb52-3"><a href="#cb52-3" aria-hidden="true" tabindex="-1"></a>                label<span class="op">=</span><span class="st">&quot;All sets&quot;</span>)<span class="op">;</span></span>
+<span id="cb52-4"><a href="#cb52-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb52-5"><a href="#cb52-5" aria-hidden="true" tabindex="-1"></a>sns.scatterplot(x<span class="op">=</span><span class="st">&quot;Pieces&quot;</span>, y<span class="op">=</span><span class="st">&quot;RRP2021&quot;</span>,</span>
+<span id="cb52-6"><a href="#cb52-6" aria-hidden="true" tabindex="-1"></a>                data<span class="op">=</span>df[df[<span class="st">&quot;Theme&quot;</span>] <span class="op">==</span> <span class="st">&quot;Star Wars&quot;</span>],</span>
+<span id="cb52-7"><a href="#cb52-7" aria-hidden="true" tabindex="-1"></a>                color<span class="op">=</span><span class="st">&#39;C1&#39;</span>, alpha<span class="op">=</span><span class="fl">0.5</span>,</span>
+<span id="cb52-8"><a href="#cb52-8" aria-hidden="true" tabindex="-1"></a>                label<span class="op">=</span><span class="st">&quot;Star wars sets&quot;</span>,</span>
+<span id="cb52-9"><a href="#cb52-9" aria-hidden="true" tabindex="-1"></a>                ax<span class="op">=</span>ax)<span class="op">;</span></span>
+<span id="cb52-10"><a href="#cb52-10" aria-hidden="true" tabindex="-1"></a>sns.scatterplot(x<span class="op">=</span><span class="st">&quot;Pieces&quot;</span>, y<span class="op">=</span><span class="st">&quot;RRP2021&quot;</span>,</span>
+<span id="cb52-11"><a href="#cb52-11" aria-hidden="true" tabindex="-1"></a>                data<span class="op">=</span>df[df[<span class="st">&quot;austin&quot;</span>] <span class="op">==</span> <span class="va">True</span>],</span>
+<span id="cb52-12"><a href="#cb52-12" aria-hidden="true" tabindex="-1"></a>                color<span class="op">=</span><span class="st">&#39;C2&#39;</span>, alpha<span class="op">=</span><span class="fl">0.5</span>,</span>
+<span id="cb52-13"><a href="#cb52-13" aria-hidden="true" tabindex="-1"></a>                label<span class="op">=</span><span class="st">&quot;My sets&quot;</span>,</span>
+<span id="cb52-14"><a href="#cb52-14" aria-hidden="true" tabindex="-1"></a>                ax<span class="op">=</span>ax)<span class="op">;</span> </span>
+<span id="cb52-15"><a href="#cb52-15" aria-hidden="true" tabindex="-1"></a>ax.scatter(df[<span class="st">&quot;Pieces&quot;</span>].xs(VADER_MEDITATION, level<span class="op">=</span><span class="st">&quot;Set number&quot;</span>),</span>
+<span id="cb52-16"><a href="#cb52-16" aria-hidden="true" tabindex="-1"></a>           df[<span class="st">&quot;RRP2021&quot;</span>].xs(VADER_MEDITATION, level<span class="op">=</span><span class="st">&quot;Set number&quot;</span>),</span>
+<span id="cb52-17"><a href="#cb52-17" aria-hidden="true" tabindex="-1"></a>           color<span class="op">=</span><span class="st">&quot;C3&quot;</span>, s<span class="op">=</span><span class="dv">150</span>, marker<span class="op">=</span><span class="st">&#39;D&#39;</span>, alpha<span class="op">=</span><span class="fl">0.9</span>,</span>
+<span id="cb52-18"><a href="#cb52-18" aria-hidden="true" tabindex="-1"></a>           label<span class="op">=</span><span class="ss">f&quot;Darth Vader&#39;s Meditation Chamber (</span><span class="sc">{</span>VADER_MEDITATION<span class="sc">}</span><span class="ss">)&quot;</span>)<span class="op">;</span></span>
+<span id="cb52-19"><a href="#cb52-19" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb52-20"><a href="#cb52-20" aria-hidden="true" tabindex="-1"></a>ax.set_xscale(<span class="st">&#39;log&#39;</span>)<span class="op">;</span></span>
+<span id="cb52-21"><a href="#cb52-21" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb52-22"><a href="#cb52-22" aria-hidden="true" tabindex="-1"></a>ax.set_yscale(<span class="st">&#39;log&#39;</span>)<span class="op">;</span></span>
+<span id="cb52-23"><a href="#cb52-23" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="st">&quot;Retail price (2021 $)&quot;</span>)<span class="op">;</span></span>
+<span id="cb52-24"><a href="#cb52-24" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb52-25"><a href="#cb52-25" aria-hidden="true" tabindex="-1"></a>ax.legend(loc<span class="op">=</span><span class="st">&#39;upper left&#39;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/lego/vader_meditation_files/vader_meditation_67_0.png" title="fig:" alt="png" />
+</center>
+<p>As an apology to my Lego overlords, I preordered Darth Vader’s Meditation Chamber after doing this analysis.</p>
+<center>
+<img src="https://austinrochford.com/resources/lego/receipt.png" width=700>
+</center>
+<p>It is also interesting to examine how the adjusted price per piece has changed over time.</p>
+<div class="sourceCode" id="cb53"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb53-1"><a href="#cb53-1" aria-hidden="true" tabindex="-1"></a>ax <span class="op">=</span> sns.lineplot(x<span class="op">=</span><span class="st">&quot;Year released&quot;</span>, y<span class="op">=</span><span class="st">&quot;DPP2021&quot;</span>, data<span class="op">=</span>df,</span>
+<span id="cb53-2"><a href="#cb53-2" aria-hidden="true" tabindex="-1"></a>                  color<span class="op">=</span><span class="st">&#39;k&#39;</span>)</span>
+<span id="cb53-3"><a href="#cb53-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb53-4"><a href="#cb53-4" aria-hidden="true" tabindex="-1"></a>ax.set_ylim(<span class="dv">10</span><span class="op">**-</span><span class="dv">1</span>, <span class="dv">2</span>)<span class="op">;</span></span>
+<span id="cb53-5"><a href="#cb53-5" aria-hidden="true" tabindex="-1"></a>ax.set_yscale(<span class="st">&#39;log&#39;</span>)<span class="op">;</span></span>
+<span id="cb53-6"><a href="#cb53-6" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="st">&quot;Price per piece (2021 $)&quot;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/lego/vader_meditation_files/vader_meditation_70_0.png" title="fig:" alt="png" />
+</center>
+<p>It seems that the adjusted price per piece has been steadily decreasing over time. Presumably Lego has been optimizing their manufacturing processes to be more efficient over the years and has passed some of the reduction in costs onto we consumers. Lego has likely improved set pricing over time as they have accumulated historical data on sales of past sets.</p>
+<p>When we break this timeseries down by theme we see a general convergence of the price per piece to the average across our themes of interest.</p>
+<div class="sourceCode" id="cb54"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb54-1"><a href="#cb54-1" aria-hidden="true" tabindex="-1"></a>ax <span class="op">=</span> sns.lineplot(x<span class="op">=</span><span class="st">&quot;Year released&quot;</span>, y<span class="op">=</span><span class="st">&quot;DPP2021&quot;</span>, data<span class="op">=</span>df,</span>
+<span id="cb54-2"><a href="#cb54-2" aria-hidden="true" tabindex="-1"></a>                  color<span class="op">=</span><span class="st">&#39;k&#39;</span>, label<span class="op">=</span><span class="st">&quot;All&quot;</span>)</span>
+<span id="cb54-3"><a href="#cb54-3" aria-hidden="true" tabindex="-1"></a>sns.lineplot(x<span class="op">=</span><span class="st">&quot;Year released&quot;</span>, y<span class="op">=</span><span class="st">&quot;DPP2021&quot;</span>, hue<span class="op">=</span><span class="st">&quot;Theme&quot;</span>,</span>
+<span id="cb54-4"><a href="#cb54-4" aria-hidden="true" tabindex="-1"></a>             data<span class="op">=</span>df[df[<span class="st">&quot;Theme&quot;</span>].isin(PLOT_THEMES)],</span>
+<span id="cb54-5"><a href="#cb54-5" aria-hidden="true" tabindex="-1"></a>             ax<span class="op">=</span>ax)<span class="op">;</span></span>
+<span id="cb54-6"><a href="#cb54-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb54-7"><a href="#cb54-7" aria-hidden="true" tabindex="-1"></a>ax.set_ylim(<span class="dv">10</span><span class="op">**-</span><span class="dv">1</span>, <span class="dv">2</span>)<span class="op">;</span></span>
+<span id="cb54-8"><a href="#cb54-8" aria-hidden="true" tabindex="-1"></a>ax.set_yscale(<span class="st">&#39;log&#39;</span>)<span class="op">;</span></span>
+<span id="cb54-9"><a href="#cb54-9" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="st">&quot;Price per piece (2021 $)&quot;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/lego/vader_meditation_files/vader_meditation_72_0.png" title="fig:" alt="png" />
+</center>
+<p>Future posts in this series will introduce more complex statistical models for this data and use them to explore these trends and more structure in the data.</p>
+<p>This post is available as a Jupyter notebook <a href="https://nbviewer.jupyter.org/gist/AustinRochford/560d7c06a902294dc03cf9932f93b76e">here</a>. The Docker environment that this post was written in is available <a href="https://github.com/AustinRochford/notebooks">here</a>.</p>
+<div class="sourceCode" id="cb55"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb55-1"><a href="#cb55-1" aria-hidden="true" tabindex="-1"></a><span class="op">%</span>load_ext watermark</span>
+<span id="cb55-2"><a href="#cb55-2" aria-hidden="true" tabindex="-1"></a><span class="op">%</span>watermark <span class="op">-</span>n <span class="op">-</span>u <span class="op">-</span>v <span class="op">-</span>iv</span></code></pre></div>
+<pre><code>Last updated: Thu Jun 03 2021
+
+Python implementation: CPython
+Python version       : 3.8.8
+IPython version      : 7.22.0
+
+matplotlib: 3.4.1
+numpy     : 1.20.2
+pandas    : 1.2.3
+seaborn   : 0.11.1</code></pre>

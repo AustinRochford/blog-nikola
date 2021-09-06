@@ -1,0 +1,92 @@
+<meta name="title" content="Maximum Likelihood Estimation of Custom Models in Python with StatsModels" />
+<meta name="tags" content="Statistics, Python" />
+<meta name="date" content="2015-03-03" />
+<meta name="has_math" content="true" /><p>Maximum likelihood estimation is a common method for fitting statistical models. In Python, it is quite possible to fit maximum likelihood models using just <a href="http://docs.scipy.org/doc/scipy/reference/optimize.html"><code>scipy.optimize</code></a>. Over time, however, I have come to prefer the convenience provided by <a href="http://statsmodels.sourceforge.net/"><code>statsmodels</code>’</a> <a href="http://statsmodels.sourceforge.net/devel/dev/generated/statsmodels.base.model.GenericLikelihoodModel.html"><code>GenericLikelihoodModel</code></a>. In this post, I will show how easy it is to subclass <code>GenericLikelihoodModel</code> and take advantage of much of <code>statsmodels</code>’ well-developed machinery for maximum likelihood estimation of custom models.</p>
+<h4 id="zero-inflated-poisson-models">Zero-inflated Poisson models</h4>
+<p>The model we use for this demonstration is a <a href="http://en.wikipedia.org/wiki/Zero-inflated_model#Zero-inflated_Poisson">zero-inflated Poisson model</a>. This is a model for count data that generalizes the Poisson model by allowing for an overabundance of zero observations.</p>
+<p>The model has two parameters, <span class="math inline">\(\pi\)</span>, the proportion of excess zero observations, and <span class="math inline">\(\lambda\)</span>, the mean of the Poisson distribution. We assume that observations from this model are generated as follows. First, a weighted coin with probability <span class="math inline">\(\pi\)</span> of landing on heads is flipped. If the result is heads, the observation is zero. If the result is tails, the observation is generated from a Poisson distribution with mean <span class="math inline">\(\lambda\)</span>. Note that there are two ways for an observation to be zero under this model:</p>
+<ol type="1">
+<li>the coin is heads, and</li>
+<li>the coin is tails, and the sample from the Poisson distribution is zero.</li>
+</ol>
+<p>If <span class="math inline">\(X\)</span> has a zero-inflated Poisson distribution with parameters <span class="math inline">\(\pi\)</span> and <span class="math inline">\(\lambda\)</span>, its probability mass function is given by</p>
+<p><span class="math display">\[\begin{align*}
+P(X = 0)
+    &amp; = \pi + (1 - \pi)\ e^{-\lambda} \\
+P(X = x)
+    &amp; = (1 - \pi)\ e^{-\lambda}\ \frac{\lambda^x}{x!} \textrm{ for } x &gt; 0.
+\end{align*}\]</span></p>
+<p>In this post, we will use the parameter values <span class="math inline">\(\pi = 0.3\)</span> and <span class="math inline">\(\lambda = 2\)</span>. The probability mass function of the zero-inflated Poisson distribution is shown below, next to a normal Poisson distribution, for comparison.</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> __future__ <span class="im">import</span> division</span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> matplotlib <span class="im">import</span>  pyplot <span class="im">as</span> plt</span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> numpy <span class="im">as</span> np</span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> scipy <span class="im">import</span> stats</span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> seaborn <span class="im">as</span> sns</span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> statsmodels.base.model <span class="im">import</span> GenericLikelihoodModel</span>
+<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a>np.random.seed(<span class="dv">123456789</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>pi <span class="op">=</span> <span class="fl">0.3</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>lambda_ <span class="op">=</span> <span class="fl">2.</span></span></code></pre></div>
+<div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> zip_pmf(x, pi<span class="op">=</span>pi, lambda_<span class="op">=</span>lambda_):</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> pi <span class="op">&lt;</span> <span class="dv">0</span> <span class="kw">or</span> pi <span class="op">&gt;</span> <span class="dv">1</span> <span class="kw">or</span> lambda_ <span class="op">&lt;=</span> <span class="dv">0</span>:</span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> np.zeros_like(x)</span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>    <span class="cf">else</span>:</span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> (x <span class="op">==</span> <span class="dv">0</span>) <span class="op">*</span> pi <span class="op">+</span> (<span class="dv">1</span> <span class="op">-</span> pi) <span class="op">*</span> stats.poisson.pmf(x, lambda_)</span></code></pre></div>
+<center>
+<img src="/resources/mle-statsmodels/zip_pmf.png" title="fig:" alt="Zero-inflated Poisson distribution pmf" />
+</center>
+<h4 id="maximum-likelihood-estimation">Maximum likelihood estimation</h4>
+<p>First we generate 1,000 observations from the zero-inflated model.</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>N <span class="op">=</span> <span class="dv">1000</span></span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>inflated_zero <span class="op">=</span> stats.bernoulli.rvs(pi, size<span class="op">=</span>N)</span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>x <span class="op">=</span> (<span class="dv">1</span> <span class="op">-</span> inflated_zero) <span class="op">*</span> stats.poisson.rvs(lambda_, size<span class="op">=</span>N)</span></code></pre></div>
+<center>
+<img src="/resources/mle-statsmodels/zip_samples.png" title="fig:" alt="Zero-inflated Poisson distribution samples" />
+</center>
+<p>We are now ready to estimate <span class="math inline">\(\pi\)</span> and <span class="math inline">\(\lambda\)</span> by maximum likelihood. To do so, we define a class that inherits from <code>statsmodels</code>’ <code>GenericLikelihoodModel</code> as follows.</p>
+<div class="sourceCode" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> ZeroInflatedPoisson(GenericLikelihoodModel):</span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>    <span class="kw">def</span> <span class="fu">__init__</span>(<span class="va">self</span>, endog, exog<span class="op">=</span><span class="va">None</span>, <span class="op">**</span>kwds):</span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>        <span class="cf">if</span> exog <span class="kw">is</span> <span class="va">None</span>:</span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a>            exog <span class="op">=</span> np.zeros_like(endog)</span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a>            </span>
+<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a>        <span class="bu">super</span>(ZeroInflatedPoisson, <span class="va">self</span>).<span class="fu">__init__</span>(endog, exog, <span class="op">**</span>kwds)</span>
+<span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a>    <span class="kw">def</span> nloglikeobs(<span class="va">self</span>, params):</span>
+<span id="cb5-9"><a href="#cb5-9" aria-hidden="true" tabindex="-1"></a>        pi <span class="op">=</span> params[<span class="dv">0</span>]</span>
+<span id="cb5-10"><a href="#cb5-10" aria-hidden="true" tabindex="-1"></a>        lambda_ <span class="op">=</span> params[<span class="dv">1</span>]</span>
+<span id="cb5-11"><a href="#cb5-11" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-12"><a href="#cb5-12" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> <span class="op">-</span>np.log(zip_pmf(<span class="va">self</span>.endog, pi<span class="op">=</span>pi, lambda_<span class="op">=</span>lambda_))</span>
+<span id="cb5-13"><a href="#cb5-13" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb5-14"><a href="#cb5-14" aria-hidden="true" tabindex="-1"></a>    <span class="kw">def</span> fit(<span class="va">self</span>, start_params<span class="op">=</span><span class="va">None</span>, maxiter<span class="op">=</span><span class="dv">10000</span>, maxfun<span class="op">=</span><span class="dv">5000</span>, <span class="op">**</span>kwds):</span>
+<span id="cb5-15"><a href="#cb5-15" aria-hidden="true" tabindex="-1"></a>        <span class="cf">if</span> start_params <span class="kw">is</span> <span class="va">None</span>:</span>
+<span id="cb5-16"><a href="#cb5-16" aria-hidden="true" tabindex="-1"></a>            lambda_start <span class="op">=</span> <span class="va">self</span>.endog.mean()</span>
+<span id="cb5-17"><a href="#cb5-17" aria-hidden="true" tabindex="-1"></a>            excess_zeros <span class="op">=</span> (<span class="va">self</span>.endog <span class="op">==</span> <span class="dv">0</span>).mean() <span class="op">-</span> stats.poisson.pmf(<span class="dv">0</span>, lambda_start)</span>
+<span id="cb5-18"><a href="#cb5-18" aria-hidden="true" tabindex="-1"></a>            </span>
+<span id="cb5-19"><a href="#cb5-19" aria-hidden="true" tabindex="-1"></a>            start_params <span class="op">=</span> np.array([excess_zeros, lambda_start])</span>
+<span id="cb5-20"><a href="#cb5-20" aria-hidden="true" tabindex="-1"></a>            </span>
+<span id="cb5-21"><a href="#cb5-21" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> <span class="bu">super</span>(ZeroInflatedPoisson, <span class="va">self</span>).fit(start_params<span class="op">=</span>start_params,</span>
+<span id="cb5-22"><a href="#cb5-22" aria-hidden="true" tabindex="-1"></a>                                                    maxiter<span class="op">=</span>maxiter, maxfun<span class="op">=</span>maxfun, <span class="op">**</span>kwds)</span></code></pre></div>
+<p>The key component of this class is the method <code>nloglikeobs</code>, which returns the negative log likelihood of each observed value in <code>endog</code>. Secondarily, we must also supply reasonable initial guesses of the parameters in <code>fit</code>. Obtaining the maximum likelihood estimate is now simple.</p>
+<div class="sourceCode" id="cb6"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>model <span class="op">=</span> ZeroInflatedPoisson(x)</span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>results <span class="op">=</span> model.fit()</span></code></pre></div>
+<pre><code>Optimization terminated successfully.
+         Current function value: 1.586641
+         Iterations: 37
+         Function evaluations: 70</code></pre>
+<p>We see that we have estimated the parameters fairly well.</p>
+<div class="sourceCode" id="cb8"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>pi_mle, lambda_mle <span class="op">=</span> results.params</span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>pi_mle, lambda_mle</span></code></pre></div>
+<pre><code>(0.31542487710071976, 2.0451304204850853)</code></pre>
+<p>There are many advantages to buying into the <code>statsmodels</code> ecosystem and subclassing <code>GenericLikelihoodModel</code>. The already-written <code>statsmodels</code> code handles storing the observations and the interaction with <code>scipy.optimize</code> for us. (It is possible to control the use of <code>scipy.optimize</code> through keyword arguments to <code>fit</code>.)</p>
+<p>We also gain access to many of <code>statsmodels</code>’ built in model analysis tools. For example, we can use bootstrap resampling to estimate the variation in our parameter estimates.</p>
+<div class="sourceCode" id="cb10"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a>boot_mean, boot_std, boot_samples <span class="op">=</span> results.bootstrap(nrep<span class="op">=</span><span class="dv">500</span>, store<span class="op">=</span><span class="va">True</span>)</span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a>boot_pis <span class="op">=</span> boot_samples[:, <span class="dv">0</span>]</span>
+<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a>boot_lambdas <span class="op">=</span> boot_samples[:, <span class="dv">1</span>]</span></code></pre></div>
+<center>
+<img src="/resources/mle-statsmodels/boot.png" title="fig:" alt="Bootstrap distribution of parameter estimates" />
+</center>
+<p>The next time you are fitting a model using maximum likelihood, try integrating with <code>statsmodels</code> to take advantage of the significant amount of work that has gone into its ecosystem.</p>
+<p>This post is available as an <a href="http://ipython.org">IPython</a> notebook <a href="http://nbviewer.ipython.org/gist/AustinRochford/92b06d174a7f84fded6e">here</a>.</p>

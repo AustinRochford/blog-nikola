@@ -1,0 +1,81 @@
+<meta name="title" content="Reservoir Sampling for Streaming Data" />
+<meta name="tags" content="Algorithms, Sampling, Probability" />
+<meta name="date" content="2014-11-30" />
+<meta name="has_math" content="true" /><p>I have been interested in streaming data algorithms for some time. These algorithms assume that data arrive sequentially over time and/or that the data set is too large to fit into memory for random access. Perhaps the most widely-known streaming algorithm is <a href="http://en.wikipedia.org/wiki/HyperLogLog">HyperLogLog</a>, which calculates the approximate number of distinct values in a stream, with fixed memory use. In this post, I will discuss a simple algorithm for randomly sampling from from a data stream.</p>
+<p>Let the values of the stream be <span class="math inline">\(x_1, x_2, x_3, \ldots\)</span>; we do not need to assume that the stream ever terminates, although it may. The <a href="http://en.wikipedia.org/wiki/Reservoir_sampling">reservoir algorithm</a> samples <span class="math inline">\(k\)</span> random items from the stream (without replacement) in the sense that after seeing <span class="math inline">\(n\)</span> data points, the probability that any individual data point is in the sample is <span class="math inline">\(\frac{k}{n}\)</span>. This algorithm only requires one pass through the stream, and uses storage proportional to <span class="math inline">\(k\)</span> (not the total, possibly infinite, size of the stream).</p>
+<p>The reservoir algorithm is so named because at each step it updates a “reservoir” of candidate samples. We will denote the reservoir of candidate samples by <span class="math inline">\(R\)</span>. We will use <span class="math inline">\(R_t\)</span> to denote the state of <span class="math inline">\(R\)</span> after observing the first <span class="math inline">\(t\)</span> data points. We think of <span class="math inline">\(R\)</span> as a vector of length <span class="math inline">\(k\)</span>, so <span class="math inline">\(R_t[0]\)</span> is the first candidate sample after <span class="math inline">\(t\)</span> data points have been seen, <span class="math inline">\(R_t[1]\)</span> is the second, <span class="math inline">\(R_t[k - 1]\)</span> is the last, etc. It is important that <span class="math inline">\(k\)</span> is small enough that the reservoir vectors can be stored in memory (or at least accessed reasonably quickly on disk).</p>
+<p>We initialize the first reservoir, <span class="math inline">\(R_k\)</span> with the first <span class="math inline">\(k\)</span> data points we see. At this point, we have a random sample (without replacement) of the first <span class="math inline">\(k\)</span> data points from the stream.</p>
+<p>Suppose now that we have seen <span class="math inline">\(t - 1\)</span> elements and have a reservoir of sample candidates <span class="math inline">\(R_{t - 1}\)</span>. When we receive <span class="math inline">\(x_t\)</span>, we generate an integer <span class="math inline">\(i\)</span> uniformly distributed in the interval <span class="math inline">\([1, t]\)</span>. If <span class="math inline">\(i \leq k\)</span>, we set <span class="math inline">\(R_t[i - 1] = x_t\)</span>; otherwise, we wait for the next data point.</p>
+<p>Intuitively, this algorithm seems reasonable, because <span class="math inline">\(P(x_t \in R_t) = P(i \leq k) = \frac{k}{t}\)</span>, as we expect from a uniform random sample. What is less clear at this point is that for any <span class="math inline">\(s &lt; t\)</span>, <span class="math inline">\(P(x_{s} \in R_t) = \frac{k}{t}\)</span> as well. We will now prove this fact.</p>
+<p>First, we calculate the probability that a candidate sample in the reservoir remains after another data point is received. We let <span class="math inline">\(x_s \in R_t\)</span>, and suppose we have observed <span class="math inline">\(x_{t + 1}\)</span>. The candidate sample <span class="math inline">\(x_s\)</span> will be in <span class="math inline">\(R_{t + 1}\)</span> if and only if the random integer <span class="math inline">\(i\)</span> generated for <span class="math inline">\(x_{t + 1}\)</span> is not the index of <span class="math inline">\(x_s\)</span> in <span class="math inline">\(R_t\)</span>. Since <span class="math inline">\(i\)</span> is uniformly distributed in the interval <span class="math inline">\([1, t + 1]\)</span>, we have that</p>
+<p><span class="math display">\[P(x_s \in R_{t + 1}\ |\ x_s \in R_t) = \frac{t}{t + 1}.\]</span></p>
+<p>Now, suppose that we have received <span class="math inline">\(n\)</span> data points. First consider the case where <span class="math inline">\(k &lt; s &lt; n\)</span>. Then</p>
+<p><span class="math display">\[P(x_s \in R_n) = P(x_s \in R_n\ |\ x_s \in R_s) \cdot P(x_s \in R_s).\]</span></p>
+<p>The second term, <span class="math inline">\(P(x_s \in R_s)\)</span>, is the probability that <span class="math inline">\(x_s\)</span> entered the reservoir when it was first observed, so</p>
+<p><span class="math display">\[P(x_s \in R_s) = \frac{k}{s}.\]</span></p>
+<p>To calculate the first term, <span class="math inline">\(P(x_s \in R_n\ |\ x_s \in R_s)\)</span>, we multiply the probability that <span class="math inline">\(x_s\)</span> remains in the reservoir after each subsequent observation, yielding</p>
+<p><span class="math display">\[
+P(x_s \in R_n\ |\ x_s \in R_s)
+    = \prod_{t = s}^{n - 1} P(x_s \in R_{t + 1}\ |\ x_s \in R_t)
+    = \frac{s}{s + 1} \cdot \frac{s + 1}{s + 2} \cdot \cdots \cdot \frac{n -
+1}{n}
+    = \frac{s}{n}.
+\]</span></p>
+<p>Therefore</p>
+<p><span class="math display">\[P(x_s \in R_n) = \frac{s}{n} \cdot \frac{k}{s} = \frac{k}{n},\]</span></p>
+<p>as desired.</p>
+<p>Now consider the case where <span class="math inline">\(s \leq k\)</span>, so that <span class="math inline">\(P(x_s \in R_k) = 1\)</span>. In this case,</p>
+<p><span class="math display">\[
+P(x_s \in R_n)
+    = P(x_s \in R_n\ |\ x_s \in R_k)
+    = \prod_{t = k}^{n - 1} P(x_s \in R_{t + 1}\ |\ x_s \in R_t)
+    = \frac{k}{k + 1} \cdot \frac{k + 1}{k + 2} \cdot \cdots \cdot \frac{n -
+1}{n}
+    = \frac{k}{n},
+\]</span></p>
+<p>as desired.</p>
+<p>Below we give an implementation of this algorithm in Python.</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> itertools <span class="im">as</span> itl</span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> numpy <span class="im">as</span> np</span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> sample_after(stream, k):</span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a>    <span class="co">&quot;&quot;&quot;</span></span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a><span class="co">    Return a random sample ok k elements drawn without replacement from stream.</span></span>
+<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a><span class="co">    </span></span>
+<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a><span class="co">    This function is designed to be used when the elements of stream cannot</span></span>
+<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a><span class="co">    fit into memory.</span></span>
+<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a><span class="co">    &quot;&quot;&quot;</span></span>
+<span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a>    r <span class="op">=</span> np.array(<span class="bu">list</span>(itl.islice(stream, k)))</span>
+<span id="cb1-13"><a href="#cb1-13" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb1-14"><a href="#cb1-14" aria-hidden="true" tabindex="-1"></a>    <span class="cf">for</span> t, x <span class="kw">in</span> <span class="bu">enumerate</span>(stream, k <span class="op">+</span> <span class="dv">1</span>):</span>
+<span id="cb1-15"><a href="#cb1-15" aria-hidden="true" tabindex="-1"></a>        i <span class="op">=</span> np.random.randint(<span class="dv">1</span>, t <span class="op">+</span> <span class="dv">1</span>)</span>
+<span id="cb1-16"><a href="#cb1-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-17"><a href="#cb1-17" aria-hidden="true" tabindex="-1"></a>        <span class="cf">if</span> i <span class="op">&lt;=</span> k:</span>
+<span id="cb1-18"><a href="#cb1-18" aria-hidden="true" tabindex="-1"></a>            r[i <span class="op">-</span> <span class="dv">1</span>] <span class="op">=</span> x</span>
+<span id="cb1-19"><a href="#cb1-19" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb1-20"><a href="#cb1-20" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> r</span>
+<span id="cb1-21"><a href="#cb1-21" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-22"><a href="#cb1-22" aria-hidden="true" tabindex="-1"></a>sample(<span class="bu">xrange</span>(<span class="dv">1000000000</span>), <span class="dv">10</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="op">&gt;</span> array([<span class="dv">950266975</span>, <span class="dv">378108182</span>, <span class="dv">637777154</span>, <span class="dv">915372867</span>, <span class="dv">298742970</span>, <span class="dv">629846773</span>,</span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>         <span class="dv">749074581</span>, <span class="dv">893637541</span>, <span class="dv">328486342</span>, <span class="dv">685539979</span>])</span></code></pre></div>
+<h4 id="generalizations">Generalizations</h4>
+<p>Vitter<a href="#fn1" class="footnote-ref" id="fnref1" role="doc-noteref"><sup>1</sup></a> gives three generalizations of this simple reservoir sampling algorithm, all based on the following idea.</p>
+<p>Instead of generating a random integer for each data point, we generate the number of data points to skip before the next candidate data point. Let <span class="math inline">\(S_t\)</span> be the number of data points to advance from <span class="math inline">\(x_t\)</span> before adding a candidate to the reservoir. For example, if <span class="math inline">\(S_t = 3\)</span>, we would ignore <span class="math inline">\(x_{t + 1}\)</span> and <span class="math inline">\(x_{t + 2}\)</span> and add <span class="math inline">\(x_{t + 3}\)</span> to the reservoir.</p>
+<p>The simple reservoir algorithm leads to the following distribution on <span class="math inline">\(S_t\)</span>:</p>
+<p><span class="math display">\[P(S_t = 1) = \frac{k}{t + 1}\]</span></p>
+<p><span class="math display">\[P(S_t = 2) = \left(1 - \frac{k}{t + 1}\right) \frac{k}{t + 2} = \frac{t - k +
+1}{t + 1} \cdot \frac{k}{t + 2}\]</span></p>
+<p><span class="math display">\[P(S_t = 3) = \left(1 - \frac{k}{t + 2}\right) \left(1 - \frac{k}{t + 1}\right)
+\frac{k}{t + 3} = \frac{t - k + 2}{t + 2} \cdot \frac{t - k + 1}{t + 1} \cdot
+\frac{k}{t + 3}\]</span></p>
+<p>In general,</p>
+<p><span class="math display">\[P(S_t = s) = k \cdot \frac{t! (t + s - (k + 1))!}{(t + s)! (t - k)!}.\]</span></p>
+<p>Vitter gives three generalizations of the reservor algorithm, each based on different ways of sampling from the distribution of <span class="math inline">\(S_t\)</span>. These generalizations have the advantage of requiring the generation of fewer random integers than the simple reservoir algorithm given above.</p>
+<p>This blog post is available as an <a href="http://ipython.org/">IPython</a> notebook <a href="http://nbviewer.ipython.org/gist/AustinRochford/6be7cb4d9f38b9419f94">here</a>.</p>
+<section class="footnotes" role="doc-endnotes">
+<hr />
+<ol>
+<li id="fn1" role="doc-endnote"><p>Vitter, Jeffrey S. “Random sampling with a reservoir.” <em>ACM Transactions on Mathematical Software (TOMS)</em> 11.1 (1985): 37-57.<a href="#fnref1" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+</ol>
+</section>

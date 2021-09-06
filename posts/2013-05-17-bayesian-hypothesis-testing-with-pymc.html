@@ -1,0 +1,130 @@
+<meta name="title" content="Bayesian Hypothesis Testing with PyMC" />
+<meta name="tags" content="Bayesian Statistics, Hypothesis Testing, PyMC" />
+<meta name="date" content="2013-05-17" />
+<meta name="has_math" content="true" /><p>Lately I’ve been reading the excellent, open source book <a href="https://github.com/CamDavidsonPilon/Probabilistic-Programming-and-Bayesian-Methods-for-Hackers">Probabilistic Programming and Bayesian Methods for Hackers</a>. The book’s prologue opens with the following line.</p>
+<blockquote>
+<p>The Bayesian method is the natural approach to inference, yet it is hidden from readers behind chapters of slow, mathematical analysis.</p>
+</blockquote>
+<p>As a mathematician with training in statistics as well, this comment rings quite true. Even with a firm foundation in the probability theory necessary for Bayesian inference, the calculations involved are often incredibly tedious. An introduction to Bayesian statistics often invovles the hazing ritual of showing that, if <span class="math inline">\(X | \mu \sim N(\mu, \sigma^2)\)</span> and <span class="math inline">\(\mu \sim N(\mu_0, \sigma_0^2)\)</span> where <span class="math inline">\(\sigma^2\)</span>, <span class="math inline">\(\mu_0\)</span>, and <span class="math inline">\(\sigma_0^2\)</span> are known, then</p>
+<p><span class="math display">\[\mu | X \sim N \left(\frac{\frac{X}{\sigma^2} + \frac{\mu_0}{\sigma_0^2}}{\frac{1}{\sigma^2} + \frac{1}{\sigma_0^2}}\right).\]</span></p>
+<p>If you want to try it yourself, <a href="http://en.wikipedia.org/wiki/Bayes&#39;_theorem#Random_variables">Bayes' Theorem</a> and <a href="https://en.wikipedia.org/wiki/Normal_distribution#The_sum_of_two_quadratics">this polynomial identity</a> will prove helpful.</p>
+<p>Programming and Bayesian Methods for Hackers emphasizes the utility of PyMC for both eliminating tedious, error-prone calculations, and also for approximating posterior distributions in models that have no exact solution. I was recently reminded of PyMC’s ability to eliminate tedious, error-prone calculations during my statistics final, which contained a problem on <a href="http://en.wikipedia.org/wiki/Bayes_factor">Bayesian hypothesis testing</a>. This post aims to present both the exact theoretical analysis of this problem and its approximate solution using PyMC.</p>
+<p>The problem is as follows.</p>
+<p>Given that <span class="math inline">\(X | \mu \sim N(\mu, \sigma^2)\)</span>, where <span class="math inline">\(\sigma^2\)</span> is known, we wish to test the hypothesis <span class="math inline">\(H_0: \mu = 0\)</span> vs. <span class="math inline">\(H_A: \mu \neq 0\)</span>. To do so in a Bayesian framework, we need prior probabilities on each of the hypotheses and a distribution on the parameter space of the alternative hypothesis. We assign the hypotheses equal prior probabilities, <span class="math inline">\(\pi_0 = \frac{1}{2} = \pi_A\)</span>, which indicates that prior to observing the value of <span class="math inline">\(X\)</span>, we believe that each hypothesis is equally likely to be true. We also endow the alternative parameter space, <span class="math inline">\(\Theta_A = (-\infty, 0) \cup (0, \infty)\)</span>, with a <span class="math inline">\(N(0, \sigma_0^2)\)</span> distribution, where <span class="math inline">\(\sigma_0^2\)</span> is known.</p>
+<p>The Bayesian framework for hypothesis testing relies on the calculation of the posterior odds of the hypotheses,</p>
+<p><span class="math display">\[\textrm{Odds}(H_A|x) = \frac{P(H_A | x)}{P(H_0 | x)} = BF(x) \cdot \frac{\pi_A}{\pi_0},\]</span></p>
+<p>where <span class="math inline">\(BF(x)\)</span> is the Bayes factor. In our situation, the Bayes factor is</p>
+<p><span class="math display">\[BF(x) = \frac{\int_{\Theta_A} f(x|\mu) \rho_A(\mu)\ d\mu}{f(x|0)}.\]</span></p>
+<p>The Bayes factor is the Bayesian counterpart of the <a href="http://en.wikipedia.org/wiki/Likelihood-ratio_test">likelihood ratio</a>, which is ubiquitous in frequentist hypothesis testing. The idea behind Bayesian hypothesis testing is that we should choose whichever hypothesis better explains the observation, so we reject <span class="math inline">\(H_0\)</span> when <span class="math inline">\(\textrm{Odds}(H_A) &gt; 1\)</span>, and accept <span class="math inline">\(H_0\)</span> otherwise. In our situation, <span class="math inline">\(\pi_0 = \frac{1}{2} = \pi_A\)</span>, so <span class="math inline">\(\textrm{Odds}(H_A) = BF(x)\)</span>. Therefore we base our decision on the value of the Bayes factor.</p>
+<p>In the following sections, we calculate this Bayes factor exactly and approximate it with PyMC. If you’re only interested in the simulation and would like to skip the exact calculation (I can’t blame you) go straight to the section on <a href="#approx">PyMC approximation</a>.</p>
+<h3 id="exact-calculation">Exact Calculation</h3>
+<p>The calculation becomes (somewhat) simpler if we reparamatrize the normal distribution using its <a href="https://en.wikipedia.org/wiki/Normal_distribution#Alternative_parametrizations">precision</a> instead of its variance. If <span class="math inline">\(X\)</span> is normally distributed with variance <span class="math inline">\(\sigma^2\)</span>, its precision is <span class="math inline">\(\tau = \frac{1}{\sigma^2}\)</span>. When a normal distribution is parametrized by precision, its probability density function is</p>
+<p><span class="math display">\[f(x|\mu, \tau) = \sqrt{\frac{\tau}{2 \pi}} \textrm{exp}\left(-\frac{\tau}{2} (x - \mu)^2\right).\]</span></p>
+<p>Reparametrizing the problem in this way, we get <span class="math inline">\(\tau = \frac{1}{\sigma^2}\)</span> and <span class="math inline">\(\tau_0 = \frac{1}{\sigma_0^2}\)</span>, so</p>
+<p><span class="math display">\[\begin{align}
+    f(x|\mu) \rho_A(\mu)
+        &amp; = \left(\sqrt{\frac{\tau}{2 \pi}} \textrm{exp}\left(-\frac{\tau}{2} (x - \mu)^2\right)\right) \cdot \left(\sqrt{\frac{\tau_0}{2 \pi}} \textrm{exp}\left(-\frac{\tau_0}{2} \mu^2\right)\right) \\
+        &amp; = \frac{\sqrt{\tau \cdot \tau_0}}{2 \pi} \cdot \textrm{exp} \left(-\frac{1}{2} \left(\tau (x - \mu)^2 + \tau_0 \mu^2\right)\right).
+\end{align}\]</span></p>
+<p>Focusing momentarily on the sum of quadratics in the exponent, we rewrite it as <span class="math display">\[\begin{align}
+    \tau (x - \mu)^2 + \tau_0 \mu^2
+        &amp; = \tau x^2 + (\tau + \tau_0) \left(\mu^2 - 2 \frac{\tau}{\tau + \tau_0} \mu x\right)  \\
+        &amp; = \tau x^2 + (\tau + \tau_0) \left(\left(\mu - \frac{\tau}{\tau + \tau_0} x\right)^2 - \left(\frac{\tau}{\tau + \tau_0}\right)^2 x^2\right)   \\
+        &amp; = \left(\tau - \frac{\tau^2}{\tau + \tau_0}\right) x^2 + (\tau + \tau_0) \left(\mu - \frac{\tau}{\tau + \tau_0} x\right)^2   \\
+        &amp; = \frac{\tau \tau_0}{\tau + \tau_0} x^2 + (\tau + \tau_0) \left(\mu - \frac{\tau}{\tau + \tau_0} x\right)^2.
+\end{align}\]</span></p>
+<p>Therefore <span class="math display">\[\begin{align}
+    \int_{\Theta_A} f(x|\mu) \rho_A(\mu)\ d\mu
+        &amp; = \frac{\sqrt{\tau \tau_0}}{2 \pi} \cdot \textrm{exp}\left(-\frac{1}{2} \left(\frac{\tau \tau_0}{\tau + \tau_0}\right) x^2\right) \int_{-\infty}^\infty \textrm{exp}\left(-\frac{1}{2} (\tau + \tau_0) \left(\mu - \frac{\tau}{\tau + \tau_0} x\right)^2\right)\ d\mu   \\
+        &amp; = \frac{\sqrt{\tau \tau_0}}{2 \pi} \cdot \textrm{exp}\left(-\frac{1}{2} \left(\frac{\tau \tau_0}{\tau + \tau_0}\right) x^2\right) \cdot \sqrt{\frac{2 \pi}{\tau + \tau_0}}    \\
+        &amp; = \frac{1}{\sqrt{2 \pi}} \cdot \sqrt{\frac{\tau \tau_0}{\tau + \tau_0}} \cdot \textrm{exp}\left(-\frac{1}{2} \left(\frac{\tau \tau_0}{\tau + \tau_0}\right) x^2\right).
+\end{align}\]</span></p>
+<p>The denominator of the Bayes factor is <span class="math display">\[\begin{align}
+    f(x|0)
+        &amp; = \sqrt{\frac{\tau}{2 \pi}} \cdot \textrm{exp}\left(-\frac{\tau}{2} x^2\right),
+\end{align}\]</span> so the Bayes factor is <span class="math display">\[\begin{align}
+    BF(x)
+        &amp; = \frac{\frac{1}{\sqrt{2 \pi}} \cdot \sqrt{\frac{\tau \tau_0}{\tau + \tau_0}} \cdot \textrm{exp}\left(-\frac{1}{2} \left(\frac{\tau \tau_0}{\tau + \tau_0}\right) x^2\right)}{\sqrt{\frac{\tau}{2 \pi}} \cdot \textrm{exp}\left(-\frac{\tau}{2} x^2\right)}   \\
+        &amp; = \sqrt{\frac{\tau_0}{\tau + \tau_0}} \cdot \textrm{exp}\left(-\frac{\tau}{2} \left(\frac{\tau_0}{\tau + \tau_0} - 1\right) x^2\right)    \\
+        &amp; = \sqrt{\frac{\tau_0}{\tau + \tau_0}} \cdot \textrm{exp}\left(\frac{1}{2} \left(\frac{\tau^2}{\tau + \tau_0}\right) x^2\right).
+\end{align}\]</span></p>
+<p>From above, we reject the null hypothesis whenever <span class="math inline">\(BF(x) &gt; 1\)</span>, which is equivalent to <span class="math display">\[\begin{align}
+    \textrm{exp}\left(\frac{1}{2} \left(\frac{\tau^2}{\tau + \tau_0}\right) x^2\right)
+        &amp; &gt; \sqrt{\frac{\tau + \tau_0}{\tau_0}}, \\
+    \frac{1}{2} \left(\frac{\tau^2}{\tau + \tau_0}\right) x^2
+        &amp; &gt; \frac{1}{2} \log\left(\frac{\tau + \tau_0}{\tau_0}\right),\textrm{ and} \\
+    x^2
+        &amp; &gt; \left(\frac{\tau + \tau_0}{\tau^2}\right) \cdot \log\left(\frac{\tau + \tau_0}{\tau_0}\right).
+\end{align}\]</span></p>
+<p>As you can see, this calculation is no fun. I’ve even left out a lot of details that are only really clear once you’ve done this sort of calculation many times. Let’s see how PyMC can help us avoid this tedium.</p>
+<p><a name="approx"></a></p>
+<h3 id="pymc-approximation">PyMC Approximation</h3>
+<p><a href="https://github.com/pymc-devs/pymc">PyMC</a> is a Python module that uses <a href="http://en.wikipedia.org/wiki/Markov_chain_Monte_Carlo">Markov chain Monte Carlo</a> methods (and others) to fit Bayesian statistical models. If you’re unfamiliar with <a href="http://en.wikipedia.org/wiki/Markov_chain">Markov chains</a>, <a href="http://en.wikipedia.org/wiki/Monte_Carlo_method">Monte Carlo methods</a>, or Markov chain Monte Carlo methods, each of which is a an important topic in its own right, PyMC provides a set of tools to approximate marginal and posterior distributions of Bayesian statistical models.</p>
+<p>To solve this problem, we will use PyMC to approximate <span class="math inline">\(\int_{\Theta_A} f(x|\mu) \rho_A(\mu)\ d\mu\)</span>, the numerator of the Bayes factor. This quantity is the marginal distribution of the observation, <span class="math inline">\(X\)</span>, under the alternative hypothesis.</p>
+<p>We begin by importing the necessary Python packages.</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> numpy <span class="im">as</span> np</span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> pymc</span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> scipy.optimize <span class="im">as</span> opt</span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> scipy.stats <span class="im">as</span> stats</span></code></pre></div>
+<p>In order to use PyMC to approximate the Bayes factor, we must fix numeric values of <span class="math inline">\(\sigma^2\)</span> and <span class="math inline">\(\sigma_0^2\)</span>. We use the values <span class="math inline">\(\sigma^2 = 1\)</span> and <span class="math inline">\(\sigma_0^2 = 9\)</span>.</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>simga <span class="op">=</span> <span class="fl">1.0</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>tau <span class="op">=</span> <span class="dv">1</span> <span class="op">/</span> sigma<span class="op">**</span><span class="dv">2</span></span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>sigma0 <span class="op">=</span> <span class="fl">3.0</span></span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a>tau0 <span class="op">=</span> <span class="dv">1</span> <span class="op">/</span> sigma0<span class="op">**</span><span class="dv">2</span></span></code></pre></div>
+<p>We now initialize the random variable <span class="math inline">\(\mu\)</span>.</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>mu <span class="op">=</span> pymc.Normal(<span class="st">&quot;mu&quot;</span>, mu<span class="op">=</span><span class="dv">0</span>, tau<span class="op">=</span>tau0)</span></code></pre></div>
+<p>Note that PyMC’s normal distribution is parametrized in terms of the precision and not the variance. When we initialize the variable <code>x</code>, we use the variable <code>mu</code> as its mean.</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>x <span class="op">=</span> pymc.Normal(<span class="st">&quot;x&quot;</span>, mu<span class="op">=</span>mu, tau<span class="op">=</span>tau)</span></code></pre></div>
+<p>PyMC now knows that the distribution of <code>x</code> depends on the value of <code>mu</code> and will respect this relationship in its simulation.</p>
+<p>We now instantiate a Markov chain Monte Carlo sampler, and use it to sample from the distributions of <code>mu</code> and <code>x</code>.</p>
+<div class="sourceCode" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>mcmc <span class="op">=</span> pymc.MCMC([mu, x])</span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>mcmc.sample(<span class="dv">50000</span>, <span class="dv">10000</span>, <span class="dv">1</span>)</span></code></pre></div>
+<p>In the second line above, we tell PyMC to run the Markov chain Monte Carlo simulation for 50,000 steps, using the first 10,000 steps as burn-in, and then count each o the last 40,000 steps towards the sample. The burn-in period is the number of samples we discard from the beginning of the Markov chain Monte Carlo algorithm. A burn-in period is necessary to assure that the algorithm has converged to the desired distribution before we sample from it.</p>
+<p>Finally, we may obtain samples from the distribution of <span class="math inline">\(X\)</span> under the alternative hypothesis.</p>
+<div class="sourceCode" id="cb6"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>x_samples <span class="op">=</span> mcmc.trace(<span class="st">&quot;x&quot;</span>)[:]</span></code></pre></div>
+<p>From our exact calculations, we expect that, given the alternative hypothesis, <span class="math inline">\(X \sim N\left(0, \frac{\tau \tau_0}{\tau + \tau_0}\right)\)</span>. The following chart shows both the histogram derived from <code>x_samples</code> and the probability density function of <span class="math inline">\(X\)</span> under the alternative hypothesis.</p>
+<div class="sourceCode" id="cb7"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a>fig <span class="op">=</span> plt.figure(figsize<span class="op">=</span>(<span class="dv">5</span>,<span class="dv">5</span>))</span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a>axes <span class="op">=</span> fig.add_subplot(<span class="dv">111</span>)</span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>axes.hist(x_samples, bins<span class="op">=</span><span class="dv">50</span>, normed<span class="op">=</span><span class="va">True</span>, color<span class="op">=</span><span class="st">&quot;gray&quot;</span>)<span class="op">;</span></span>
+<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a>x_range <span class="op">=</span> np.arange(<span class="op">-</span><span class="dv">15</span>, <span class="dv">15</span>, <span class="fl">0.1</span>)</span>
+<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a>x_precision <span class="op">=</span> tau <span class="op">*</span> tau0 <span class="op">/</span> (tau <span class="op">+</span> tau0)</span>
+<span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a>axes.plot(x_range, stats.norm.pdf(x_range, <span class="dv">0</span>, <span class="dv">1</span> <span class="op">/</span> sqrt(x_precision)), color<span class="op">=</span><span class="st">&#39;k&#39;</span>, linewidth<span class="op">=</span><span class="dv">2</span>)<span class="op">;</span></span>
+<span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a>fig.show()</span></code></pre></div>
+<center>
+<img src="/resources/bayesian-hypothesis/x_hist_calc.png" />
+</center>
+<p>It’s always nice to see agreement between theory and simulation. The problem now is that we need to evaluate the probability distribution function of <span class="math inline">\(X|H_A\)</span> at the observed point <span class="math inline">\(X = x_0\)</span>, but we only know the cumulative distribution function of <span class="math inline">\(X\)</span> (via its histogram, computed from <code>x_samples</code>). Enter <a href="http://en.wikipedia.org/wiki/Kernel_density_estimation">kernel density estimation</a>, a nonparametric method for estimating the probability density function of a random variable from samples. Fortunately, <a href="http://www.scipy.org/">SciPy</a> provides an excellent module for <a href="http://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.gaussian_kde.html#scipy.stats.gaussian_kde">kernel density estimation</a>.</p>
+<div class="sourceCode" id="cb8"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>x_pdf <span class="op">=</span> stats.kde.gaussian_kde(x_samples)</span></code></pre></div>
+<p>We define two functions, the first of which gives the simulated Bayes factor, and the second of which gives the exact Bayes factor.</p>
+<div class="sourceCode" id="cb9"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> bayes_factor_sim(x_obs):</span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> x_pdf.evaluate(x_obs) <span class="op">/</span> stats.norm.pdf(x_obs, <span class="dv">0</span>, sigma)</span>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> bayes_factor_exact(x_obs):</span>
+<span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> sqrt(tau0 <span class="op">/</span> (tau <span class="op">+</span> tau0)) <span class="op">*</span> exp(<span class="fl">0.5</span> <span class="op">*</span> tau<span class="op">**</span><span class="dv">2</span> <span class="op">/</span> (tau <span class="op">+</span> tau0) <span class="op">*</span> x_obs<span class="op">**</span><span class="dv">2</span>)</span></code></pre></div>
+<p>The following figure shows the excellent agreement between the simulated and calculated bayes factors.</p>
+<div class="sourceCode" id="cb10"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a>fig <span class="op">=</span> plt.figure(figsize<span class="op">=</span>(<span class="dv">5</span>,<span class="dv">5</span>))</span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a>axes <span class="op">=</span> fig.add_subplot(<span class="dv">111</span>)</span>
+<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a>x_range <span class="op">=</span> np.arange(<span class="dv">0</span>, <span class="dv">2</span>, <span class="fl">0.1</span>)</span>
+<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a>axes.plot(x_range, bayes_factor_sim(x_range), color<span class="op">=</span><span class="st">&quot;red&quot;</span>, label<span class="op">=</span><span class="st">&quot;Simulated Bayes factor&quot;</span>, linewidth<span class="op">=</span><span class="dv">2</span>)</span>
+<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a>axes.plot(x_range, bayes_factor_exact(x_range), color<span class="op">=</span><span class="st">&quot;blue&quot;</span>, label<span class="op">=</span><span class="st">&quot;Exact Bayes factor&quot;</span>)</span>
+<span id="cb10-6"><a href="#cb10-6" aria-hidden="true" tabindex="-1"></a>axes.legend(loc<span class="op">=</span><span class="dv">2</span>)</span>
+<span id="cb10-7"><a href="#cb10-7" aria-hidden="true" tabindex="-1"></a>fig.show()</span></code></pre></div>
+<center>
+<img src="/resources/bayesian-hypothesis/bayes_factors.png" />
+</center>
+<p>The only reason it’s possible to see the red graph of simulated Bayes factor behind the blue graph of the exact Bayes factor is that we’ve doubled the width of the red graph. In fact, on the interval <span class="math inline">\([0, 2]\)</span>, the maximum relative error of the simulated Bayes factor is approximately 0.9%.</p>
+<div class="sourceCode" id="cb11"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a>np.<span class="bu">max</span>(np.<span class="bu">abs</span>(bayes_factor_sim(x_factor_range) <span class="op">-</span> bayes_factor_exact(x_factor_range)) <span class="op">/</span> bayes_factor_exact(x_factor_range))</span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a><span class="op">&gt;</span> <span class="fl">0.0087099167640844726</span></span></code></pre></div>
+<p>We now use the simulated Bayes factor to approximate the critical value for rejecting the null hypothesis.</p>
+<div class="sourceCode" id="cb12"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> bayes_factor_crit_helper(x):</span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> bayes_factor_sim(x) <span class="op">-</span> <span class="dv">1</span></span>
+<span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb12-4"><a href="#cb12-4" aria-hidden="true" tabindex="-1"></a>x_crit <span class="op">=</span> opt.brentq(bayes_factor_crit_helper, <span class="dv">0</span>, <span class="dv">2</span>)</span>
+<span id="cb12-5"><a href="#cb12-5" aria-hidden="true" tabindex="-1"></a>x_crit</span>
+<span id="cb12-6"><a href="#cb12-6" aria-hidden="true" tabindex="-1"></a><span class="op">&gt;</span> <span class="fl">1.5949702067681601</span></span></code></pre></div>
+<p>The <a href="http://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.brentq.html#scipy.optimize.brentq">SciPy function</a> <code>opt.brentq</code> is used to find a solution of the equation <code>bayes_factor_sim(x) = 1</code>, which is equivalent to finding a zero of <code>bayes_factor_crit_helper</code>. We plug <code>x_crit</code> into <code>bayes_factor_exact</code> in order to verify that we have, in fact, found the critical value.</p>
+<div class="sourceCode" id="cb13"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a>bayes_factor_exact(x_crit)</span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a><span class="op">&gt;</span> <span class="fl">0.99349717121979564</span></span></code></pre></div>
+<p>This value is quite close to one, so we have in fact approximated the critical point well.</p>
+<p>It’s interesting to note that we have used PyMC in a somewhat odd way here, to approximate the marginal distribution of <span class="math inline">\(X\)</span> under the null hypothesis. A much more typical use of PyMC and its Markov chain Monte Carlo would be to fix an observed value of <span class="math inline">\(X\)</span> and approximate the posterior distribution of <span class="math inline">\(\mu\)</span> given this observation.</p>

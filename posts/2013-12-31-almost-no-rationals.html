@@ -1,0 +1,87 @@
+<meta name="title" content="There are Almost No Rational Numbers" />
+<meta name="tags" content="Math, Measure Theory" />
+<meta name="date" content="2013-12-31" />
+<meta name="has_math" content="true" /><p>One of the aspects of mathematics I find most fascinating is that attempting to answer a seemingly simple question can spawn deep and subtle theories with many unforseen applications. In this post, we’ll explore one such question which leads to the theory underlying almost all of modern analysis:</p>
+<blockquote>
+<p>How large are the rational numbers as a subset of the real numbers?</p>
+</blockquote>
+<p>The difficulty in answering this question lies in quantifying the size of a subset of the real numbers. There are several approaches we might consider. The rationals are <a href="http://en.wikipedia.org/wiki/Countable_set">countably infinite</a>, so in once sense they’re quite large, because there are infinitely many rationals, but in another sense they’re quite small, because the real numbers are <a href="http://en.wikipedia.org/wiki/Uncountable_set">uncountably infinite</a>. The rationals are also <a href="http://en.wikipedia.org/wiki/Dense_set">dense</a> in the reals; every real number can be approximated by a rational number with arbitrary precision.</p>
+<p>Neither of these notions holds up very well when we try to determine which subset of the reals is larger, the rationals or the unit interval <span class="math inline">\([0, 1]\)</span>. The rationals are countable while the interval is uncountable, so in that sense, the interval is larger. The interval is, however, not dense in the reals, so in that sense, the rationals are larger. Below, we will introduce the basics of <a href="http://en.wikipedia.org/wiki/Measure_(mathematics)">measure theory</a>, specifically the <a href="http://en.wikipedia.org/wiki/Lebesgue_measure">Lebesgue measure</a>, to resolve this difficulty.</p>
+<h4 id="a-brief-introduction-to-measure-theory">A Brief Introduction to Measure Theory</h4>
+<p>The motivation behind measure theory is to quantify the size of certain subsets of a universal set, so it is the perfect tool to answer our question. While measure theory is both a broad and deep field which forms the foundation of modern analysis and touches many other areas of mathematics, we will focus on the Lebesgue measure, one of its most basic constructs.</p>
+<p>The idea behind the Lebesgue measure is that the size of the interval <span class="math inline">\((a, b)\)</span> ought to be equal to its length, <span class="math inline">\(b - a\)</span>. The construction of the Lebesgue measure generalizes this notion to a much larger class of subsets of the real numbers.</p>
+<p>Let <span class="math inline">\(m\)</span> denote the Lebesgue measure. From the previous discussion, we define <span class="math inline">\(m((a, b)) = b - a\)</span>. In order to extend the definition of the Lebesgue measure to a slightly larger class of sets, let us first consider the size of the set <span class="math inline">\((0, 1) \cup (3, 5)\)</span>. It seems quite reasonable to define</p>
+<p><span class="math display">\[
+\begin{align*}
+m((0, 1) \cup (3, 5))
+    &amp; = (1 - 0) + (5 - 3)
+      = 1 + 2
+      = 3.
+\end{align*}
+\]</span></p>
+<p>We see that this idea readily generalizes to finite unions of pairwise disjoint intervals (recall that two sets are <a href="http://en.wikipedia.org/wiki/Disjoint_sets">disjoint</a> if their intersection is empty, that is, if they do not overlap). In that case, we define the Lebesgue mesure of the union to be the sum of the Lebesgue measures of each individual interval. More concretely, if <span class="math inline">\(a_1 &lt; b_1 &lt; a_2 &lt; b_2 &lt; \cdots &lt; a_n &lt; b_n\)</span>, then</p>
+<p><span class="math display">\[
+\begin{align*}
+m\left(\cup_{i = 1}^n (a_i, b_i)\right)
+    &amp; = \sum_{i = 1}^n m((a_i, b_i))
+      = \sum_{i = 1}^n (b_i - a_i).
+\end{align*}
+\]</span></p>
+<p>In fact, this extension of the Lebesgue measure to finite unions of pairwise disjoint intervals may itself be extended directly to countably infinite unions of pairwise disjoint intervals: if <span class="math inline">\(a_1 &lt; b_1 &lt; a_2 &lt; b_2 &lt; \cdots &lt; a_n &lt; b_n &lt; \cdots\)</span>, then</p>
+<p><span class="math display">\[
+\begin{align*}
+m\left(\cup_{i = 1}^\infty (a_i, b_i)\right)
+    &amp; = \sum_{i = 1}^\infty m((a_i, b_i))
+      = \sum_{i = 1}^\infty (b_i - a_i).
+\end{align*}
+\]</span></p>
+<p>We are not concerned about whether or not this sum converges, because we allow the Lebesgue measure to take values in the nonnegative <a href="http://en.wikipedia.org/wiki/Extended_real_number_line">extended real numbers</a>. Since each summand <span class="math inline">\(b_i - a_i &gt; 0\)</span>, if the sum diverges, it will be infinite. The next step in generalizing the Lebesgue measure to an even larger class of subsets of the real numbers is much more technical, so we stop here. Those interested should start exploring with <a href="http://en.wikipedia.org/wiki/Carath%C3%A9odory&#39;s_extension_theorem">Carathéodory’s extension theorem</a>.</p>
+<p>A set whose Lebesgue measure is well-defined is called measurable. A counterintuitive construction shows that <a href="http://en.wikipedia.org/wiki/Non-measurable_set">not every subset of the reals is measurable</a>. The counterparts of such odd sets in <span class="math inline">\(\mathbb{R}^2\)</span> are intimately connected to the famous <a href="http://en.wikipedia.org/wiki/Banach%E2%80%93Tarski_paradox">Banach-Tarski paradox</a>.</p>
+<p>We will use the following properties of the Lebesgue measure to calculate the measure of the rational numbers.</p>
+<ol type="1">
+<li>For any measurable set <span class="math inline">\(X\)</span>, <span class="math inline">\(m(X) \geq 0\)</span>.</li>
+<li>For any pairwise disjoint sequence of countably many measurable sets <span class="math inline">\(X_1, X_2, \ldots\)</span>,</li>
+</ol>
+<p><span class="math display">\[
+\begin{align*}
+m(\cup_{i = 1}^\infty X_i)
+    &amp; = \sum_{i = 1}^\infty m(X_i).
+\end{align*}
+\]</span></p>
+<p>The first of these properties is quite intuitive; it doesn’t make sense for a set to have negative size (although if we’re willing to dispense with the intuition relating measure and size, <a href="http://en.wikipedia.org/wiki/Signed_measure">signed measures</a> are quite important in <a href="http://en.wikipedia.org/wiki/Functional_analysis">functional analysis</a>). The second property is simply an extension of the definition of the measure of a countable union of pairwise disjoint intervals to arbitrary measurable sets.</p>
+<h4 id="the-lebesgue-measure-of-the-rational-numbers">The Lebesgue Measure of the Rational Numbers</h4>
+<p>We many now begin to calculate the Lebesgue measure of the rational numbers. The calculation uses the following fact: if <span class="math inline">\(X \subseteq Y\)</span> are both measurable sets, <span class="math inline">\(m(X) \leq m(Y)\)</span>. While this statement is quite intuitive (a subset should not be larger than it’s superset), we give the short proof. We may decompose <span class="math inline">\(Y\)</span> as <span class="math inline">\(Y = X \cup (Y \setminus X)\)</span> (here <span class="math inline">\(Y \setminus X\)</span> is the <a href="http://en.wikipedia.org/wiki/Complement_(set_theory)#Relative_complement">relative complement</a> of <span class="math inline">\(X\)</span> in <span class="math inline">\(Y\)</span>). Since <span class="math inline">\(X\)</span> and <span class="math inline">\(Y \setminus X\)</span> are disjoint, by the second property of <span class="math inline">\(m\)</span> above,</p>
+<p><span class="math display">\[
+\begin{align*}
+m(Y)
+    &amp; = m(X) + m(Y \setminus X)
+      \geq m(X),
+\end{align*}
+\]</span></p>
+<p>since <span class="math inline">\(m(Y \setminus X) \geq 0\)</span>.</p>
+<p>We now show that the measure of any singleton set, <span class="math inline">\(\{x\}\)</span>, is zero. This fact is intuitive, because a singleton is the smallest possible nonempty set; if we are to have any nonempty sets of measure zero, surely they must include the singletons. Let <span class="math inline">\(x\)</span> be any real number. The set <span class="math inline">\(\{x\}\)</span> is measurable, and for any <span class="math inline">\(\varepsilon &gt; 0\)</span>, <span class="math inline">\(\{x\} \subset \left(x - \frac{\varepsilon}{2}, x + \frac{\varepsilon}{2}\right)\)</span>. Therefore</p>
+<p><span class="math display">\[
+\begin{align*}
+0
+    &amp; \leq m(\{x\})  \\
+    &amp; \leq m\left(\left(x - \frac{\varepsilon}{2}, x + \frac{\varepsilon}{2}\right)\right) \\
+    &amp; = x + \frac{\varepsilon}{2} - \left(x - \frac{\varepsilon}{2}\right)  \\
+    &amp; = \varepsilon,
+\end{align*}
+\]</span></p>
+<p>so <span class="math inline">\(0 \leq m(\{x\}) \leq \varepsilon\)</span>. Since <span class="math inline">\(\varepsilon &gt; 0\)</span> was arbitrary, we may let <span class="math inline">\(\varepsilon \searrow 0\)</span>, which shows that <span class="math inline">\(m(\{x\}) = 0\)</span>.</p>
+<p>Finally, we are in a position to calculate the Lebesgue measure of the rational numbers. Since the rationals are countable, we may <a href="http://en.wikipedia.org/wiki/Enumeration#Enumeration_in_countable_vs._uncountable_context">enumerate</a> them as <span class="math inline">\(\mathbb{Q} = \cup_{i = 1}^\infty \{q_i\}\)</span>, so</p>
+<p><span class="math display">\[
+\begin{align*}
+m(\mathbb{Q})
+    &amp; = \sum_{i = 1}^\infty m(\{q_i\})
+      = \sum_{i = 1}^\infty 0
+      = 0.
+\end{align*}
+\]</span></p>
+<p>We have arrived at the remarkable fact that the Lebesgue measure of the rational numbers is zero. In a very <a href="http://en.wikipedia.org/wiki/Almost_everywhere">precise sense</a>, almost all real numbers are not rational.</p>
+<p>Returning to the problem of comparing the size of the rationals to the unit inverval <span class="math inline">\([0, 1]\)</span>, which motivated our introduction of measure theory above. The measure of the unit inverval is <span class="math inline">\(m([0, 1]) = 1\)</span>, so the interval is larger than the rationals.</p>
+<h4 id="further-into-measure-theory">Further Into Measure Theory</h4>
+<p>Diligent readers may have noticed that our proof that the rational numbers have measure zero may be applied to any countable subset of the real numbers. While this may seem to validate our initial idea that the small sets of the reals are those that are countable, it is not true. The <a href="http://en.wikipedia.org/wiki/Cantor_set#Measure_and_probability">Cantor set</a>, a well-known example in analysis and topology, is uncountable and has measure zero. Therefore the class of small subsets of the real numbers is much larger than just the countable subsets.</p>
+<p>If this post has piqued an interest in measure theory, there are many possible avenues for further exploration. Measure theory forms the foundation of modern probability theory and analysis through its use in the definition of the <a href="http://en.wikipedia.org/wiki/Lebesgue_integration">Lebesgue integral</a>, a fundamental tool that resolves many of the problems of the classical <a href="http://en.wikipedia.org/wiki/Riemann_integral">Riemann integral</a>.</p>
+<p>Discussion on <a href="https://news.ycombinator.com/item?id=6991341">Hacker News</a></p>

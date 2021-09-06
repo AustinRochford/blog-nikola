@@ -1,0 +1,2492 @@
+<meta name="title" content="An Improved Analysis of NBA Foul Calls with Python" />
+<meta name="tags" content="NBA, Bayesian Statistics, PyMC3" />
+<meta name="date" content="2018-02-04" />
+<meta name="has_math" content="true" /><style>
+.dataframe * {border-color: #c0c0c0 !important;}
+.dataframe th{background: #eee;}
+.dataframe td{
+    background: #fff;
+    text-align: right; 
+    min-width:5em;
+}
+
+/* Format summary rows */
+.dataframe-summary-row tr:last-child,
+.dataframe-summary-col td:last-child{
+background: #eee;
+    font-weight: 500;
+}
+</style>
+<p>Last April, I wrote a <a href="/posts/2017-04-04-nba-irt.html">post</a> that used Bayesian item-response theory models to analyze NBA foul call data. Last November, I <a href="http://austinrochford.com/talks.html#pydata-nyc">spoke</a> about a greatly improved version of these models at <a href="https://pydata.org/nyc2017/">PyData NYC</a>. This post is a write-up of the models from that talk.</p>
+<h2 id="last-two-minute-report">Last Two-minute Report</h2>
+<p>Since late in the 2014-2015 season, the NBA has issued <a href="http://official.nba.com/2017-18-nba-officiating-last-two-minute-reports/">last two minute reports</a>. These reports give the league’s assessment of the correctness of foul calls and non-calls in the last two minutes of any game where the score difference was three or fewer points at any point in the last two minutes.</p>
+<p>These reports are notably different from play-by-play logs, in that they include information on non-calls for notable on-court interactions. This non-call information presents a unique opportunity to study the factors that impact foul calls. There is a level of subjectivity inherent in the the NBA’s definition of notable on-court interactions which we attempt to mitigate later using season-specific factors.</p>
+<h3 id="loading-the-data">Loading the data</h3>
+<p><a href="http://russellgoldenberg.com/">Russel Goldenberg</a> of <a href="https://pudding.cool/">The Pudding</a> has been scraping the PDFs that the NBA publishes and transforming them into a CSV for some time. I am grateful for his work, which has enabled this analysis.</p>
+<p>We download the data locally to be kind to GitHub.</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="op">%</span>matplotlib inline</span></code></pre></div>
+<div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> datetime</span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> itertools <span class="im">import</span> product</span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> logging</span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> pickle</span></code></pre></div>
+<div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> matplotlib <span class="im">import</span> pyplot <span class="im">as</span> plt</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> matplotlib.offsetbox <span class="im">import</span> AnchoredText</span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> matplotlib.ticker <span class="im">import</span> FuncFormatter, StrMethodFormatter</span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> numpy <span class="im">as</span> np</span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> pandas <span class="im">as</span> pd</span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> scipy <span class="im">as</span> sp</span>
+<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> seaborn <span class="im">as</span> sns</span>
+<span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> sklearn.preprocessing <span class="im">import</span> LabelEncoder</span>
+<span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> theano <span class="im">import</span> tensor <span class="im">as</span> tt</span></code></pre></div>
+<div class="sourceCode" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>pct_formatter <span class="op">=</span> StrMethodFormatter(<span class="st">&#39;</span><span class="sc">{x:.1%}</span><span class="st">&#39;</span>)</span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>sns.<span class="bu">set</span>()</span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>blue, green, <span class="op">*</span>_ <span class="op">=</span> sns.color_palette()</span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a>plt.rc(<span class="st">&#39;figure&#39;</span>, figsize<span class="op">=</span>(<span class="dv">8</span>, <span class="dv">6</span>))</span>
+<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a>LABELSIZE <span class="op">=</span> <span class="dv">14</span></span>
+<span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a>plt.rc(<span class="st">&#39;axes&#39;</span>, labelsize<span class="op">=</span>LABELSIZE)</span>
+<span id="cb4-10"><a href="#cb4-10" aria-hidden="true" tabindex="-1"></a>plt.rc(<span class="st">&#39;axes&#39;</span>, titlesize<span class="op">=</span>LABELSIZE)</span>
+<span id="cb4-11"><a href="#cb4-11" aria-hidden="true" tabindex="-1"></a>plt.rc(<span class="st">&#39;figure&#39;</span>, titlesize<span class="op">=</span>LABELSIZE)</span>
+<span id="cb4-12"><a href="#cb4-12" aria-hidden="true" tabindex="-1"></a>plt.rc(<span class="st">&#39;legend&#39;</span>, fontsize<span class="op">=</span>LABELSIZE)</span>
+<span id="cb4-13"><a href="#cb4-13" aria-hidden="true" tabindex="-1"></a>plt.rc(<span class="st">&#39;xtick&#39;</span>, labelsize<span class="op">=</span>LABELSIZE)</span>
+<span id="cb4-14"><a href="#cb4-14" aria-hidden="true" tabindex="-1"></a>plt.rc(<span class="st">&#39;ytick&#39;</span>, labelsize<span class="op">=</span>LABELSIZE)</span></code></pre></div>
+<div class="sourceCode" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>SEED <span class="op">=</span> <span class="dv">207183</span> <span class="co"># from random.org, for reproducibility</span></span></code></pre></div>
+<div class="sourceCode" id="cb6"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="co"># keep theano from complaining about compile locks for small models</span></span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>(logging.getLogger(<span class="st">&#39;theano.gof.compilelock&#39;</span>)</span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>        .setLevel(logging.CRITICAL))</span></code></pre></div>
+<div class="sourceCode" id="cb7"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="op">%%</span>bash</span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a>DATA_URI<span class="op">=</span>https:<span class="op">//</span>raw.githubusercontent.com<span class="op">/</span>polygraph<span class="op">-</span>cool<span class="op">/</span>last<span class="op">-</span>two<span class="op">-</span>minute<span class="op">-</span>report<span class="op">/</span><span class="dv">32</span><span class="er">f1c43dfa06c2e7652cc51ea65758007f2a1a01</span><span class="op">/</span>output<span class="op">/</span>all_games.csv</span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>DATA_DEST<span class="op">=/</span>tmp<span class="op">/</span>all_games.csv</span>
+<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> [[ <span class="op">!</span> <span class="op">-</span>e $DATA_DEST ]]<span class="op">;</span></span>
+<span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a>then</span>
+<span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a>    wget <span class="op">-</span>q <span class="op">-</span>O $DATA_DEST $DATA_URI</span>
+<span id="cb7-8"><a href="#cb7-8" aria-hidden="true" tabindex="-1"></a>fi</span></code></pre></div>
+<p>We use only a subset of the columns in the source data set.</p>
+<div class="sourceCode" id="cb8"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>USECOLS <span class="op">=</span> [</span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;period&#39;</span>,</span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;seconds_left&#39;</span>,</span>
+<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;call_type&#39;</span>,</span>
+<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;committing_player&#39;</span>,</span>
+<span id="cb8-6"><a href="#cb8-6" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;disadvantaged_player&#39;</span>,</span>
+<span id="cb8-7"><a href="#cb8-7" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;review_decision&#39;</span>,</span>
+<span id="cb8-8"><a href="#cb8-8" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;play_id&#39;</span>,</span>
+<span id="cb8-9"><a href="#cb8-9" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;away&#39;</span>,</span>
+<span id="cb8-10"><a href="#cb8-10" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;home&#39;</span>,</span>
+<span id="cb8-11"><a href="#cb8-11" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;date&#39;</span>,</span>
+<span id="cb8-12"><a href="#cb8-12" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;score_away&#39;</span>,</span>
+<span id="cb8-13"><a href="#cb8-13" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;score_home&#39;</span>,</span>
+<span id="cb8-14"><a href="#cb8-14" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;disadvantaged_team&#39;</span>,</span>
+<span id="cb8-15"><a href="#cb8-15" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;committing_team&#39;</span></span>
+<span id="cb8-16"><a href="#cb8-16" aria-hidden="true" tabindex="-1"></a>]</span></code></pre></div>
+<div class="sourceCode" id="cb9"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a>orig_df <span class="op">=</span> pd.read_csv(</span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;/tmp/all_games.csv&#39;</span>,</span>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a>    usecols<span class="op">=</span>USECOLS,</span>
+<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a>    index_col<span class="op">=</span><span class="st">&#39;play_id&#39;</span>,</span>
+<span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a>    parse_dates<span class="op">=</span>[<span class="st">&#39;date&#39;</span>]</span>
+<span id="cb9-6"><a href="#cb9-6" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
+<p>The data set contains more than 16,000 plays.</p>
+<div class="sourceCode" id="cb10"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a>orig_df.shape[<span class="dv">0</span>]</span></code></pre></div>
+<pre><code>16300</code></pre>
+<p>Each row of the <code>DataFrame</code> represents a play and each column describes an attrbiute of the play:</p>
+<ul>
+<li><code>period</code> is the period of the game,</li>
+<li><code>seconds_left</code> is the number of seconds remaining in the game,</li>
+<li><code>call_type</code> is the type of call,</li>
+<li><code>committing_player</code> and <code>disadvantaged_player</code> are the names of the players involved in the play,</li>
+<li><code>review_decision</code> is the opinion of the league reviewer on whether or not the play was called correctly:
+<ul>
+<li><code>review_decision = "INC"</code> means the call was an incorrect noncall,</li>
+<li><code>review_decision = "CNC"</code> means the call was an correct noncall,</li>
+<li><code>review_decision = "IC"</code> means the call was an incorrect call, and</li>
+<li><code>review_decision = "CC"</code> means the call was an correct call,</li>
+</ul></li>
+<li><code>away</code> and <code>home</code> are the abbreviations of the teams involved in the game,</li>
+<li><code>date</code> is the date on which the game was played,</li>
+<li><code>score_away</code> and <code>score_home</code> are the scores of the <code>away</code> and <code>home</code> team during the play, respectively, and</li>
+<li><code>disadvantaged_team</code> and <code>committing_team</code> indicate how each team is involved in the play.</li>
+</ul>
+<div class="sourceCode" id="cb12"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a>orig_df.head(n<span class="op">=</span><span class="dv">2</span>).T</span></code></pre></div>
+<div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<center>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th>
+play_id
+</th>
+<th>
+20150301CLEHOU-0
+</th>
+<th>
+20150301CLEHOU-1
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>
+period
+</th>
+<td>
+Q4
+</td>
+<td>
+Q4
+</td>
+</tr>
+<tr>
+<th>
+seconds_left
+</th>
+<td>
+112
+</td>
+<td>
+103
+</td>
+</tr>
+<tr>
+<th>
+call_type
+</th>
+<td>
+Foul: Shooting
+</td>
+<td>
+Foul: Shooting
+</td>
+</tr>
+<tr>
+<th>
+committing_player
+</th>
+<td>
+Josh Smith
+</td>
+<td>
+J.R. Smith
+</td>
+</tr>
+<tr>
+<th>
+disadvantaged_player
+</th>
+<td>
+Kevin Love
+</td>
+<td>
+James Harden
+</td>
+</tr>
+<tr>
+<th>
+review_decision
+</th>
+<td>
+CNC
+</td>
+<td>
+CC
+</td>
+</tr>
+<tr>
+<th>
+away
+</th>
+<td>
+CLE
+</td>
+<td>
+CLE
+</td>
+</tr>
+<tr>
+<th>
+home
+</th>
+<td>
+HOU
+</td>
+<td>
+HOU
+</td>
+</tr>
+<tr>
+<th>
+date
+</th>
+<td>
+2015-03-01 00:00:00
+</td>
+<td>
+2015-03-01 00:00:00
+</td>
+</tr>
+<tr>
+<th>
+score_away
+</th>
+<td>
+103
+</td>
+<td>
+103
+</td>
+</tr>
+<tr>
+<th>
+score_home
+</th>
+<td>
+105
+</td>
+<td>
+105
+</td>
+</tr>
+<tr>
+<th>
+disadvantaged_team
+</th>
+<td>
+CLE
+</td>
+<td>
+HOU
+</td>
+</tr>
+<tr>
+<th>
+committing_team
+</th>
+<td>
+HOU
+</td>
+<td>
+CLE
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center>
+<h3 id="research-questions">Research questions</h3>
+<p>In this post, we answer two questions:</p>
+<ol type="1">
+<li>How does game context impact foul calls?</li>
+<li>Is (not) committing and/or drawing fouls a measurable player skill?</li>
+</ol>
+<p>The previous post focused on the second question, and gave the first question only a cursory treatment. This post enhances our treatment of the first question, in order to control for non-skill factors influencing foul calls (namely intentional fouls). Controlling for these factors makes our estimates of player skill more realistic.</p>
+<h2 id="exploratory-data-analysis">Exploratory Data Analysis</h2>
+<p>First we examine the types of calls present in the data set.</p>
+<div class="sourceCode" id="cb13"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a>(orig_df[<span class="st">&#39;call_type&#39;</span>]</span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a>        .value_counts()</span>
+<span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a>        .head(n<span class="op">=</span><span class="dv">15</span>))</span></code></pre></div>
+<pre><code>Foul: Personal                     4736
+Foul: Shooting                     4201
+Foul: Offensive                    2846
+Foul: Loose Ball                   1316
+Turnover: Traveling                 779
+Instant Replay: Support Ruling      607
+Foul: Defense 3 Second              277
+Instant Replay: Overturn Ruling     191
+Foul: Personal Take                 172
+Turnover: 3 Second Violation        139
+Turnover: 24 Second Violation       126
+Turnover: 5 Second Inbound           99
+Stoppage: Out-of-Bounds              96
+Violation: Lane                      84
+Foul: Away from Play                 82
+Name: call_type, dtype: int64</code></pre>
+<p>The portion of <code>call_type</code> before the colon is the general category of the call. We count the occurence of these categories below.</p>
+<div class="sourceCode" id="cb15"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a>(orig_df[<span class="st">&#39;call_type&#39;</span>]</span>
+<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a>        .<span class="bu">str</span>.split(<span class="st">&#39;:&#39;</span>, expand<span class="op">=</span><span class="va">True</span>)</span>
+<span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a>        .iloc[:, <span class="dv">0</span>]</span>
+<span id="cb15-4"><a href="#cb15-4" aria-hidden="true" tabindex="-1"></a>        .value_counts()</span>
+<span id="cb15-5"><a href="#cb15-5" aria-hidden="true" tabindex="-1"></a>        .plot(</span>
+<span id="cb15-6"><a href="#cb15-6" aria-hidden="true" tabindex="-1"></a>            kind<span class="op">=</span><span class="st">&#39;bar&#39;</span>,</span>
+<span id="cb15-7"><a href="#cb15-7" aria-hidden="true" tabindex="-1"></a>            color<span class="op">=</span>blue, logy<span class="op">=</span><span class="va">True</span>, </span>
+<span id="cb15-8"><a href="#cb15-8" aria-hidden="true" tabindex="-1"></a>            title<span class="op">=</span><span class="st">&quot;Call types&quot;</span></span>
+<span id="cb15-9"><a href="#cb15-9" aria-hidden="true" tabindex="-1"></a>        )</span>
+<span id="cb15-10"><a href="#cb15-10" aria-hidden="true" tabindex="-1"></a>        .set_ylabel(<span class="st">&quot;Frequency&quot;</span>))<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/nba_irt2/An%20Improved%20Analysis%20of%20NBA%20Foul%20Calls%20with%20Python_21_0.png" title="fig:" alt="png" />
+</center>
+<p>We restrict our attention to foul calls, though other call types would be interesting to study in the future.</p>
+<div class="sourceCode" id="cb16"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a>foul_df <span class="op">=</span> orig_df[</span>
+<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a>    orig_df[<span class="st">&#39;call_type&#39;</span>]</span>
+<span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a>           .fillna(<span class="st">&quot;UNKNOWN&quot;</span>)</span>
+<span id="cb16-4"><a href="#cb16-4" aria-hidden="true" tabindex="-1"></a>           .<span class="bu">str</span>.startswith(<span class="st">&quot;Foul&quot;</span>)</span>
+<span id="cb16-5"><a href="#cb16-5" aria-hidden="true" tabindex="-1"></a>]</span></code></pre></div>
+<p>We count the foul call types below.</p>
+<div class="sourceCode" id="cb17"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a>(foul_df[<span class="st">&#39;call_type&#39;</span>]</span>
+<span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a>        .<span class="bu">str</span>.split(<span class="st">&#39;: &#39;</span>, expand<span class="op">=</span><span class="va">True</span>)</span>
+<span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a>        .iloc[:, <span class="dv">1</span>]</span>
+<span id="cb17-4"><a href="#cb17-4" aria-hidden="true" tabindex="-1"></a>        .value_counts()</span>
+<span id="cb17-5"><a href="#cb17-5" aria-hidden="true" tabindex="-1"></a>        .plot(</span>
+<span id="cb17-6"><a href="#cb17-6" aria-hidden="true" tabindex="-1"></a>            kind<span class="op">=</span><span class="st">&#39;bar&#39;</span>,</span>
+<span id="cb17-7"><a href="#cb17-7" aria-hidden="true" tabindex="-1"></a>            color<span class="op">=</span>blue, logy<span class="op">=</span><span class="va">True</span>,</span>
+<span id="cb17-8"><a href="#cb17-8" aria-hidden="true" tabindex="-1"></a>            title<span class="op">=</span><span class="st">&quot;Foul Types&quot;</span></span>
+<span id="cb17-9"><a href="#cb17-9" aria-hidden="true" tabindex="-1"></a>        )</span>
+<span id="cb17-10"><a href="#cb17-10" aria-hidden="true" tabindex="-1"></a>        .set_ylabel(<span class="st">&quot;Frequency&quot;</span>))<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/nba_irt2/An%20Improved%20Analysis%20of%20NBA%20Foul%20Calls%20with%20Python_25_0.png" title="fig:" alt="png" />
+</center>
+<p>We restrict our attention to the five foul types below, which generally involve two players. This subset of fouls allows us to pursue our second research question in the most direct manner.</p>
+<div class="sourceCode" id="cb18"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a>FOULS <span class="op">=</span> [</span>
+<span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a>    <span class="ss">f&quot;Foul: </span><span class="sc">{</span>foul_type<span class="sc">}</span><span class="ss">&quot;</span></span>
+<span id="cb18-3"><a href="#cb18-3" aria-hidden="true" tabindex="-1"></a>        <span class="cf">for</span> foul_type <span class="kw">in</span> [</span>
+<span id="cb18-4"><a href="#cb18-4" aria-hidden="true" tabindex="-1"></a>            <span class="st">&quot;Personal&quot;</span>,</span>
+<span id="cb18-5"><a href="#cb18-5" aria-hidden="true" tabindex="-1"></a>            <span class="st">&quot;Shooting&quot;</span>,</span>
+<span id="cb18-6"><a href="#cb18-6" aria-hidden="true" tabindex="-1"></a>            <span class="st">&quot;Offensive&quot;</span>,</span>
+<span id="cb18-7"><a href="#cb18-7" aria-hidden="true" tabindex="-1"></a>            <span class="st">&quot;Loose Ball&quot;</span>,</span>
+<span id="cb18-8"><a href="#cb18-8" aria-hidden="true" tabindex="-1"></a>            <span class="st">&quot;Away from Play&quot;</span></span>
+<span id="cb18-9"><a href="#cb18-9" aria-hidden="true" tabindex="-1"></a>        ]</span>
+<span id="cb18-10"><a href="#cb18-10" aria-hidden="true" tabindex="-1"></a>]</span></code></pre></div>
+<h3 id="data-transformation">Data transformation</h3>
+<p>There are a number of misspelled team names in the data, which we correct.</p>
+<div class="sourceCode" id="cb19"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a>TEAM_MAP <span class="op">=</span> {</span>
+<span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;NKY&quot;</span>: <span class="st">&quot;NYK&quot;</span>,</span>
+<span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;COS&quot;</span>: <span class="st">&quot;BOS&quot;</span>,</span>
+<span id="cb19-4"><a href="#cb19-4" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;SAT&quot;</span>: <span class="st">&quot;SAS&quot;</span>,</span>
+<span id="cb19-5"><a href="#cb19-5" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;CHi&quot;</span>: <span class="st">&quot;CHI&quot;</span>,</span>
+<span id="cb19-6"><a href="#cb19-6" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;LA)&quot;</span>: <span class="st">&quot;LAC&quot;</span>,</span>
+<span id="cb19-7"><a href="#cb19-7" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;AT)&quot;</span>: <span class="st">&quot;ATL&quot;</span>,</span>
+<span id="cb19-8"><a href="#cb19-8" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;ARL&quot;</span>: <span class="st">&quot;ATL&quot;</span></span>
+<span id="cb19-9"><a href="#cb19-9" aria-hidden="true" tabindex="-1"></a>}</span>
+<span id="cb19-10"><a href="#cb19-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb19-11"><a href="#cb19-11" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> correct_team_name(col):</span>
+<span id="cb19-12"><a href="#cb19-12" aria-hidden="true" tabindex="-1"></a>    <span class="kw">def</span> _correct_team_name(df):</span>
+<span id="cb19-13"><a href="#cb19-13" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> df[col].<span class="bu">apply</span>(<span class="kw">lambda</span> team_name: TEAM_MAP.get(team_name, team_name))</span>
+<span id="cb19-14"><a href="#cb19-14" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb19-15"><a href="#cb19-15" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> _correct_team_name</span></code></pre></div>
+<p>We also convert each game date to an NBA season.</p>
+<div class="sourceCode" id="cb20"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> date_to_season(date):</span>
+<span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> date <span class="op">&gt;=</span> datetime.datetime(<span class="dv">2017</span>, <span class="dv">10</span>, <span class="dv">17</span>):</span>
+<span id="cb20-3"><a href="#cb20-3" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> <span class="st">&#39;2017-2018&#39;</span></span>
+<span id="cb20-4"><a href="#cb20-4" aria-hidden="true" tabindex="-1"></a>    <span class="cf">elif</span> date <span class="op">&gt;=</span> datetime.datetime(<span class="dv">2016</span>, <span class="dv">10</span>, <span class="dv">25</span>):</span>
+<span id="cb20-5"><a href="#cb20-5" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> <span class="st">&#39;2016-2017&#39;</span></span>
+<span id="cb20-6"><a href="#cb20-6" aria-hidden="true" tabindex="-1"></a>    <span class="cf">elif</span> date <span class="op">&gt;=</span> datetime.datetime(<span class="dv">2015</span>, <span class="dv">10</span>, <span class="dv">27</span>):</span>
+<span id="cb20-7"><a href="#cb20-7" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> <span class="st">&#39;2015-2016&#39;</span></span>
+<span id="cb20-8"><a href="#cb20-8" aria-hidden="true" tabindex="-1"></a>    <span class="cf">else</span>:</span>
+<span id="cb20-9"><a href="#cb20-9" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> <span class="st">&#39;2014-2015&#39;</span></span></code></pre></div>
+<p>We clean the data by</p>
+<ul>
+<li>restricting to plays that occured during the last two minutes of regulation,</li>
+<li>imputing incorrect noncalls when <code>review_decision</code> is missing,</li>
+<li>correcting team names,</li>
+<li>converting game dates to seasons,</li>
+<li>restricting to the foul types discussed above,</li>
+<li>restricting to the plays that happened during the <a href="https://en.wikipedia.org/wiki/2015%E2%80%9316_NBA_season">2015-2016</a> and <a href="https://en.wikipedia.org/wiki/2016%E2%80%9317_NBA_season">2016-2017</a> regular seasons (those are the only full seasons in the data set as of February 2018), and</li>
+<li>dropping unneeded rows and columns.</li>
+</ul>
+<div class="sourceCode" id="cb21"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a>clean_df <span class="op">=</span> (foul_df.where(<span class="kw">lambda</span> df: df[<span class="st">&#39;period&#39;</span>] <span class="op">==</span> <span class="st">&quot;Q4&quot;</span>)</span>
+<span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a>                   .where(<span class="kw">lambda</span> df: (df[<span class="st">&#39;date&#39;</span>].between(datetime.datetime(<span class="dv">2016</span>, <span class="dv">10</span>, <span class="dv">25</span>),</span>
+<span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a>                                                         datetime.datetime(<span class="dv">2017</span>, <span class="dv">4</span>, <span class="dv">12</span>))</span>
+<span id="cb21-4"><a href="#cb21-4" aria-hidden="true" tabindex="-1"></a>                                     <span class="op">|</span> df[<span class="st">&#39;date&#39;</span>].between(datetime.datetime(<span class="dv">2015</span>, <span class="dv">10</span>, <span class="dv">27</span>),</span>
+<span id="cb21-5"><a href="#cb21-5" aria-hidden="true" tabindex="-1"></a>                                                          datetime.datetime(<span class="dv">2016</span>, <span class="dv">5</span>, <span class="dv">30</span>)))</span>
+<span id="cb21-6"><a href="#cb21-6" aria-hidden="true" tabindex="-1"></a>                   )</span>
+<span id="cb21-7"><a href="#cb21-7" aria-hidden="true" tabindex="-1"></a>                   .assign(</span>
+<span id="cb21-8"><a href="#cb21-8" aria-hidden="true" tabindex="-1"></a>                       review_decision<span class="op">=</span><span class="kw">lambda</span> df: df[<span class="st">&#39;review_decision&#39;</span>].fillna(<span class="st">&quot;INC&quot;</span>),</span>
+<span id="cb21-9"><a href="#cb21-9" aria-hidden="true" tabindex="-1"></a>                       committing_team<span class="op">=</span>correct_team_name(<span class="st">&#39;committing_team&#39;</span>),</span>
+<span id="cb21-10"><a href="#cb21-10" aria-hidden="true" tabindex="-1"></a>                       disadvantged_team<span class="op">=</span>correct_team_name(<span class="st">&#39;disadvantaged_team&#39;</span>),</span>
+<span id="cb21-11"><a href="#cb21-11" aria-hidden="true" tabindex="-1"></a>                       away<span class="op">=</span>correct_team_name(<span class="st">&#39;away&#39;</span>),</span>
+<span id="cb21-12"><a href="#cb21-12" aria-hidden="true" tabindex="-1"></a>                       home<span class="op">=</span>correct_team_name(<span class="st">&#39;home&#39;</span>),</span>
+<span id="cb21-13"><a href="#cb21-13" aria-hidden="true" tabindex="-1"></a>                       season<span class="op">=</span><span class="kw">lambda</span> df: df[<span class="st">&#39;date&#39;</span>].<span class="bu">apply</span>(date_to_season)</span>
+<span id="cb21-14"><a href="#cb21-14" aria-hidden="true" tabindex="-1"></a>                   )</span>
+<span id="cb21-15"><a href="#cb21-15" aria-hidden="true" tabindex="-1"></a>                   .where(<span class="kw">lambda</span> df: df[<span class="st">&#39;call_type&#39;</span>].isin(FOULS))</span>
+<span id="cb21-16"><a href="#cb21-16" aria-hidden="true" tabindex="-1"></a>                   .dropna()</span>
+<span id="cb21-17"><a href="#cb21-17" aria-hidden="true" tabindex="-1"></a>                   .drop(<span class="st">&#39;period&#39;</span>, axis<span class="op">=</span><span class="dv">1</span>)</span>
+<span id="cb21-18"><a href="#cb21-18" aria-hidden="true" tabindex="-1"></a>                   .assign(call_type<span class="op">=</span><span class="kw">lambda</span> df: (df[<span class="st">&#39;call_type&#39;</span>]</span>
+<span id="cb21-19"><a href="#cb21-19" aria-hidden="true" tabindex="-1"></a>                                                   .<span class="bu">str</span>.split(<span class="st">&#39;: &#39;</span>, expand<span class="op">=</span><span class="va">True</span>)  </span>
+<span id="cb21-20"><a href="#cb21-20" aria-hidden="true" tabindex="-1"></a>                                                   .iloc[:, <span class="dv">1</span>])))</span></code></pre></div>
+<p>About 55% of the rows in the original data set remain.</p>
+<div class="sourceCode" id="cb22"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb22-1"><a href="#cb22-1" aria-hidden="true" tabindex="-1"></a>clean_df.shape[<span class="dv">0</span>] <span class="op">/</span> orig_df.shape[<span class="dv">0</span>]</span></code></pre></div>
+<pre><code>0.5516564417177914</code></pre>
+<div class="sourceCode" id="cb24"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a>clean_df.head(n<span class="op">=</span><span class="dv">2</span>).T</span></code></pre></div>
+<div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<center>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th>
+play_id
+</th>
+<th>
+20151028INDTOR-1
+</th>
+<th>
+20151028INDTOR-2
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>
+seconds_left
+</th>
+<td>
+89
+</td>
+<td>
+73
+</td>
+</tr>
+<tr>
+<th>
+call_type
+</th>
+<td>
+Shooting
+</td>
+<td>
+Shooting
+</td>
+</tr>
+<tr>
+<th>
+committing_player
+</th>
+<td>
+Ian Mahinmi
+</td>
+<td>
+Bismack Biyombo
+</td>
+</tr>
+<tr>
+<th>
+disadvantaged_player
+</th>
+<td>
+DeMar DeRozan
+</td>
+<td>
+Paul George
+</td>
+</tr>
+<tr>
+<th>
+review_decision
+</th>
+<td>
+CC
+</td>
+<td>
+IC
+</td>
+</tr>
+<tr>
+<th>
+away
+</th>
+<td>
+IND
+</td>
+<td>
+IND
+</td>
+</tr>
+<tr>
+<th>
+home
+</th>
+<td>
+TOR
+</td>
+<td>
+TOR
+</td>
+</tr>
+<tr>
+<th>
+date
+</th>
+<td>
+2015-10-28 00:00:00
+</td>
+<td>
+2015-10-28 00:00:00
+</td>
+</tr>
+<tr>
+<th>
+score_away
+</th>
+<td>
+99
+</td>
+<td>
+99
+</td>
+</tr>
+<tr>
+<th>
+score_home
+</th>
+<td>
+106
+</td>
+<td>
+106
+</td>
+</tr>
+<tr>
+<th>
+disadvantaged_team
+</th>
+<td>
+TOR
+</td>
+<td>
+IND
+</td>
+</tr>
+<tr>
+<th>
+committing_team
+</th>
+<td>
+IND
+</td>
+<td>
+TOR
+</td>
+</tr>
+<tr>
+<th>
+disadvantged_team
+</th>
+<td>
+TOR
+</td>
+<td>
+IND
+</td>
+</tr>
+<tr>
+<th>
+season
+</th>
+<td>
+2015-2016
+</td>
+<td>
+2015-2016
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center>
+<p>We use <code>scikit-learn</code>’s <a href="http://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.LabelEncoder.html"><code>LabelEncoder</code></a> to transform categorical features (call type, player, and season) to integers.</p>
+<div class="sourceCode" id="cb25"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb25-1"><a href="#cb25-1" aria-hidden="true" tabindex="-1"></a>call_type_enc <span class="op">=</span> LabelEncoder().fit(</span>
+<span id="cb25-2"><a href="#cb25-2" aria-hidden="true" tabindex="-1"></a>    clean_df[<span class="st">&#39;call_type&#39;</span>]</span>
+<span id="cb25-3"><a href="#cb25-3" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb25-4"><a href="#cb25-4" aria-hidden="true" tabindex="-1"></a>n_call_type <span class="op">=</span> call_type_enc.classes_.size</span>
+<span id="cb25-5"><a href="#cb25-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb25-6"><a href="#cb25-6" aria-hidden="true" tabindex="-1"></a>player_enc <span class="op">=</span> LabelEncoder().fit(</span>
+<span id="cb25-7"><a href="#cb25-7" aria-hidden="true" tabindex="-1"></a>    np.concatenate((</span>
+<span id="cb25-8"><a href="#cb25-8" aria-hidden="true" tabindex="-1"></a>        clean_df[<span class="st">&#39;committing_player&#39;</span>],</span>
+<span id="cb25-9"><a href="#cb25-9" aria-hidden="true" tabindex="-1"></a>        clean_df[<span class="st">&#39;disadvantaged_player&#39;</span>]</span>
+<span id="cb25-10"><a href="#cb25-10" aria-hidden="true" tabindex="-1"></a>    ))</span>
+<span id="cb25-11"><a href="#cb25-11" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb25-12"><a href="#cb25-12" aria-hidden="true" tabindex="-1"></a>n_player <span class="op">=</span> player_enc.classes_.size</span>
+<span id="cb25-13"><a href="#cb25-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb25-14"><a href="#cb25-14" aria-hidden="true" tabindex="-1"></a>season_enc <span class="op">=</span> LabelEncoder().fit(</span>
+<span id="cb25-15"><a href="#cb25-15" aria-hidden="true" tabindex="-1"></a>    clean_df[<span class="st">&#39;season&#39;</span>]</span>
+<span id="cb25-16"><a href="#cb25-16" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb25-17"><a href="#cb25-17" aria-hidden="true" tabindex="-1"></a>n_season <span class="op">=</span> season_enc.classes_.size</span></code></pre></div>
+<p>We transform the data by</p>
+<ul>
+<li>rounding <code>seconds_left</code> to the nearest second (purely for convenience),</li>
+<li>transforming categorical features to integer ids,</li>
+<li>setting <code>foul_called</code> equal to one or zero depending on whether or not a foul was called, and</li>
+<li>setting <code>score_committing</code> and <code>score_disadvantaged</code> to the score of the committing and disadvantaged teams, respectively.</li>
+</ul>
+<div class="sourceCode" id="cb26"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb26-1"><a href="#cb26-1" aria-hidden="true" tabindex="-1"></a>df <span class="op">=</span> (clean_df[[<span class="st">&#39;seconds_left&#39;</span>]]</span>
+<span id="cb26-2"><a href="#cb26-2" aria-hidden="true" tabindex="-1"></a>              .<span class="bu">round</span>(<span class="dv">0</span>)</span>
+<span id="cb26-3"><a href="#cb26-3" aria-hidden="true" tabindex="-1"></a>              .assign(</span>
+<span id="cb26-4"><a href="#cb26-4" aria-hidden="true" tabindex="-1"></a>                call_type<span class="op">=</span>call_type_enc.transform(clean_df[<span class="st">&#39;call_type&#39;</span>]),</span>
+<span id="cb26-5"><a href="#cb26-5" aria-hidden="true" tabindex="-1"></a>                foul_called<span class="op">=</span><span class="fl">1.</span> <span class="op">*</span> clean_df[<span class="st">&#39;review_decision&#39;</span>].isin([<span class="st">&#39;CC&#39;</span>, <span class="st">&#39;INC&#39;</span>]),</span>
+<span id="cb26-6"><a href="#cb26-6" aria-hidden="true" tabindex="-1"></a>                player_committing<span class="op">=</span>player_enc.transform(clean_df[<span class="st">&#39;committing_player&#39;</span>]),</span>
+<span id="cb26-7"><a href="#cb26-7" aria-hidden="true" tabindex="-1"></a>                player_disadvantaged<span class="op">=</span>player_enc.transform(clean_df[<span class="st">&#39;disadvantaged_player&#39;</span>]),</span>
+<span id="cb26-8"><a href="#cb26-8" aria-hidden="true" tabindex="-1"></a>                score_committing<span class="op">=</span>clean_df[<span class="st">&#39;score_home&#39;</span>].where(</span>
+<span id="cb26-9"><a href="#cb26-9" aria-hidden="true" tabindex="-1"></a>                    clean_df[<span class="st">&#39;committing_team&#39;</span>] <span class="op">==</span> clean_df[<span class="st">&#39;home&#39;</span>],</span>
+<span id="cb26-10"><a href="#cb26-10" aria-hidden="true" tabindex="-1"></a>                    clean_df[<span class="st">&#39;score_away&#39;</span>]</span>
+<span id="cb26-11"><a href="#cb26-11" aria-hidden="true" tabindex="-1"></a>                ),</span>
+<span id="cb26-12"><a href="#cb26-12" aria-hidden="true" tabindex="-1"></a>                score_disadvantaged<span class="op">=</span>clean_df[<span class="st">&#39;score_home&#39;</span>].where(</span>
+<span id="cb26-13"><a href="#cb26-13" aria-hidden="true" tabindex="-1"></a>                    clean_df[<span class="st">&#39;disadvantaged_team&#39;</span>] <span class="op">==</span> clean_df[<span class="st">&#39;home&#39;</span>],</span>
+<span id="cb26-14"><a href="#cb26-14" aria-hidden="true" tabindex="-1"></a>                    clean_df[<span class="st">&#39;score_away&#39;</span>]</span>
+<span id="cb26-15"><a href="#cb26-15" aria-hidden="true" tabindex="-1"></a>                ),</span>
+<span id="cb26-16"><a href="#cb26-16" aria-hidden="true" tabindex="-1"></a>                season<span class="op">=</span>season_enc.transform(clean_df[<span class="st">&#39;season&#39;</span>])</span>
+<span id="cb26-17"><a href="#cb26-17" aria-hidden="true" tabindex="-1"></a>              ))</span></code></pre></div>
+<p>The resulting data is ready for analysis.</p>
+<div class="sourceCode" id="cb27"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a>df.head(n<span class="op">=</span><span class="dv">2</span>).T</span></code></pre></div>
+<div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<center>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th>
+play_id
+</th>
+<th>
+20151028INDTOR-1
+</th>
+<th>
+20151028INDTOR-2
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>
+seconds_left
+</th>
+<td>
+89.0
+</td>
+<td>
+73.0
+</td>
+</tr>
+<tr>
+<th>
+call_type
+</th>
+<td>
+4.0
+</td>
+<td>
+4.0
+</td>
+</tr>
+<tr>
+<th>
+foul_called
+</th>
+<td>
+1.0
+</td>
+<td>
+0.0
+</td>
+</tr>
+<tr>
+<th>
+player_committing
+</th>
+<td>
+162.0
+</td>
+<td>
+36.0
+</td>
+</tr>
+<tr>
+<th>
+player_disadvantaged
+</th>
+<td>
+98.0
+</td>
+<td>
+358.0
+</td>
+</tr>
+<tr>
+<th>
+score_committing
+</th>
+<td>
+99.0
+</td>
+<td>
+106.0
+</td>
+</tr>
+<tr>
+<th>
+score_disadvantaged
+</th>
+<td>
+106.0
+</td>
+<td>
+99.0
+</td>
+</tr>
+<tr>
+<th>
+season
+</th>
+<td>
+0.0
+</td>
+<td>
+0.0
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center>
+<h2 id="modeling">Modeling</h2>
+<p>We follow George Box’s modeling workflow, as <a href="http://dustintran.com/talks/Tran_Edward.pdf">summarized</a> by Dustin Tran:</p>
+<ol type="1">
+<li>build a model of the science,</li>
+<li>infer the model given data, and</li>
+<li>criticize the model given data.</li>
+</ol>
+<h3 id="baseline-model">Baseline model</h3>
+<h4 id="build-a-model-of-the-science">Build a model of the science</h4>
+<p>Below we examine the foul call rate by season.</p>
+<div class="sourceCode" id="cb28"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> make_foul_rate_yaxis(ax, label<span class="op">=</span><span class="st">&quot;Observed foul call rate&quot;</span>):</span>
+<span id="cb28-2"><a href="#cb28-2" aria-hidden="true" tabindex="-1"></a>    ax.yaxis.set_major_formatter(pct_formatter)</span>
+<span id="cb28-3"><a href="#cb28-3" aria-hidden="true" tabindex="-1"></a>    ax.set_ylabel(label)</span>
+<span id="cb28-4"><a href="#cb28-4" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb28-5"><a href="#cb28-5" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> ax</span>
+<span id="cb28-6"><a href="#cb28-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb28-7"><a href="#cb28-7" aria-hidden="true" tabindex="-1"></a>make_foul_rate_yaxis(</span>
+<span id="cb28-8"><a href="#cb28-8" aria-hidden="true" tabindex="-1"></a>    df.pivot_table(<span class="st">&#39;foul_called&#39;</span>, <span class="st">&#39;season&#39;</span>)</span>
+<span id="cb28-9"><a href="#cb28-9" aria-hidden="true" tabindex="-1"></a>      .rename(index<span class="op">=</span>season_enc.inverse_transform)</span>
+<span id="cb28-10"><a href="#cb28-10" aria-hidden="true" tabindex="-1"></a>      .rename_axis(<span class="st">&quot;Season&quot;</span>)</span>
+<span id="cb28-11"><a href="#cb28-11" aria-hidden="true" tabindex="-1"></a>      .plot(kind<span class="op">=</span><span class="st">&#39;bar&#39;</span>, rot<span class="op">=</span><span class="dv">0</span>, legend<span class="op">=</span><span class="va">False</span>)</span>
+<span id="cb28-12"><a href="#cb28-12" aria-hidden="true" tabindex="-1"></a>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/nba_irt2/An%20Improved%20Analysis%20of%20NBA%20Foul%20Calls%20with%20Python_45_0.png" title="fig:" alt="png" />
+</center>
+<p>There is a pronounced difference between the foul call rate in the 2015-2016 and 2016-2017 NBA seasons; our first model accounts for this difference.</p>
+<p>We use <a href="http://docs.pymc.io/"><code>pymc3</code></a> to specify our models. Our first model is given by</p>
+<p><span class="math display">\[
+\begin{align*}
+    \beta^{\textrm{season}}_s 
+        &amp; \sim N(0, 5) \\
+    \eta^{\textrm{game}}_k
+        &amp; = \beta^{\textrm{season}}_{s(k)} \\
+    p_k
+        &amp; = \textrm{sigm}\left(\eta^{\textrm{game}}_k\right).
+\end{align*}
+\]</span></p>
+<p>We use a logistic regression model with different factors for each season.</p>
+<div class="sourceCode" id="cb29"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb29-1"><a href="#cb29-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> pymc3 <span class="im">as</span> pm</span>
+<span id="cb29-2"><a href="#cb29-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb29-3"><a href="#cb29-3" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> pm.Model() <span class="im">as</span> base_model:</span>
+<span id="cb29-4"><a href="#cb29-4" aria-hidden="true" tabindex="-1"></a>    β_season <span class="op">=</span> pm.Normal(<span class="st">&#39;β_season&#39;</span>, <span class="fl">0.</span>, <span class="fl">5.</span>, shape<span class="op">=</span>n_season)</span>
+<span id="cb29-5"><a href="#cb29-5" aria-hidden="true" tabindex="-1"></a>    p <span class="op">=</span> pm.Deterministic(<span class="st">&#39;p&#39;</span>, pm.math.sigmoid(β_season))</span></code></pre></div>
+<p>Foul calls are Bernoulli trials, <span class="math inline">\(y_k \sim \textrm{Bernoulli}(p_k).\)</span></p>
+<div class="sourceCode" id="cb30"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb30-1"><a href="#cb30-1" aria-hidden="true" tabindex="-1"></a>season <span class="op">=</span> df[<span class="st">&#39;season&#39;</span>].values</span></code></pre></div>
+<div class="sourceCode" id="cb31"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb31-1"><a href="#cb31-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> base_model:</span>
+<span id="cb31-2"><a href="#cb31-2" aria-hidden="true" tabindex="-1"></a>    y <span class="op">=</span> pm.Bernoulli(</span>
+<span id="cb31-3"><a href="#cb31-3" aria-hidden="true" tabindex="-1"></a>        <span class="st">&#39;y&#39;</span>, p[season],</span>
+<span id="cb31-4"><a href="#cb31-4" aria-hidden="true" tabindex="-1"></a>        observed<span class="op">=</span>df[<span class="st">&#39;foul_called&#39;</span>]</span>
+<span id="cb31-5"><a href="#cb31-5" aria-hidden="true" tabindex="-1"></a>    )</span></code></pre></div>
+<h4 id="infer-the-model-given-data">Infer the model given data</h4>
+<p>We now sample from the model’s posterior distribution.</p>
+<div class="sourceCode" id="cb32"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb32-1"><a href="#cb32-1" aria-hidden="true" tabindex="-1"></a>NJOBS <span class="op">=</span> <span class="dv">3</span></span>
+<span id="cb32-2"><a href="#cb32-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb32-3"><a href="#cb32-3" aria-hidden="true" tabindex="-1"></a>SAMPLE_KWARGS <span class="op">=</span> {</span>
+<span id="cb32-4"><a href="#cb32-4" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;draws&#39;</span>: <span class="dv">1000</span>,</span>
+<span id="cb32-5"><a href="#cb32-5" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;njobs&#39;</span>: NJOBS,</span>
+<span id="cb32-6"><a href="#cb32-6" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;random_seed&#39;</span>: [</span>
+<span id="cb32-7"><a href="#cb32-7" aria-hidden="true" tabindex="-1"></a>        SEED <span class="op">+</span> i <span class="cf">for</span> i <span class="kw">in</span> <span class="bu">range</span>(NJOBS)</span>
+<span id="cb32-8"><a href="#cb32-8" aria-hidden="true" tabindex="-1"></a>    ],</span>
+<span id="cb32-9"><a href="#cb32-9" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;nuts_kwargs&#39;</span>: {</span>
+<span id="cb32-10"><a href="#cb32-10" aria-hidden="true" tabindex="-1"></a>        <span class="st">&#39;target_accept&#39;</span>: <span class="fl">0.9</span></span>
+<span id="cb32-11"><a href="#cb32-11" aria-hidden="true" tabindex="-1"></a>    }</span>
+<span id="cb32-12"><a href="#cb32-12" aria-hidden="true" tabindex="-1"></a>}</span></code></pre></div>
+<div class="sourceCode" id="cb33"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb33-1"><a href="#cb33-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> base_model:</span>
+<span id="cb33-2"><a href="#cb33-2" aria-hidden="true" tabindex="-1"></a>    base_trace <span class="op">=</span> pm.sample(<span class="op">**</span>SAMPLE_KWARGS)</span></code></pre></div>
+<pre><code>Auto-assigning NUTS sampler...
+Initializing NUTS using jitter+adapt_diag...
+Multiprocess sampling (3 chains in 3 jobs)
+NUTS: [β_season]
+100%|██████████| 1500/1500 [00:07&lt;00:00, 198.65it/s]</code></pre>
+<h5 id="convergence-diagnostics">Convergence diagnostics</h5>
+<p>We rely on three diagnostics to ensure that our samples have converged to the posterior distribution:</p>
+<ul>
+<li>Energy plots: if the two distributions in the energy plot differ significantly (espescially in the tails), the sampling was not very efficient.</li>
+<li>Bayesian fraction of missing information (BFMI): BFMI quantifies this difference with a number between zero and one. A BFMI close to (or exceeding) one is preferable, and a BFMI lower than 0.2 is indicative of efficiency issues.</li>
+<li><a href="http://blog.stata.com/2016/05/26/gelman-rubin-convergence-diagnostic-using-multiple-chains/">Gelman-Rubin statistics</a>: Gelman-Rubin statistics near one are preferable, and values less than 1.1 are generally taken to indicate convergence.</li>
+</ul>
+<p>For more information on energy plots and BFMI consult <a href="http://mc-stan.org/users/documentation/case-studies/pystan_workflow.html"><em>Robust Statistical Workflow with PyStan</em></a>.</p>
+<div class="sourceCode" id="cb35"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb35-1"><a href="#cb35-1" aria-hidden="true" tabindex="-1"></a>bfmi <span class="op">=</span> pm.bfmi(base_trace)</span>
+<span id="cb35-2"><a href="#cb35-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb35-3"><a href="#cb35-3" aria-hidden="true" tabindex="-1"></a>max_gr <span class="op">=</span> <span class="bu">max</span>(</span>
+<span id="cb35-4"><a href="#cb35-4" aria-hidden="true" tabindex="-1"></a>    np.<span class="bu">max</span>(gr_stats) <span class="cf">for</span> gr_stats <span class="kw">in</span> pm.gelman_rubin(base_trace).values()</span>
+<span id="cb35-5"><a href="#cb35-5" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
+<div class="sourceCode" id="cb36"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb36-1"><a href="#cb36-1" aria-hidden="true" tabindex="-1"></a>CONVERGENCE_TITLE <span class="op">=</span> <span class="kw">lambda</span>: <span class="ss">f&quot;BFMI = </span><span class="sc">{</span>bfmi<span class="sc">:.2f}</span><span class="ch">\n</span><span class="ss">Gelman-Rubin = </span><span class="sc">{</span>max_gr<span class="sc">:.3f}</span><span class="ss">&quot;</span></span></code></pre></div>
+<div class="sourceCode" id="cb37"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb37-1"><a href="#cb37-1" aria-hidden="true" tabindex="-1"></a>(pm.energyplot(base_trace, legend<span class="op">=</span><span class="va">False</span>, figsize<span class="op">=</span>(<span class="dv">6</span>, <span class="dv">4</span>))</span>
+<span id="cb37-2"><a href="#cb37-2" aria-hidden="true" tabindex="-1"></a>   .set_title(CONVERGENCE_TITLE()))<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/nba_irt2/An%20Improved%20Analysis%20of%20NBA%20Foul%20Calls%20with%20Python_57_0.png" title="fig:" alt="png" />
+</center>
+<h4 id="criticize-the-model-given-data">Criticize the model given data</h4>
+<p>We use the samples from <code>p</code>’s posterior distribution to calculate <a href="https://en.wikipedia.org/wiki/Errors_and_residuals">residuals</a>, which we use to criticize our models. These residuals allow us to assess how well our model describes the data-generation process and to discover unmodeled sources of variation.</p>
+<div class="sourceCode" id="cb38"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb38-1"><a href="#cb38-1" aria-hidden="true" tabindex="-1"></a>base_trace[<span class="st">&#39;p&#39;</span>]</span></code></pre></div>
+<pre><code>array([[ 0.4052151 ,  0.30696232],
+       [ 0.3937377 ,  0.30995026],
+       [ 0.39881138,  0.29866616],
+       ..., 
+       [ 0.40279887,  0.31166828],
+       [ 0.4077945 ,  0.30299785],
+       [ 0.40207901,  0.29991789]])</code></pre>
+<div class="sourceCode" id="cb40"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb40-1"><a href="#cb40-1" aria-hidden="true" tabindex="-1"></a>resid_df <span class="op">=</span> (df.assign(p_hat<span class="op">=</span>base_trace[<span class="st">&#39;p&#39;</span>][:, df[<span class="st">&#39;season&#39;</span>]].mean(axis<span class="op">=</span><span class="dv">0</span>))</span>
+<span id="cb40-2"><a href="#cb40-2" aria-hidden="true" tabindex="-1"></a>              .assign(resid<span class="op">=</span><span class="kw">lambda</span> df: df[<span class="st">&#39;foul_called&#39;</span>] <span class="op">-</span> df[<span class="st">&#39;p_hat&#39;</span>]))</span></code></pre></div>
+<div class="sourceCode" id="cb41"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb41-1"><a href="#cb41-1" aria-hidden="true" tabindex="-1"></a>resid_df[[<span class="st">&#39;foul_called&#39;</span>, <span class="st">&#39;p_hat&#39;</span>, <span class="st">&#39;resid&#39;</span>]].head()</span></code></pre></div>
+<div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<center>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th>
+</th>
+<th>
+foul_called
+</th>
+<th>
+p_hat
+</th>
+<th>
+resid
+</th>
+</tr>
+<tr>
+<th>
+play_id
+</th>
+<th>
+</th>
+<th>
+</th>
+<th>
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>
+20151028INDTOR-1
+</th>
+<td>
+1.0
+</td>
+<td>
+0.403875
+</td>
+<td>
+0.596125
+</td>
+</tr>
+<tr>
+<th>
+20151028INDTOR-2
+</th>
+<td>
+0.0
+</td>
+<td>
+0.403875
+</td>
+<td>
+-0.403875
+</td>
+</tr>
+<tr>
+<th>
+20151028INDTOR-3
+</th>
+<td>
+1.0
+</td>
+<td>
+0.403875
+</td>
+<td>
+0.596125
+</td>
+</tr>
+<tr>
+<th>
+20151028INDTOR-4
+</th>
+<td>
+0.0
+</td>
+<td>
+0.403875
+</td>
+<td>
+-0.403875
+</td>
+</tr>
+<tr>
+<th>
+20151028INDTOR-6
+</th>
+<td>
+0.0
+</td>
+<td>
+0.403875
+</td>
+<td>
+-0.403875
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center>
+<p>The per-season residuals are quite small, which is to be expected.</p>
+<div class="sourceCode" id="cb42"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb42-1"><a href="#cb42-1" aria-hidden="true" tabindex="-1"></a>(resid_df.pivot_table(<span class="st">&#39;resid&#39;</span>, <span class="st">&#39;season&#39;</span>)</span>
+<span id="cb42-2"><a href="#cb42-2" aria-hidden="true" tabindex="-1"></a>         .rename(index<span class="op">=</span>season_enc.inverse_transform))</span></code></pre></div>
+<div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<center>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th>
+</th>
+<th>
+resid
+</th>
+</tr>
+<tr>
+<th>
+season
+</th>
+<th>
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>
+2015-2016
+</th>
+<td>
+-0.000162
+</td>
+</tr>
+<tr>
+<th>
+2016-2017
+</th>
+<td>
+-0.000219
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center>
+<p>Anyone who has watched a close basketball game will realize that we have neglected an important factor in late game foul calls — <a href="https://en.wikipedia.org/wiki/Flagrant_foul#Game_tactics">intentional fouls</a>. Near the end of the game, intentional fouls are used by the losing team when they are on defense to end the leading team’s possession as quickly as possible.</p>
+<p>The influence of intentional fouls in the plot below is shown by the rapidly increasing of the residuals as the number of seconds left in the game decreases.</p>
+<div class="sourceCode" id="cb43"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb43-1"><a href="#cb43-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> make_time_axes(ax,</span>
+<span id="cb43-2"><a href="#cb43-2" aria-hidden="true" tabindex="-1"></a>                   xlabel<span class="op">=</span><span class="st">&quot;Seconds remaining in game&quot;</span>,</span>
+<span id="cb43-3"><a href="#cb43-3" aria-hidden="true" tabindex="-1"></a>                   ylabel<span class="op">=</span><span class="st">&quot;Observed foul call rate&quot;</span>):</span>
+<span id="cb43-4"><a href="#cb43-4" aria-hidden="true" tabindex="-1"></a>    ax.invert_xaxis()</span>
+<span id="cb43-5"><a href="#cb43-5" aria-hidden="true" tabindex="-1"></a>    ax.set_xlabel(xlabel)</span>
+<span id="cb43-6"><a href="#cb43-6" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb43-7"><a href="#cb43-7" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> make_foul_rate_yaxis(ax, label<span class="op">=</span>ylabel)</span>
+<span id="cb43-8"><a href="#cb43-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb43-9"><a href="#cb43-9" aria-hidden="true" tabindex="-1"></a>make_time_axes(</span>
+<span id="cb43-10"><a href="#cb43-10" aria-hidden="true" tabindex="-1"></a>    resid_df.pivot_table(<span class="st">&#39;resid&#39;</span>, <span class="st">&#39;seconds_left&#39;</span>)</span>
+<span id="cb43-11"><a href="#cb43-11" aria-hidden="true" tabindex="-1"></a>            .reset_index()</span>
+<span id="cb43-12"><a href="#cb43-12" aria-hidden="true" tabindex="-1"></a>            .plot(<span class="st">&#39;seconds_left&#39;</span>, <span class="st">&#39;resid&#39;</span>, kind<span class="op">=</span><span class="st">&#39;scatter&#39;</span>),</span>
+<span id="cb43-13"><a href="#cb43-13" aria-hidden="true" tabindex="-1"></a>    ylabel<span class="op">=</span><span class="st">&quot;Residual&quot;</span></span>
+<span id="cb43-14"><a href="#cb43-14" aria-hidden="true" tabindex="-1"></a>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/nba_irt2/An%20Improved%20Analysis%20of%20NBA%20Foul%20Calls%20with%20Python_65_0.png" title="fig:" alt="png" />
+</center>
+<h3 id="possession-model">Possession model</h3>
+<h4 id="build-a-model-of-the-science-1">Build a model of the science</h4>
+<p>The following plot illustrates the fact that only the trailing team has any incentive to committ intentional fouls.</p>
+<div class="sourceCode" id="cb44"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb44-1"><a href="#cb44-1" aria-hidden="true" tabindex="-1"></a>df[<span class="st">&#39;trailing_committing&#39;</span>] <span class="op">=</span> (df[<span class="st">&#39;score_committing&#39;</span>]</span>
+<span id="cb44-2"><a href="#cb44-2" aria-hidden="true" tabindex="-1"></a>                               .lt(df[<span class="st">&#39;score_disadvantaged&#39;</span>])</span>
+<span id="cb44-3"><a href="#cb44-3" aria-hidden="true" tabindex="-1"></a>                               .mul(<span class="fl">1.</span>)</span>
+<span id="cb44-4"><a href="#cb44-4" aria-hidden="true" tabindex="-1"></a>                               .astype(np.int64))</span></code></pre></div>
+<div class="sourceCode" id="cb45"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb45-1"><a href="#cb45-1" aria-hidden="true" tabindex="-1"></a>make_time_axes(</span>
+<span id="cb45-2"><a href="#cb45-2" aria-hidden="true" tabindex="-1"></a>    df.pivot_table(</span>
+<span id="cb45-3"><a href="#cb45-3" aria-hidden="true" tabindex="-1"></a>        <span class="st">&#39;foul_called&#39;</span>,</span>
+<span id="cb45-4"><a href="#cb45-4" aria-hidden="true" tabindex="-1"></a>        <span class="st">&#39;seconds_left&#39;</span>,</span>
+<span id="cb45-5"><a href="#cb45-5" aria-hidden="true" tabindex="-1"></a>        <span class="st">&#39;trailing_committing&#39;</span></span>
+<span id="cb45-6"><a href="#cb45-6" aria-hidden="true" tabindex="-1"></a>      )</span>
+<span id="cb45-7"><a href="#cb45-7" aria-hidden="true" tabindex="-1"></a>      .rolling(<span class="dv">20</span>)</span>
+<span id="cb45-8"><a href="#cb45-8" aria-hidden="true" tabindex="-1"></a>      .mean()</span>
+<span id="cb45-9"><a href="#cb45-9" aria-hidden="true" tabindex="-1"></a>      .rename(columns<span class="op">=</span>{</span>
+<span id="cb45-10"><a href="#cb45-10" aria-hidden="true" tabindex="-1"></a>          <span class="dv">0</span>: <span class="st">&quot;No&quot;</span>, <span class="dv">1</span>: <span class="st">&quot;Yes&quot;</span></span>
+<span id="cb45-11"><a href="#cb45-11" aria-hidden="true" tabindex="-1"></a>      })</span>
+<span id="cb45-12"><a href="#cb45-12" aria-hidden="true" tabindex="-1"></a>      .rename_axis(</span>
+<span id="cb45-13"><a href="#cb45-13" aria-hidden="true" tabindex="-1"></a>          <span class="st">&quot;Committing team is trailing&quot;</span>,</span>
+<span id="cb45-14"><a href="#cb45-14" aria-hidden="true" tabindex="-1"></a>          axis<span class="op">=</span><span class="dv">1</span></span>
+<span id="cb45-15"><a href="#cb45-15" aria-hidden="true" tabindex="-1"></a>      )</span>
+<span id="cb45-16"><a href="#cb45-16" aria-hidden="true" tabindex="-1"></a>      .plot()</span>
+<span id="cb45-17"><a href="#cb45-17" aria-hidden="true" tabindex="-1"></a>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/nba_irt2/An%20Improved%20Analysis%20of%20NBA%20Foul%20Calls%20with%20Python_68_0.png" title="fig:" alt="png" />
+</center>
+<p>Intentional fouls are only useful when the trailing (and committing) team is on defense. The plot below reflects this fact; shooting and personal fouls are almost always called against the defensive player; we see that they are called at a much higher rate than offensive fouls.</p>
+<div class="sourceCode" id="cb46"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb46-1"><a href="#cb46-1" aria-hidden="true" tabindex="-1"></a>ax <span class="op">=</span> (df.pivot_table(<span class="st">&#39;foul_called&#39;</span>, <span class="st">&#39;call_type&#39;</span>)</span>
+<span id="cb46-2"><a href="#cb46-2" aria-hidden="true" tabindex="-1"></a>        .rename(index<span class="op">=</span>call_type_enc.inverse_transform)</span>
+<span id="cb46-3"><a href="#cb46-3" aria-hidden="true" tabindex="-1"></a>        .rename_axis(<span class="st">&quot;Call type&quot;</span>, axis<span class="op">=</span><span class="dv">0</span>)</span>
+<span id="cb46-4"><a href="#cb46-4" aria-hidden="true" tabindex="-1"></a>        .plot(kind<span class="op">=</span><span class="st">&#39;barh&#39;</span>, legend<span class="op">=</span><span class="va">False</span>))</span>
+<span id="cb46-5"><a href="#cb46-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb46-6"><a href="#cb46-6" aria-hidden="true" tabindex="-1"></a>ax.xaxis.set_major_formatter(pct_formatter)<span class="op">;</span></span>
+<span id="cb46-7"><a href="#cb46-7" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="st">&quot;Observed foul call rate&quot;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/nba_irt2/An%20Improved%20Analysis%20of%20NBA%20Foul%20Calls%20with%20Python_70_0.png" title="fig:" alt="png" />
+</center>
+<p>We continue to model the differnce in foul call rates between seasons.</p>
+<div class="sourceCode" id="cb47"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb47-1"><a href="#cb47-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> pm.Model() <span class="im">as</span> poss_model:</span>
+<span id="cb47-2"><a href="#cb47-2" aria-hidden="true" tabindex="-1"></a>    β_season <span class="op">=</span> pm.Normal(<span class="st">&#39;β_season&#39;</span>, <span class="fl">0.</span>, <span class="fl">5.</span>, shape<span class="op">=</span><span class="dv">2</span>)</span></code></pre></div>
+<p>Throughout this post, we will use <a href="https://en.wikipedia.org/wiki/Multilevel_model">hierarchical distributions</a> to model the variation of foul call rates. For much more information on hierarchical models, consult <a href="http://www.stat.columbia.edu/~gelman/arm/"><em>Data Analysis Using Regression and Multilevel/Hierarchical Models</em></a>. We use the priors</p>
+<p><span class="math display">\[
+\begin{align*}
+    \sigma_{\textrm{call}}
+        &amp; \sim \operatorname{HalfNormal}(5) \\
+    \beta^{\textrm{call}}_{c}
+        &amp; \sim \operatorname{Hierarchical-Normal}(0, \sigma_{\textrm{call}}^2).
+\end{align*}
+\]</span></p>
+<p>For sampling efficiency, we use an [non-centered parametrization](http://twiecki.github.io/blog/2017/02/08/bayesian-hierchical-non-centered/#The-Funnel-of-Hell-(and-how-to-escape-it%29) of the hierarchical normal distribution.</p>
+<div class="sourceCode" id="cb48"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb48-1"><a href="#cb48-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> hierarchical_normal(name, shape, σ_shape<span class="op">=</span><span class="dv">1</span>):</span>
+<span id="cb48-2"><a href="#cb48-2" aria-hidden="true" tabindex="-1"></a>    Δ <span class="op">=</span> pm.Normal(<span class="ss">f&#39;Δ_</span><span class="sc">{</span>name<span class="sc">}</span><span class="ss">&#39;</span>, <span class="fl">0.</span>, <span class="fl">1.</span>, shape<span class="op">=</span>shape)</span>
+<span id="cb48-3"><a href="#cb48-3" aria-hidden="true" tabindex="-1"></a>    σ <span class="op">=</span> pm.HalfNormal(<span class="ss">f&#39;σ_</span><span class="sc">{</span>name<span class="sc">}</span><span class="ss">&#39;</span>, <span class="fl">5.</span>, shape<span class="op">=</span>σ_shape)</span>
+<span id="cb48-4"><a href="#cb48-4" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb48-5"><a href="#cb48-5" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> pm.Deterministic(name, Δ <span class="op">*</span> σ)</span></code></pre></div>
+<p>Each call type has a different foul call rate.</p>
+<div class="sourceCode" id="cb49"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb49-1"><a href="#cb49-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> poss_model:</span>
+<span id="cb49-2"><a href="#cb49-2" aria-hidden="true" tabindex="-1"></a>    β_call <span class="op">=</span> hierarchical_normal(<span class="st">&#39;β_call&#39;</span>, n_call_type)</span></code></pre></div>
+<p>We add score difference and the number of possessions by which the committing team is trailing to the <code>DataFrame</code>.</p>
+<div class="sourceCode" id="cb50"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb50-1"><a href="#cb50-1" aria-hidden="true" tabindex="-1"></a>df[<span class="st">&#39;score_diff&#39;</span>] <span class="op">=</span> (df[<span class="st">&#39;score_disadvantaged&#39;</span>]</span>
+<span id="cb50-2"><a href="#cb50-2" aria-hidden="true" tabindex="-1"></a>                      .sub(df[<span class="st">&#39;score_committing&#39;</span>]))</span>
+<span id="cb50-3"><a href="#cb50-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb50-4"><a href="#cb50-4" aria-hidden="true" tabindex="-1"></a>df[<span class="st">&#39;trailing_poss&#39;</span>] <span class="op">=</span> (df[<span class="st">&#39;score_diff&#39;</span>]</span>
+<span id="cb50-5"><a href="#cb50-5" aria-hidden="true" tabindex="-1"></a>                         .div(<span class="dv">3</span>)</span>
+<span id="cb50-6"><a href="#cb50-6" aria-hidden="true" tabindex="-1"></a>                         .<span class="bu">apply</span>(np.ceil))</span></code></pre></div>
+<div class="sourceCode" id="cb51"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb51-1"><a href="#cb51-1" aria-hidden="true" tabindex="-1"></a>trailing_poss_enc <span class="op">=</span> LabelEncoder().fit(df[<span class="st">&#39;trailing_poss&#39;</span>])</span>
+<span id="cb51-2"><a href="#cb51-2" aria-hidden="true" tabindex="-1"></a>trailing_poss <span class="op">=</span> trailing_poss_enc.transform(df[<span class="st">&#39;trailing_poss&#39;</span>])</span>
+<span id="cb51-3"><a href="#cb51-3" aria-hidden="true" tabindex="-1"></a>n_trailing_poss <span class="op">=</span> trailing_poss_enc.classes_.size</span></code></pre></div>
+<p>The plot below shows that the foul call rate (over time) varies based on the score difference (quantized into possessions) between the disadvanted team and the committing team. We assume that at most three points can be scored in a single possession (while this is not quite correct, <a href="https://en.wikipedia.org/wiki/Four-point_play">four-point plays</a> are rare enough that we do not account for them in our analysis).</p>
+<div class="sourceCode" id="cb52"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb52-1"><a href="#cb52-1" aria-hidden="true" tabindex="-1"></a>make_time_axes(</span>
+<span id="cb52-2"><a href="#cb52-2" aria-hidden="true" tabindex="-1"></a>    df.pivot_table(</span>
+<span id="cb52-3"><a href="#cb52-3" aria-hidden="true" tabindex="-1"></a>        <span class="st">&#39;foul_called&#39;</span>,</span>
+<span id="cb52-4"><a href="#cb52-4" aria-hidden="true" tabindex="-1"></a>        <span class="st">&#39;seconds_left&#39;</span>,</span>
+<span id="cb52-5"><a href="#cb52-5" aria-hidden="true" tabindex="-1"></a>        <span class="st">&#39;trailing_poss&#39;</span></span>
+<span id="cb52-6"><a href="#cb52-6" aria-hidden="true" tabindex="-1"></a>      )</span>
+<span id="cb52-7"><a href="#cb52-7" aria-hidden="true" tabindex="-1"></a>      .loc[:, <span class="dv">1</span>:<span class="dv">3</span>]</span>
+<span id="cb52-8"><a href="#cb52-8" aria-hidden="true" tabindex="-1"></a>      .rolling(<span class="dv">20</span>).mean()</span>
+<span id="cb52-9"><a href="#cb52-9" aria-hidden="true" tabindex="-1"></a>      .rename_axis(</span>
+<span id="cb52-10"><a href="#cb52-10" aria-hidden="true" tabindex="-1"></a>          <span class="st">&quot;Trailing possessions</span><span class="ch">\n</span><span class="st">(committing team)&quot;</span>,</span>
+<span id="cb52-11"><a href="#cb52-11" aria-hidden="true" tabindex="-1"></a>          axis<span class="op">=</span><span class="dv">1</span></span>
+<span id="cb52-12"><a href="#cb52-12" aria-hidden="true" tabindex="-1"></a>      )</span>
+<span id="cb52-13"><a href="#cb52-13" aria-hidden="true" tabindex="-1"></a>      .plot()</span>
+<span id="cb52-14"><a href="#cb52-14" aria-hidden="true" tabindex="-1"></a>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/nba_irt2/An%20Improved%20Analysis%20of%20NBA%20Foul%20Calls%20with%20Python_81_0.png" title="fig:" alt="png" />
+</center>
+<p>The plot below reflects the fact that intentional fouls are disproportionately personal fouls; the rate at which personal fouls are called increases drastically as the game nears its end.</p>
+<div class="sourceCode" id="cb53"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb53-1"><a href="#cb53-1" aria-hidden="true" tabindex="-1"></a>make_time_axes(</span>
+<span id="cb53-2"><a href="#cb53-2" aria-hidden="true" tabindex="-1"></a>    df.pivot_table(<span class="st">&#39;foul_called&#39;</span>, <span class="st">&#39;seconds_left&#39;</span>, <span class="st">&#39;call_type&#39;</span>)</span>
+<span id="cb53-3"><a href="#cb53-3" aria-hidden="true" tabindex="-1"></a>      .rolling(<span class="dv">20</span>).mean()</span>
+<span id="cb53-4"><a href="#cb53-4" aria-hidden="true" tabindex="-1"></a>      .rename(columns<span class="op">=</span>call_type_enc.inverse_transform)</span>
+<span id="cb53-5"><a href="#cb53-5" aria-hidden="true" tabindex="-1"></a>      .rename_axis(<span class="va">None</span>, axis<span class="op">=</span><span class="dv">1</span>)</span>
+<span id="cb53-6"><a href="#cb53-6" aria-hidden="true" tabindex="-1"></a>      .plot()</span>
+<span id="cb53-7"><a href="#cb53-7" aria-hidden="true" tabindex="-1"></a>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/nba_irt2/An%20Improved%20Analysis%20of%20NBA%20Foul%20Calls%20with%20Python_83_0.png" title="fig:" alt="png" />
+</center>
+<p>Due to the NBA’s <a href="https://en.wikipedia.org/wiki/Shot_clock">shot clock</a>, the natural timescale of a basketball game is possessions, not seconds, remaining.</p>
+<div class="sourceCode" id="cb54"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb54-1"><a href="#cb54-1" aria-hidden="true" tabindex="-1"></a>df[<span class="st">&#39;remaining_poss&#39;</span>] <span class="op">=</span> (df[<span class="st">&#39;seconds_left&#39;</span>]</span>
+<span id="cb54-2"><a href="#cb54-2" aria-hidden="true" tabindex="-1"></a>                          .floordiv(<span class="dv">25</span>)</span>
+<span id="cb54-3"><a href="#cb54-3" aria-hidden="true" tabindex="-1"></a>                          .add(<span class="dv">1</span>))</span></code></pre></div>
+<div class="sourceCode" id="cb55"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb55-1"><a href="#cb55-1" aria-hidden="true" tabindex="-1"></a>remaining_poss_enc <span class="op">=</span> LabelEncoder().fit(df[<span class="st">&#39;remaining_poss&#39;</span>])</span>
+<span id="cb55-2"><a href="#cb55-2" aria-hidden="true" tabindex="-1"></a>remaining_poss <span class="op">=</span> remaining_poss_enc.transform(df[<span class="st">&#39;remaining_poss&#39;</span>])</span>
+<span id="cb55-3"><a href="#cb55-3" aria-hidden="true" tabindex="-1"></a>n_remaining_poss <span class="op">=</span> remaining_poss_enc.classes_.size</span></code></pre></div>
+<p>Below we plot the foul call rate across trailing possession/remaining posession pairs. Note that we always calculate trailing possessions (<code>trailing_poss</code>) from the perspective of the committing team. For instance, <code>trailing_poss = 1</code> indicates that the committing team is trailing by 1-3 points, whereas <code>trailing_poss = -1</code> indicates that the committing team is leading by 1-3 points.</p>
+<div class="sourceCode" id="cb56"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb56-1"><a href="#cb56-1" aria-hidden="true" tabindex="-1"></a>ax <span class="op">=</span> sns.heatmap(</span>
+<span id="cb56-2"><a href="#cb56-2" aria-hidden="true" tabindex="-1"></a>    df.pivot_table(</span>
+<span id="cb56-3"><a href="#cb56-3" aria-hidden="true" tabindex="-1"></a>        <span class="st">&#39;foul_called&#39;</span>,</span>
+<span id="cb56-4"><a href="#cb56-4" aria-hidden="true" tabindex="-1"></a>        <span class="st">&#39;trailing_poss&#39;</span>,</span>
+<span id="cb56-5"><a href="#cb56-5" aria-hidden="true" tabindex="-1"></a>        <span class="st">&#39;remaining_poss&#39;</span></span>
+<span id="cb56-6"><a href="#cb56-6" aria-hidden="true" tabindex="-1"></a>      )</span>
+<span id="cb56-7"><a href="#cb56-7" aria-hidden="true" tabindex="-1"></a>      .rename_axis(</span>
+<span id="cb56-8"><a href="#cb56-8" aria-hidden="true" tabindex="-1"></a>          <span class="st">&quot;Trailing possessions</span><span class="ch">\n</span><span class="st">(committing team)&quot;</span>,</span>
+<span id="cb56-9"><a href="#cb56-9" aria-hidden="true" tabindex="-1"></a>          axis<span class="op">=</span><span class="dv">0</span></span>
+<span id="cb56-10"><a href="#cb56-10" aria-hidden="true" tabindex="-1"></a>      )</span>
+<span id="cb56-11"><a href="#cb56-11" aria-hidden="true" tabindex="-1"></a>      .rename_axis(<span class="st">&quot;Remaining possessions&quot;</span>, axis<span class="op">=</span><span class="dv">1</span>),</span>
+<span id="cb56-12"><a href="#cb56-12" aria-hidden="true" tabindex="-1"></a>    cmap<span class="op">=</span><span class="st">&#39;seismic&#39;</span>,</span>
+<span id="cb56-13"><a href="#cb56-13" aria-hidden="true" tabindex="-1"></a>    cbar_kws<span class="op">=</span>{<span class="st">&#39;format&#39;</span>: pct_formatter}</span>
+<span id="cb56-14"><a href="#cb56-14" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb56-15"><a href="#cb56-15" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb56-16"><a href="#cb56-16" aria-hidden="true" tabindex="-1"></a>ax.invert_yaxis()<span class="op">;</span></span>
+<span id="cb56-17"><a href="#cb56-17" aria-hidden="true" tabindex="-1"></a>ax.set_title(<span class="st">&quot;Observed foul call rate&quot;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/nba_irt2/An%20Improved%20Analysis%20of%20NBA%20Foul%20Calls%20with%20Python_88_0.png" title="fig:" alt="png" />
+</center>
+<p>The heatmap above shows that the foul call rate increases significantly when the committing team is trailing by more than the number of possessions remaining in the game. That is, teams resort to intentional fouls only when the opposing team can run out the clock and guarantee a win. (Since we have quantized the score difference and time into posessions, this conclusion is not entirely correct; it is, however, correct enough for our purposes.)</p>
+<div class="sourceCode" id="cb57"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb57-1"><a href="#cb57-1" aria-hidden="true" tabindex="-1"></a>call_name_df <span class="op">=</span> df.assign(</span>
+<span id="cb57-2"><a href="#cb57-2" aria-hidden="true" tabindex="-1"></a>    call_type<span class="op">=</span><span class="kw">lambda</span> df: call_type_enc.inverse_transform(</span>
+<span id="cb57-3"><a href="#cb57-3" aria-hidden="true" tabindex="-1"></a>        df[<span class="st">&#39;call_type&#39;</span>].values</span>
+<span id="cb57-4"><a href="#cb57-4" aria-hidden="true" tabindex="-1"></a>    )</span>
+<span id="cb57-5"><a href="#cb57-5" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb57-6"><a href="#cb57-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb57-7"><a href="#cb57-7" aria-hidden="true" tabindex="-1"></a>diff_df <span class="op">=</span> (pd.merge(</span>
+<span id="cb57-8"><a href="#cb57-8" aria-hidden="true" tabindex="-1"></a>                call_name_df,</span>
+<span id="cb57-9"><a href="#cb57-9" aria-hidden="true" tabindex="-1"></a>                call_name_df.groupby(<span class="st">&#39;call_type&#39;</span>)</span>
+<span id="cb57-10"><a href="#cb57-10" aria-hidden="true" tabindex="-1"></a>                            [<span class="st">&#39;foul_called&#39;</span>]</span>
+<span id="cb57-11"><a href="#cb57-11" aria-hidden="true" tabindex="-1"></a>                            .mean()</span>
+<span id="cb57-12"><a href="#cb57-12" aria-hidden="true" tabindex="-1"></a>                            .rename(<span class="st">&#39;avg_foul_called&#39;</span>)</span>
+<span id="cb57-13"><a href="#cb57-13" aria-hidden="true" tabindex="-1"></a>                            .reset_index()</span>
+<span id="cb57-14"><a href="#cb57-14" aria-hidden="true" tabindex="-1"></a>             )</span>
+<span id="cb57-15"><a href="#cb57-15" aria-hidden="true" tabindex="-1"></a>             .assign(diff<span class="op">=</span><span class="kw">lambda</span> df: df[<span class="st">&#39;foul_called&#39;</span>] <span class="op">-</span> df[<span class="st">&#39;avg_foul_called&#39;</span>]))</span></code></pre></div>
+<p>The heatmaps below are broken out by call type, and show the difference between the foul call rate for each trailing/remaining possession combination and the overall foul call rate for the call type in question</p>
+<div class="sourceCode" id="cb58"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb58-1"><a href="#cb58-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> plot_foul_diff_heatmap(<span class="op">*</span>_, data<span class="op">=</span><span class="va">None</span>, <span class="op">**</span>kwargs):</span>
+<span id="cb58-2"><a href="#cb58-2" aria-hidden="true" tabindex="-1"></a>    ax <span class="op">=</span> plt.gca()</span>
+<span id="cb58-3"><a href="#cb58-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb58-4"><a href="#cb58-4" aria-hidden="true" tabindex="-1"></a>    sns.heatmap(</span>
+<span id="cb58-5"><a href="#cb58-5" aria-hidden="true" tabindex="-1"></a>        data.pivot_table(</span>
+<span id="cb58-6"><a href="#cb58-6" aria-hidden="true" tabindex="-1"></a>            <span class="st">&#39;diff&#39;</span>,</span>
+<span id="cb58-7"><a href="#cb58-7" aria-hidden="true" tabindex="-1"></a>            <span class="st">&#39;trailing_poss&#39;</span>,</span>
+<span id="cb58-8"><a href="#cb58-8" aria-hidden="true" tabindex="-1"></a>            <span class="st">&#39;remaining_poss&#39;</span></span>
+<span id="cb58-9"><a href="#cb58-9" aria-hidden="true" tabindex="-1"></a>        ),</span>
+<span id="cb58-10"><a href="#cb58-10" aria-hidden="true" tabindex="-1"></a>        cmap<span class="op">=</span><span class="st">&#39;seismic&#39;</span>, robust<span class="op">=</span><span class="va">True</span>,</span>
+<span id="cb58-11"><a href="#cb58-11" aria-hidden="true" tabindex="-1"></a>        cbar_kws<span class="op">=</span>{<span class="st">&#39;format&#39;</span>: pct_formatter}</span>
+<span id="cb58-12"><a href="#cb58-12" aria-hidden="true" tabindex="-1"></a>    )</span>
+<span id="cb58-13"><a href="#cb58-13" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb58-14"><a href="#cb58-14" aria-hidden="true" tabindex="-1"></a>    ax.invert_yaxis()</span>
+<span id="cb58-15"><a href="#cb58-15" aria-hidden="true" tabindex="-1"></a>    ax.set_title(<span class="st">&quot;Observed foul call rate&quot;</span>)</span>
+<span id="cb58-16"><a href="#cb58-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb58-17"><a href="#cb58-17" aria-hidden="true" tabindex="-1"></a>(sns.FacetGrid(diff_df, col<span class="op">=</span><span class="st">&#39;call_type&#39;</span>, col_wrap<span class="op">=</span><span class="dv">3</span>, aspect<span class="op">=</span><span class="fl">1.5</span>)</span>
+<span id="cb58-18"><a href="#cb58-18" aria-hidden="true" tabindex="-1"></a>    .map_dataframe(plot_foul_diff_heatmap)</span>
+<span id="cb58-19"><a href="#cb58-19" aria-hidden="true" tabindex="-1"></a>    .set_axis_labels(</span>
+<span id="cb58-20"><a href="#cb58-20" aria-hidden="true" tabindex="-1"></a>        <span class="st">&quot;Remaining possessions&quot;</span>,</span>
+<span id="cb58-21"><a href="#cb58-21" aria-hidden="true" tabindex="-1"></a>        <span class="st">&quot;Trailing possessions</span><span class="ch">\n</span><span class="st">(committing team)&quot;</span></span>
+<span id="cb58-22"><a href="#cb58-22" aria-hidden="true" tabindex="-1"></a>    )</span>
+<span id="cb58-23"><a href="#cb58-23" aria-hidden="true" tabindex="-1"></a>    .set_titles(<span class="st">&quot;</span><span class="sc">{col_name}</span><span class="st">&quot;</span>))<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/nba_irt2/An%20Improved%20Analysis%20of%20NBA%20Foul%20Calls%20with%20Python_92_0.png" title="fig:" alt="png" />
+</center>
+<p>These plots confirm that most intentional fouls are personal fouls. They also show that the three-way interaction between trailing possesions, remaining possessions, and call type are important to model foul call rates.</p>
+<p><span class="math display">\[
+\begin{align*}
+    \sigma_{\textrm{poss}, c}
+            &amp; \sim \operatorname{HalfNormal}(5) \\
+    \beta^{\textrm{poss}}_{t, r, c}
+        &amp; \sim \operatorname{Hierarchical-Normal}(0, \sigma_{\textrm{poss}, c}^2)
+\end{align*}    
+\]</span></p>
+<div class="sourceCode" id="cb59"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb59-1"><a href="#cb59-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> poss_model:</span>
+<span id="cb59-2"><a href="#cb59-2" aria-hidden="true" tabindex="-1"></a>    β_poss <span class="op">=</span> hierarchical_normal(</span>
+<span id="cb59-3"><a href="#cb59-3" aria-hidden="true" tabindex="-1"></a>        <span class="st">&#39;β_poss&#39;</span>,</span>
+<span id="cb59-4"><a href="#cb59-4" aria-hidden="true" tabindex="-1"></a>        (n_trailing_poss, n_remaining_poss, n_call_type),</span>
+<span id="cb59-5"><a href="#cb59-5" aria-hidden="true" tabindex="-1"></a>        σ_shape<span class="op">=</span>(<span class="dv">1</span>, <span class="dv">1</span>, n_call_type)</span>
+<span id="cb59-6"><a href="#cb59-6" aria-hidden="true" tabindex="-1"></a>    )</span></code></pre></div>
+<p>The foul call rate is a combination of season, call type, and possession factors.</p>
+<p><span class="math display">\[\eta^{\textrm{game}}_k = \beta^{\textrm{season}}_{s(k)} + \beta^{\textrm{call}}_{c(k)} + \beta^{\textrm{poss}}_{t(k),r(k),c(k)}\]</span></p>
+<div class="sourceCode" id="cb60"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb60-1"><a href="#cb60-1" aria-hidden="true" tabindex="-1"></a>call_type <span class="op">=</span> df[<span class="st">&#39;call_type&#39;</span>].values</span></code></pre></div>
+<div class="sourceCode" id="cb61"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb61-1"><a href="#cb61-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> poss_model:</span>
+<span id="cb61-2"><a href="#cb61-2" aria-hidden="true" tabindex="-1"></a>    η_game <span class="op">=</span> β_season[season] <span class="op">\</span></span>
+<span id="cb61-3"><a href="#cb61-3" aria-hidden="true" tabindex="-1"></a>                <span class="op">+</span> β_call[call_type] <span class="op">\</span></span>
+<span id="cb61-4"><a href="#cb61-4" aria-hidden="true" tabindex="-1"></a>                <span class="op">+</span> β_poss[</span>
+<span id="cb61-5"><a href="#cb61-5" aria-hidden="true" tabindex="-1"></a>                    trailing_poss,</span>
+<span id="cb61-6"><a href="#cb61-6" aria-hidden="true" tabindex="-1"></a>                    remaining_poss,</span>
+<span id="cb61-7"><a href="#cb61-7" aria-hidden="true" tabindex="-1"></a>                    call_type</span>
+<span id="cb61-8"><a href="#cb61-8" aria-hidden="true" tabindex="-1"></a>                ]</span></code></pre></div>
+<p><span class="math display">\[
+\begin{align*}
+p_k
+    &amp; = \operatorname{sigm}\left(\eta^{\textrm{game}}_k\right)
+\end{align*}
+\]</span></p>
+<div class="sourceCode" id="cb62"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb62-1"><a href="#cb62-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> poss_model:</span>
+<span id="cb62-2"><a href="#cb62-2" aria-hidden="true" tabindex="-1"></a>    p <span class="op">=</span> pm.Deterministic(<span class="st">&#39;p&#39;</span>, pm.math.sigmoid(η_game))</span>
+<span id="cb62-3"><a href="#cb62-3" aria-hidden="true" tabindex="-1"></a>    y <span class="op">=</span> pm.Bernoulli(<span class="st">&#39;y&#39;</span>, p, observed<span class="op">=</span>df[<span class="st">&#39;foul_called&#39;</span>])</span></code></pre></div>
+<h4 id="infer-the-model-given-data-1">Infer the model given data</h4>
+<p>Again, we sample from the model’s posterior distribution.</p>
+<div class="sourceCode" id="cb63"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb63-1"><a href="#cb63-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> poss_model:</span>
+<span id="cb63-2"><a href="#cb63-2" aria-hidden="true" tabindex="-1"></a>    poss_trace <span class="op">=</span> pm.sample(<span class="op">**</span>SAMPLE_KWARGS)</span></code></pre></div>
+<pre><code>Auto-assigning NUTS sampler...
+Initializing NUTS using jitter+adapt_diag...
+Multiprocess sampling (3 chains in 3 jobs)
+NUTS: [σ_β_poss_log__, Δ_β_poss, σ_β_call_log__, Δ_β_call, β_season]
+100%|██████████| 1500/1500 [07:56&lt;00:00,  3.15it/s]
+There were 5 divergences after tuning. Increase `target_accept` or reparameterize.
+There were 10 divergences after tuning. Increase `target_accept` or reparameterize.
+There were 9 divergences after tuning. Increase `target_accept` or reparameterize.
+The number of effective samples is smaller than 25% for some parameters.</code></pre>
+<p>The BFMI and Gelman-Rubin statistics for this model indicate no problems with sampling and good convergence.</p>
+<div class="sourceCode" id="cb65"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb65-1"><a href="#cb65-1" aria-hidden="true" tabindex="-1"></a>bfmi <span class="op">=</span> pm.bfmi(poss_trace)</span>
+<span id="cb65-2"><a href="#cb65-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb65-3"><a href="#cb65-3" aria-hidden="true" tabindex="-1"></a>max_gr <span class="op">=</span> <span class="bu">max</span>(</span>
+<span id="cb65-4"><a href="#cb65-4" aria-hidden="true" tabindex="-1"></a>    np.<span class="bu">max</span>(gr_stats) <span class="cf">for</span> gr_stats <span class="kw">in</span> pm.gelman_rubin(poss_trace).values()</span>
+<span id="cb65-5"><a href="#cb65-5" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
+<div class="sourceCode" id="cb66"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb66-1"><a href="#cb66-1" aria-hidden="true" tabindex="-1"></a>(pm.energyplot(poss_trace, legend<span class="op">=</span><span class="va">False</span>, figsize<span class="op">=</span>(<span class="dv">6</span>, <span class="dv">4</span>))</span>
+<span id="cb66-2"><a href="#cb66-2" aria-hidden="true" tabindex="-1"></a>   .set_title(CONVERGENCE_TITLE()))<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/nba_irt2/An%20Improved%20Analysis%20of%20NBA%20Foul%20Calls%20with%20Python_105_0.png" title="fig:" alt="png" />
+</center>
+<h4 id="criticize-the-model-given-data-1">Criticize the model given data</h4>
+<p>Again, we calculate residuals.</p>
+<div class="sourceCode" id="cb67"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb67-1"><a href="#cb67-1" aria-hidden="true" tabindex="-1"></a>resid_df <span class="op">=</span> (df.assign(p_hat<span class="op">=</span>poss_trace[<span class="st">&#39;p&#39;</span>].mean(axis<span class="op">=</span><span class="dv">0</span>))</span>
+<span id="cb67-2"><a href="#cb67-2" aria-hidden="true" tabindex="-1"></a>              .assign(resid<span class="op">=</span><span class="kw">lambda</span> df: df.foul_called <span class="op">-</span> df.p_hat))</span></code></pre></div>
+<p>The following plots show that, grouped various ways, the residuals for this model are relatively well-distributed.</p>
+<div class="sourceCode" id="cb68"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb68-1"><a href="#cb68-1" aria-hidden="true" tabindex="-1"></a>ax <span class="op">=</span> sns.heatmap(</span>
+<span id="cb68-2"><a href="#cb68-2" aria-hidden="true" tabindex="-1"></a>    resid_df.pivot_table(</span>
+<span id="cb68-3"><a href="#cb68-3" aria-hidden="true" tabindex="-1"></a>                <span class="st">&#39;resid&#39;</span>,</span>
+<span id="cb68-4"><a href="#cb68-4" aria-hidden="true" tabindex="-1"></a>                <span class="st">&#39;trailing_poss&#39;</span>,</span>
+<span id="cb68-5"><a href="#cb68-5" aria-hidden="true" tabindex="-1"></a>                <span class="st">&#39;remaining_poss&#39;</span></span>
+<span id="cb68-6"><a href="#cb68-6" aria-hidden="true" tabindex="-1"></a>            )</span>
+<span id="cb68-7"><a href="#cb68-7" aria-hidden="true" tabindex="-1"></a>            .rename_axis(</span>
+<span id="cb68-8"><a href="#cb68-8" aria-hidden="true" tabindex="-1"></a>                <span class="st">&quot;Trailing possessions</span><span class="ch">\n</span><span class="st">(committing team)&quot;</span>,</span>
+<span id="cb68-9"><a href="#cb68-9" aria-hidden="true" tabindex="-1"></a>                axis<span class="op">=</span><span class="dv">0</span></span>
+<span id="cb68-10"><a href="#cb68-10" aria-hidden="true" tabindex="-1"></a>            )</span>
+<span id="cb68-11"><a href="#cb68-11" aria-hidden="true" tabindex="-1"></a>            .rename_axis(</span>
+<span id="cb68-12"><a href="#cb68-12" aria-hidden="true" tabindex="-1"></a>                <span class="st">&quot;Remaining possessions&quot;</span>,</span>
+<span id="cb68-13"><a href="#cb68-13" aria-hidden="true" tabindex="-1"></a>                axis<span class="op">=</span><span class="dv">1</span></span>
+<span id="cb68-14"><a href="#cb68-14" aria-hidden="true" tabindex="-1"></a>            )</span>
+<span id="cb68-15"><a href="#cb68-15" aria-hidden="true" tabindex="-1"></a>            .loc[<span class="op">-</span><span class="dv">3</span>:<span class="dv">3</span>],</span>
+<span id="cb68-16"><a href="#cb68-16" aria-hidden="true" tabindex="-1"></a>    cmap<span class="op">=</span><span class="st">&#39;seismic&#39;</span>, </span>
+<span id="cb68-17"><a href="#cb68-17" aria-hidden="true" tabindex="-1"></a>    cbar_kws<span class="op">=</span>{<span class="st">&#39;format&#39;</span>: pct_formatter}</span>
+<span id="cb68-18"><a href="#cb68-18" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb68-19"><a href="#cb68-19" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb68-20"><a href="#cb68-20" aria-hidden="true" tabindex="-1"></a>ax.invert_yaxis()<span class="op">;</span></span>
+<span id="cb68-21"><a href="#cb68-21" aria-hidden="true" tabindex="-1"></a>ax.set_title(<span class="st">&quot;Observed foul call rate&quot;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/nba_irt2/An%20Improved%20Analysis%20of%20NBA%20Foul%20Calls%20with%20Python_109_0.png" title="fig:" alt="png" />
+</center>
+<div class="sourceCode" id="cb69"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb69-1"><a href="#cb69-1" aria-hidden="true" tabindex="-1"></a>N_BIN <span class="op">=</span> <span class="dv">20</span></span>
+<span id="cb69-2"><a href="#cb69-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb69-3"><a href="#cb69-3" aria-hidden="true" tabindex="-1"></a>bin_ix, bins <span class="op">=</span> pd.qcut(</span>
+<span id="cb69-4"><a href="#cb69-4" aria-hidden="true" tabindex="-1"></a>    resid_df.p_hat, N_BIN,</span>
+<span id="cb69-5"><a href="#cb69-5" aria-hidden="true" tabindex="-1"></a>    labels<span class="op">=</span>np.arange(N_BIN),</span>
+<span id="cb69-6"><a href="#cb69-6" aria-hidden="true" tabindex="-1"></a>    retbins<span class="op">=</span><span class="va">True</span></span>
+<span id="cb69-7"><a href="#cb69-7" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
+<div class="sourceCode" id="cb70"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb70-1"><a href="#cb70-1" aria-hidden="true" tabindex="-1"></a>ax <span class="op">=</span> (resid_df.groupby(bins[bin_ix])</span>
+<span id="cb70-2"><a href="#cb70-2" aria-hidden="true" tabindex="-1"></a>              .resid.mean()</span>
+<span id="cb70-3"><a href="#cb70-3" aria-hidden="true" tabindex="-1"></a>              .rename_axis(<span class="st">&#39;p_hat&#39;</span>, axis<span class="op">=</span><span class="dv">0</span>)</span>
+<span id="cb70-4"><a href="#cb70-4" aria-hidden="true" tabindex="-1"></a>              .reset_index()</span>
+<span id="cb70-5"><a href="#cb70-5" aria-hidden="true" tabindex="-1"></a>              .plot(<span class="st">&#39;p_hat&#39;</span>, <span class="st">&#39;resid&#39;</span>, kind<span class="op">=</span><span class="st">&#39;scatter&#39;</span>))</span>
+<span id="cb70-6"><a href="#cb70-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb70-7"><a href="#cb70-7" aria-hidden="true" tabindex="-1"></a>ax.xaxis.set_major_formatter(pct_formatter)<span class="op">;</span></span>
+<span id="cb70-8"><a href="#cb70-8" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="vs">r&quot;Binned $\hat</span><span class="sc">{p}</span><span class="vs">$&quot;</span>)<span class="op">;</span></span>
+<span id="cb70-9"><a href="#cb70-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb70-10"><a href="#cb70-10" aria-hidden="true" tabindex="-1"></a>make_foul_rate_yaxis(ax, label<span class="op">=</span><span class="st">&quot;Residual&quot;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/nba_irt2/An%20Improved%20Analysis%20of%20NBA%20Foul%20Calls%20with%20Python_111_0.png" title="fig:" alt="png" />
+</center>
+<div class="sourceCode" id="cb71"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb71-1"><a href="#cb71-1" aria-hidden="true" tabindex="-1"></a>ax <span class="op">=</span> (resid_df.groupby(<span class="st">&#39;seconds_left&#39;</span>)</span>
+<span id="cb71-2"><a href="#cb71-2" aria-hidden="true" tabindex="-1"></a>              .resid.mean()</span>
+<span id="cb71-3"><a href="#cb71-3" aria-hidden="true" tabindex="-1"></a>              .reset_index()</span>
+<span id="cb71-4"><a href="#cb71-4" aria-hidden="true" tabindex="-1"></a>              .plot(<span class="st">&#39;seconds_left&#39;</span>, <span class="st">&#39;resid&#39;</span>, kind<span class="op">=</span><span class="st">&#39;scatter&#39;</span>))</span>
+<span id="cb71-5"><a href="#cb71-5" aria-hidden="true" tabindex="-1"></a>make_time_axes(ax, ylabel<span class="op">=</span><span class="st">&quot;Residual&quot;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/nba_irt2/An%20Improved%20Analysis%20of%20NBA%20Foul%20Calls%20with%20Python_112_0.png" title="fig:" alt="png" />
+</center>
+<h4 id="model-selection">Model selection</h4>
+<p>Now that we have two models, we can engage in <a href="https://en.wikipedia.org/wiki/Model_selection">model selection</a>. We use the <a href="http://www.jmlr.org/papers/volume14/watanabe13a/watanabe13a.pdf">widely applicable Bayesian information criterion</a> (<a href="http://www.stat.columbia.edu/~gelman/research/published/waic_understand3.pdf">WAIC</a>) for model selection.</p>
+<div class="sourceCode" id="cb72"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb72-1"><a href="#cb72-1" aria-hidden="true" tabindex="-1"></a>MODEL_NAME_MAP <span class="op">=</span> {</span>
+<span id="cb72-2"><a href="#cb72-2" aria-hidden="true" tabindex="-1"></a>    <span class="dv">0</span>: <span class="st">&quot;Base&quot;</span>,</span>
+<span id="cb72-3"><a href="#cb72-3" aria-hidden="true" tabindex="-1"></a>    <span class="dv">1</span>: <span class="st">&quot;Possession&quot;</span></span>
+<span id="cb72-4"><a href="#cb72-4" aria-hidden="true" tabindex="-1"></a>}</span></code></pre></div>
+<div class="sourceCode" id="cb73"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb73-1"><a href="#cb73-1" aria-hidden="true" tabindex="-1"></a>comp_df <span class="op">=</span> (pm.compare(</span>
+<span id="cb73-2"><a href="#cb73-2" aria-hidden="true" tabindex="-1"></a>                (base_trace, poss_trace),</span>
+<span id="cb73-3"><a href="#cb73-3" aria-hidden="true" tabindex="-1"></a>                (base_model, poss_model)</span>
+<span id="cb73-4"><a href="#cb73-4" aria-hidden="true" tabindex="-1"></a>             )</span>
+<span id="cb73-5"><a href="#cb73-5" aria-hidden="true" tabindex="-1"></a>             .rename(index<span class="op">=</span>MODEL_NAME_MAP)</span>
+<span id="cb73-6"><a href="#cb73-6" aria-hidden="true" tabindex="-1"></a>             .loc[MODEL_NAME_MAP.values()])</span></code></pre></div>
+<p>Since smaller WAICs are better, the possession model clearly outperforms the base model.</p>
+<div class="sourceCode" id="cb74"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb74-1"><a href="#cb74-1" aria-hidden="true" tabindex="-1"></a>comp_df</span></code></pre></div>
+<div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<center>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th>
+</th>
+<th>
+WAIC
+</th>
+<th>
+pWAIC
+</th>
+<th>
+dWAIC
+</th>
+<th>
+weight
+</th>
+<th>
+SE
+</th>
+<th>
+dSE
+</th>
+<th>
+var_warn
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>
+Base
+</th>
+<td>
+11610.1
+</td>
+<td>
+2.11
+</td>
+<td>
+1541.98
+</td>
+<td>
+0
+</td>
+<td>
+56.9
+</td>
+<td>
+73.43
+</td>
+<td>
+0
+</td>
+</tr>
+<tr>
+<th>
+Possession
+</th>
+<td>
+10068.1
+</td>
+<td>
+82.93
+</td>
+<td>
+0
+</td>
+<td>
+1
+</td>
+<td>
+88.05
+</td>
+<td>
+0
+</td>
+<td>
+0
+</td>
+</tr>
+</tbody>
+</table>
+</center>
+</div>
+<div class="sourceCode" id="cb75"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb75-1"><a href="#cb75-1" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plt.subplots()</span>
+<span id="cb75-2"><a href="#cb75-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb75-3"><a href="#cb75-3" aria-hidden="true" tabindex="-1"></a>ax.errorbar(</span>
+<span id="cb75-4"><a href="#cb75-4" aria-hidden="true" tabindex="-1"></a>    np.arange(<span class="bu">len</span>(MODEL_NAME_MAP)),</span>
+<span id="cb75-5"><a href="#cb75-5" aria-hidden="true" tabindex="-1"></a>    comp_df.WAIC,</span>
+<span id="cb75-6"><a href="#cb75-6" aria-hidden="true" tabindex="-1"></a>    yerr<span class="op">=</span>comp_df.SE, fmt<span class="op">=</span><span class="st">&#39;o&#39;</span></span>
+<span id="cb75-7"><a href="#cb75-7" aria-hidden="true" tabindex="-1"></a>)<span class="op">;</span></span>
+<span id="cb75-8"><a href="#cb75-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb75-9"><a href="#cb75-9" aria-hidden="true" tabindex="-1"></a>ax.set_xticks(np.arange(<span class="bu">len</span>(MODEL_NAME_MAP)))<span class="op">;</span></span>
+<span id="cb75-10"><a href="#cb75-10" aria-hidden="true" tabindex="-1"></a>ax.set_xticklabels(comp_df.index)<span class="op">;</span></span>
+<span id="cb75-11"><a href="#cb75-11" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="st">&quot;Model&quot;</span>)<span class="op">;</span></span>
+<span id="cb75-12"><a href="#cb75-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb75-13"><a href="#cb75-13" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="st">&quot;WAIC&quot;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/nba_irt2/An%20Improved%20Analysis%20of%20NBA%20Foul%20Calls%20with%20Python_118_0.png" title="fig:" alt="png" />
+</center>
+<h3 id="player-item-response-theory-model">Player item-response theory model</h3>
+<h4 id="build-a-model-of-the-science-2">Build a model of the science</h4>
+<p>We now turn to the question of whether or not committing and/or drawing fouls is a measurable skill. We use an <a href="https://en.wikipedia.org/wiki/Item_response_theory">item-response theory</a> (IRT) model to study this question. For more information on Bayesian item-response models, consult the following references.</p>
+<ul>
+<li><a href="http://www.stat.columbia.edu/~gelman/research/published/171.pdf"><em>Practical Issues in Implementing and Understanding Bayesian Ideal Point Estimation</em></a> is an excellent introduction to applied Bayesian IRT models and has inspired much of this work.</li>
+<li><a href="http://www.springer.com/us/book/9781441907417"><em>Bayesian Item Response Modeling — Theory and Applications</em></a> is a comprehensive mathematical overview of Bayesien IRT modeling.</li>
+</ul>
+<p>The item-response theory model includes the season, call type, and possession terms of the previous models.</p>
+<div class="sourceCode" id="cb76"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb76-1"><a href="#cb76-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> pm.Model() <span class="im">as</span> irt_model:</span>
+<span id="cb76-2"><a href="#cb76-2" aria-hidden="true" tabindex="-1"></a>    β_season <span class="op">=</span> pm.Normal(<span class="st">&#39;β_season&#39;</span>, <span class="fl">0.</span>, <span class="fl">5.</span>, shape<span class="op">=</span>n_season)</span>
+<span id="cb76-3"><a href="#cb76-3" aria-hidden="true" tabindex="-1"></a>    β_call <span class="op">=</span> hierarchical_normal(<span class="st">&#39;β_call&#39;</span>, n_call_type)</span>
+<span id="cb76-4"><a href="#cb76-4" aria-hidden="true" tabindex="-1"></a>    β_poss <span class="op">=</span> hierarchical_normal(</span>
+<span id="cb76-5"><a href="#cb76-5" aria-hidden="true" tabindex="-1"></a>        <span class="st">&#39;β_poss&#39;</span>,</span>
+<span id="cb76-6"><a href="#cb76-6" aria-hidden="true" tabindex="-1"></a>        (n_trailing_poss, n_remaining_poss, n_call_type),</span>
+<span id="cb76-7"><a href="#cb76-7" aria-hidden="true" tabindex="-1"></a>        σ_shape<span class="op">=</span>(<span class="dv">1</span>, <span class="dv">1</span>, n_call_type)</span>
+<span id="cb76-8"><a href="#cb76-8" aria-hidden="true" tabindex="-1"></a>    )</span>
+<span id="cb76-9"><a href="#cb76-9" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb76-10"><a href="#cb76-10" aria-hidden="true" tabindex="-1"></a>    η_game <span class="op">=</span> β_season[season] <span class="op">\</span></span>
+<span id="cb76-11"><a href="#cb76-11" aria-hidden="true" tabindex="-1"></a>                <span class="op">+</span> β_call[call_type] <span class="op">\</span></span>
+<span id="cb76-12"><a href="#cb76-12" aria-hidden="true" tabindex="-1"></a>                <span class="op">+</span> β_poss[</span>
+<span id="cb76-13"><a href="#cb76-13" aria-hidden="true" tabindex="-1"></a>                    trailing_poss,</span>
+<span id="cb76-14"><a href="#cb76-14" aria-hidden="true" tabindex="-1"></a>                    remaining_poss,</span>
+<span id="cb76-15"><a href="#cb76-15" aria-hidden="true" tabindex="-1"></a>                    call_type</span>
+<span id="cb76-16"><a href="#cb76-16" aria-hidden="true" tabindex="-1"></a>                ]</span></code></pre></div>
+<p>Each disadvantaged player has an ideal point (per season).</p>
+<p><span class="math display">\[
+\begin{align*}
+    \sigma_{\theta}
+        &amp; \sim \operatorname{HalfNormal}(5) \\
+    \theta^{\textrm{player}}_{i, s}
+        &amp; \sim \operatorname{Hierarchical-Normal}(0, \sigma_{\theta}^2)
+\end{align*}
+\]</span></p>
+<div class="sourceCode" id="cb77"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb77-1"><a href="#cb77-1" aria-hidden="true" tabindex="-1"></a>player_disadvantaged <span class="op">=</span> df[<span class="st">&#39;player_disadvantaged&#39;</span>].values</span>
+<span id="cb77-2"><a href="#cb77-2" aria-hidden="true" tabindex="-1"></a>n_player <span class="op">=</span> player_enc.classes_.size</span></code></pre></div>
+<div class="sourceCode" id="cb78"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb78-1"><a href="#cb78-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> irt_model:</span>
+<span id="cb78-2"><a href="#cb78-2" aria-hidden="true" tabindex="-1"></a>    θ_player <span class="op">=</span> hierarchical_normal(</span>
+<span id="cb78-3"><a href="#cb78-3" aria-hidden="true" tabindex="-1"></a>        <span class="st">&#39;θ_player&#39;</span>, (n_player, n_season)</span>
+<span id="cb78-4"><a href="#cb78-4" aria-hidden="true" tabindex="-1"></a>    )</span>
+<span id="cb78-5"><a href="#cb78-5" aria-hidden="true" tabindex="-1"></a>    θ <span class="op">=</span> θ_player[player_disadvantaged, season]</span></code></pre></div>
+<p>Each committing player has an ideal point (per season).</p>
+<p><span class="math display">\[
+\begin{align*}
+    \sigma_{b}
+        &amp; \sim \operatorname{HalfNormal}(5) \\
+    b^{\textrm{player}}_{j, s}
+        &amp; \sim \operatorname{Hierarchical-Normal}(0, \sigma_{b}^2)
+\end{align*}    
+\]</span></p>
+<div class="sourceCode" id="cb79"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb79-1"><a href="#cb79-1" aria-hidden="true" tabindex="-1"></a>player_committing <span class="op">=</span> df[<span class="st">&#39;player_committing&#39;</span>].values</span></code></pre></div>
+<div class="sourceCode" id="cb80"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb80-1"><a href="#cb80-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> irt_model:</span>
+<span id="cb80-2"><a href="#cb80-2" aria-hidden="true" tabindex="-1"></a>    b_player <span class="op">=</span> hierarchical_normal(</span>
+<span id="cb80-3"><a href="#cb80-3" aria-hidden="true" tabindex="-1"></a>        <span class="st">&#39;b_player&#39;</span>, (n_player, n_season)</span>
+<span id="cb80-4"><a href="#cb80-4" aria-hidden="true" tabindex="-1"></a>    )</span>
+<span id="cb80-5"><a href="#cb80-5" aria-hidden="true" tabindex="-1"></a>    b <span class="op">=</span> b_player[player_committing, season]</span></code></pre></div>
+<p>Players affect the foul call rate through the difference in their ideal points.</p>
+<p><span class="math display">\[\eta^{\textrm{player}}_k = \theta_k - b_k\]</span></p>
+<div class="sourceCode" id="cb81"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb81-1"><a href="#cb81-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> irt_model:</span>
+<span id="cb81-2"><a href="#cb81-2" aria-hidden="true" tabindex="-1"></a>    η_player <span class="op">=</span> θ <span class="op">-</span> b</span></code></pre></div>
+<p>The sum of the game and player effects determines the foul call probability.</p>
+<p><span class="math display">\[\eta_k = \eta^{\textrm{game}}_k + \eta^{\textrm{player}}_k\]</span></p>
+<div class="sourceCode" id="cb82"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb82-1"><a href="#cb82-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> irt_model:</span>
+<span id="cb82-2"><a href="#cb82-2" aria-hidden="true" tabindex="-1"></a>    η <span class="op">=</span> η_game <span class="op">+</span> η_player</span></code></pre></div>
+<div class="sourceCode" id="cb83"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb83-1"><a href="#cb83-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> irt_model:</span>
+<span id="cb83-2"><a href="#cb83-2" aria-hidden="true" tabindex="-1"></a>    p <span class="op">=</span> pm.Deterministic(<span class="st">&#39;p&#39;</span>, pm.math.sigmoid(η))</span>
+<span id="cb83-3"><a href="#cb83-3" aria-hidden="true" tabindex="-1"></a>    y <span class="op">=</span> pm.Bernoulli(</span>
+<span id="cb83-4"><a href="#cb83-4" aria-hidden="true" tabindex="-1"></a>        <span class="st">&#39;y&#39;</span>, p,</span>
+<span id="cb83-5"><a href="#cb83-5" aria-hidden="true" tabindex="-1"></a>        observed<span class="op">=</span>df[<span class="st">&#39;foul_called&#39;</span>]</span>
+<span id="cb83-6"><a href="#cb83-6" aria-hidden="true" tabindex="-1"></a>    )</span></code></pre></div>
+<h4 id="infer-the-model-given-data-2">Infer the model given data</h4>
+<p>Again, we sample from the model’s posterior distribution.</p>
+<div class="sourceCode" id="cb84"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb84-1"><a href="#cb84-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> irt_model:</span>
+<span id="cb84-2"><a href="#cb84-2" aria-hidden="true" tabindex="-1"></a>    irt_trace <span class="op">=</span> pm.sample(<span class="op">**</span>SAMPLE_KWARGS)</span></code></pre></div>
+<pre><code>Auto-assigning NUTS sampler...
+Initializing NUTS using jitter+adapt_diag...
+Multiprocess sampling (3 chains in 3 jobs)
+NUTS: [σ_b_player_log__, Δ_b_player, σ_θ_player_log__, Δ_θ_player, σ_β_poss_log__, Δ_β_poss, σ_β_call_log__, Δ_β_call, β_season]
+100%|██████████| 1500/1500 [13:55&lt;00:00,  1.80it/s]
+There were 3 divergences after tuning. Increase `target_accept` or reparameterize.
+There were 1 divergences after tuning. Increase `target_accept` or reparameterize.
+There were 4 divergences after tuning. Increase `target_accept` or reparameterize.
+The estimated number of effective samples is smaller than 200 for some parameters.</code></pre>
+<p>None of the sampling diagnostics indicate problems with convergence.</p>
+<div class="sourceCode" id="cb86"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb86-1"><a href="#cb86-1" aria-hidden="true" tabindex="-1"></a>bfmi <span class="op">=</span> pm.bfmi(irt_trace)</span>
+<span id="cb86-2"><a href="#cb86-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb86-3"><a href="#cb86-3" aria-hidden="true" tabindex="-1"></a>max_gr <span class="op">=</span> <span class="bu">max</span>(</span>
+<span id="cb86-4"><a href="#cb86-4" aria-hidden="true" tabindex="-1"></a>    np.<span class="bu">max</span>(gr_stats) <span class="cf">for</span> gr_stats <span class="kw">in</span> pm.gelman_rubin(irt_trace).values()</span>
+<span id="cb86-5"><a href="#cb86-5" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
+<div class="sourceCode" id="cb87"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb87-1"><a href="#cb87-1" aria-hidden="true" tabindex="-1"></a>(pm.energyplot(irt_trace, legend<span class="op">=</span><span class="va">False</span>, figsize<span class="op">=</span>(<span class="dv">6</span>, <span class="dv">4</span>))</span>
+<span id="cb87-2"><a href="#cb87-2" aria-hidden="true" tabindex="-1"></a>   .set_title(CONVERGENCE_TITLE()))<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/nba_irt2/An%20Improved%20Analysis%20of%20NBA%20Foul%20Calls%20with%20Python_139_0.png" title="fig:" alt="png" />
+</center>
+<h3 id="criticize-the-model-given-data-take-three">Criticize the model given data, take three</h3>
+<p>The binned residuals for this model are more asymmetric than for the previous models, but still not too bad.</p>
+<div class="sourceCode" id="cb88"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb88-1"><a href="#cb88-1" aria-hidden="true" tabindex="-1"></a>resid_df <span class="op">=</span> (df.assign(p_hat<span class="op">=</span>irt_trace[<span class="st">&#39;p&#39;</span>].mean(axis<span class="op">=</span><span class="dv">0</span>))</span>
+<span id="cb88-2"><a href="#cb88-2" aria-hidden="true" tabindex="-1"></a>              .assign(resid<span class="op">=</span><span class="kw">lambda</span> df: df[<span class="st">&#39;foul_called&#39;</span>] <span class="op">-</span> df[<span class="st">&#39;p_hat&#39;</span>]))</span></code></pre></div>
+<div class="sourceCode" id="cb89"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb89-1"><a href="#cb89-1" aria-hidden="true" tabindex="-1"></a>N_BIN <span class="op">=</span> <span class="dv">50</span></span>
+<span id="cb89-2"><a href="#cb89-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb89-3"><a href="#cb89-3" aria-hidden="true" tabindex="-1"></a>bin_ix, bins <span class="op">=</span> pd.qcut(</span>
+<span id="cb89-4"><a href="#cb89-4" aria-hidden="true" tabindex="-1"></a>    resid_df.p_hat, N_BIN,</span>
+<span id="cb89-5"><a href="#cb89-5" aria-hidden="true" tabindex="-1"></a>    labels<span class="op">=</span>np.arange(N_BIN),</span>
+<span id="cb89-6"><a href="#cb89-6" aria-hidden="true" tabindex="-1"></a>    retbins<span class="op">=</span><span class="va">True</span></span>
+<span id="cb89-7"><a href="#cb89-7" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
+<div class="sourceCode" id="cb90"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb90-1"><a href="#cb90-1" aria-hidden="true" tabindex="-1"></a>ax <span class="op">=</span> (resid_df.groupby(bins[bin_ix])</span>
+<span id="cb90-2"><a href="#cb90-2" aria-hidden="true" tabindex="-1"></a>              .resid.mean()</span>
+<span id="cb90-3"><a href="#cb90-3" aria-hidden="true" tabindex="-1"></a>              .rename_axis(<span class="st">&#39;p_hat&#39;</span>, axis<span class="op">=</span><span class="dv">0</span>)</span>
+<span id="cb90-4"><a href="#cb90-4" aria-hidden="true" tabindex="-1"></a>              .reset_index()</span>
+<span id="cb90-5"><a href="#cb90-5" aria-hidden="true" tabindex="-1"></a>              .plot(<span class="st">&#39;p_hat&#39;</span>, <span class="st">&#39;resid&#39;</span>, kind<span class="op">=</span><span class="st">&#39;scatter&#39;</span>))</span>
+<span id="cb90-6"><a href="#cb90-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb90-7"><a href="#cb90-7" aria-hidden="true" tabindex="-1"></a>ax.xaxis.set_major_formatter(pct_formatter)<span class="op">;</span></span>
+<span id="cb90-8"><a href="#cb90-8" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="vs">r&quot;Binned $\hat</span><span class="sc">{p}</span><span class="vs">$&quot;</span>)<span class="op">;</span></span>
+<span id="cb90-9"><a href="#cb90-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb90-10"><a href="#cb90-10" aria-hidden="true" tabindex="-1"></a>make_foul_rate_yaxis(ax, label<span class="op">=</span><span class="st">&quot;Residual&quot;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/nba_irt2/An%20Improved%20Analysis%20of%20NBA%20Foul%20Calls%20with%20Python_144_0.png" title="fig:" alt="png" />
+</center>
+<div class="sourceCode" id="cb91"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb91-1"><a href="#cb91-1" aria-hidden="true" tabindex="-1"></a>ax <span class="op">=</span> (resid_df.groupby(<span class="st">&#39;seconds_left&#39;</span>)</span>
+<span id="cb91-2"><a href="#cb91-2" aria-hidden="true" tabindex="-1"></a>              .resid.mean()</span>
+<span id="cb91-3"><a href="#cb91-3" aria-hidden="true" tabindex="-1"></a>              .reset_index()</span>
+<span id="cb91-4"><a href="#cb91-4" aria-hidden="true" tabindex="-1"></a>              .plot(<span class="st">&#39;seconds_left&#39;</span>, <span class="st">&#39;resid&#39;</span>, kind<span class="op">=</span><span class="st">&#39;scatter&#39;</span>))</span>
+<span id="cb91-5"><a href="#cb91-5" aria-hidden="true" tabindex="-1"></a>make_time_axes(ax, ylabel<span class="op">=</span><span class="st">&quot;Residual&quot;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/nba_irt2/An%20Improved%20Analysis%20of%20NBA%20Foul%20Calls%20with%20Python_145_0.png" title="fig:" alt="png" />
+</center>
+<h4 id="model-selection-1">Model selection</h4>
+<p>The IRT model is a marginal improvement over the possession model in terms of WAIC.</p>
+<div class="sourceCode" id="cb92"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb92-1"><a href="#cb92-1" aria-hidden="true" tabindex="-1"></a>MODEL_NAME_MAP[<span class="dv">2</span>] <span class="op">=</span> <span class="st">&quot;IRT&quot;</span></span>
+<span id="cb92-2"><a href="#cb92-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb92-3"><a href="#cb92-3" aria-hidden="true" tabindex="-1"></a>comp_df <span class="op">=</span> (pm.compare(</span>
+<span id="cb92-4"><a href="#cb92-4" aria-hidden="true" tabindex="-1"></a>                (base_trace, poss_trace, irt_trace),</span>
+<span id="cb92-5"><a href="#cb92-5" aria-hidden="true" tabindex="-1"></a>                (base_model, poss_model, irt_model)</span>
+<span id="cb92-6"><a href="#cb92-6" aria-hidden="true" tabindex="-1"></a>             )</span>
+<span id="cb92-7"><a href="#cb92-7" aria-hidden="true" tabindex="-1"></a>             .rename(index<span class="op">=</span>MODEL_NAME_MAP)</span>
+<span id="cb92-8"><a href="#cb92-8" aria-hidden="true" tabindex="-1"></a>             .loc[MODEL_NAME_MAP.values()])</span></code></pre></div>
+<div class="sourceCode" id="cb93"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb93-1"><a href="#cb93-1" aria-hidden="true" tabindex="-1"></a>comp_df</span></code></pre></div>
+<div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<center>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th>
+</th>
+<th>
+WAIC
+</th>
+<th>
+pWAIC
+</th>
+<th>
+dWAIC
+</th>
+<th>
+weight
+</th>
+<th>
+SE
+</th>
+<th>
+dSE
+</th>
+<th>
+var_warn
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>
+Base
+</th>
+<td>
+11610.1
+</td>
+<td>
+2.11
+</td>
+<td>
+1566.92
+</td>
+<td>
+0
+</td>
+<td>
+56.9
+</td>
+<td>
+74.03
+</td>
+<td>
+0
+</td>
+</tr>
+<tr>
+<th>
+Possession
+</th>
+<td>
+10068.1
+</td>
+<td>
+82.93
+</td>
+<td>
+24.94
+</td>
+<td>
+0.08
+</td>
+<td>
+88.05
+</td>
+<td>
+10.99
+</td>
+<td>
+0
+</td>
+</tr>
+<tr>
+<th>
+IRT
+</th>
+<td>
+10043.2
+</td>
+<td>
+216.6
+</td>
+<td>
+0
+</td>
+<td>
+0.91
+</td>
+<td>
+88.47
+</td>
+<td>
+0
+</td>
+<td>
+0
+</td>
+</tr>
+</tbody>
+</table>
+</center>
+</div>
+<div class="sourceCode" id="cb94"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb94-1"><a href="#cb94-1" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plt.subplots()</span>
+<span id="cb94-2"><a href="#cb94-2" aria-hidden="true" tabindex="-1"></a>ax.errorbar(</span>
+<span id="cb94-3"><a href="#cb94-3" aria-hidden="true" tabindex="-1"></a>    np.arange(<span class="bu">len</span>(MODEL_NAME_MAP)), comp_df.WAIC,</span>
+<span id="cb94-4"><a href="#cb94-4" aria-hidden="true" tabindex="-1"></a>    yerr<span class="op">=</span>comp_df.SE, fmt<span class="op">=</span><span class="st">&#39;o&#39;</span></span>
+<span id="cb94-5"><a href="#cb94-5" aria-hidden="true" tabindex="-1"></a>)<span class="op">;</span></span>
+<span id="cb94-6"><a href="#cb94-6" aria-hidden="true" tabindex="-1"></a>ax.set_xticks(np.arange(<span class="bu">len</span>(MODEL_NAME_MAP)))<span class="op">;</span></span>
+<span id="cb94-7"><a href="#cb94-7" aria-hidden="true" tabindex="-1"></a>ax.set_xticklabels(comp_df.index)<span class="op">;</span></span>
+<span id="cb94-8"><a href="#cb94-8" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="st">&quot;Model&quot;</span>)<span class="op">;</span></span>
+<span id="cb94-9"><a href="#cb94-9" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="st">&quot;WAIC&quot;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/nba_irt2/An%20Improved%20Analysis%20of%20NBA%20Foul%20Calls%20with%20Python_149_0.png" title="fig:" alt="png" />
+</center>
+<p>We now produce two <code>DataFrame</code>s containing the estimated player ideal points per season.</p>
+<div class="sourceCode" id="cb95"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb95-1"><a href="#cb95-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> varname_to_param(varname):</span>
+<span id="cb95-2"><a href="#cb95-2" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> varname[<span class="dv">0</span>]</span>
+<span id="cb95-3"><a href="#cb95-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb95-4"><a href="#cb95-4" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> varname_to_player(varname):</span>
+<span id="cb95-5"><a href="#cb95-5" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="bu">int</span>(varname[<span class="dv">3</span>:<span class="op">-</span><span class="dv">2</span>])</span>
+<span id="cb95-6"><a href="#cb95-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb95-7"><a href="#cb95-7" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> varname_to_season(varname):</span>
+<span id="cb95-8"><a href="#cb95-8" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="bu">int</span>(varname[<span class="op">-</span><span class="dv">1</span>])</span></code></pre></div>
+<div class="sourceCode" id="cb96"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb96-1"><a href="#cb96-1" aria-hidden="true" tabindex="-1"></a>irt_df <span class="op">=</span> (pm.trace_to_dataframe(</span>
+<span id="cb96-2"><a href="#cb96-2" aria-hidden="true" tabindex="-1"></a>                irt_trace, varnames<span class="op">=</span>[<span class="st">&#39;θ_player&#39;</span>, <span class="st">&#39;b_player&#39;</span>]</span>
+<span id="cb96-3"><a href="#cb96-3" aria-hidden="true" tabindex="-1"></a>            )</span>
+<span id="cb96-4"><a href="#cb96-4" aria-hidden="true" tabindex="-1"></a>            .rename(columns<span class="op">=</span><span class="kw">lambda</span> col: col.replace(<span class="st">&#39;_player&#39;</span>, <span class="st">&#39;&#39;</span>))</span>
+<span id="cb96-5"><a href="#cb96-5" aria-hidden="true" tabindex="-1"></a>            .T</span>
+<span id="cb96-6"><a href="#cb96-6" aria-hidden="true" tabindex="-1"></a>            .<span class="bu">apply</span>(</span>
+<span id="cb96-7"><a href="#cb96-7" aria-hidden="true" tabindex="-1"></a>               <span class="kw">lambda</span> s: pd.Series.describe(</span>
+<span id="cb96-8"><a href="#cb96-8" aria-hidden="true" tabindex="-1"></a>                   s, percentiles<span class="op">=</span>[<span class="fl">0.055</span>, <span class="fl">0.945</span>]</span>
+<span id="cb96-9"><a href="#cb96-9" aria-hidden="true" tabindex="-1"></a>               ),</span>
+<span id="cb96-10"><a href="#cb96-10" aria-hidden="true" tabindex="-1"></a>               axis<span class="op">=</span><span class="dv">1</span></span>
+<span id="cb96-11"><a href="#cb96-11" aria-hidden="true" tabindex="-1"></a>            )</span>
+<span id="cb96-12"><a href="#cb96-12" aria-hidden="true" tabindex="-1"></a>            [[<span class="st">&#39;mean&#39;</span>, <span class="st">&#39;5.5%&#39;</span>, <span class="st">&#39;94.5%&#39;</span>]]</span>
+<span id="cb96-13"><a href="#cb96-13" aria-hidden="true" tabindex="-1"></a>            .rename(columns<span class="op">=</span>{</span>
+<span id="cb96-14"><a href="#cb96-14" aria-hidden="true" tabindex="-1"></a>                 <span class="st">&#39;5.5%&#39;</span>: <span class="st">&#39;low&#39;</span>,</span>
+<span id="cb96-15"><a href="#cb96-15" aria-hidden="true" tabindex="-1"></a>                 <span class="st">&#39;94.5%&#39;</span>: <span class="st">&#39;high&#39;</span></span>
+<span id="cb96-16"><a href="#cb96-16" aria-hidden="true" tabindex="-1"></a>            })</span>
+<span id="cb96-17"><a href="#cb96-17" aria-hidden="true" tabindex="-1"></a>            .rename_axis(<span class="st">&#39;varname&#39;</span>)</span>
+<span id="cb96-18"><a href="#cb96-18" aria-hidden="true" tabindex="-1"></a>            .reset_index()</span>
+<span id="cb96-19"><a href="#cb96-19" aria-hidden="true" tabindex="-1"></a>            .assign(</span>
+<span id="cb96-20"><a href="#cb96-20" aria-hidden="true" tabindex="-1"></a>                param<span class="op">=</span><span class="kw">lambda</span> df: df[<span class="st">&#39;varname&#39;</span>].<span class="bu">apply</span>(varname_to_param),</span>
+<span id="cb96-21"><a href="#cb96-21" aria-hidden="true" tabindex="-1"></a>                player<span class="op">=</span><span class="kw">lambda</span> df: df[<span class="st">&#39;varname&#39;</span>].<span class="bu">apply</span>(varname_to_player),</span>
+<span id="cb96-22"><a href="#cb96-22" aria-hidden="true" tabindex="-1"></a>                season<span class="op">=</span><span class="kw">lambda</span> df: df[<span class="st">&#39;varname&#39;</span>].<span class="bu">apply</span>(varname_to_season)</span>
+<span id="cb96-23"><a href="#cb96-23" aria-hidden="true" tabindex="-1"></a>            )</span>
+<span id="cb96-24"><a href="#cb96-24" aria-hidden="true" tabindex="-1"></a>            .drop(<span class="st">&#39;varname&#39;</span>, axis<span class="op">=</span><span class="dv">1</span>))</span></code></pre></div>
+<div class="sourceCode" id="cb97"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb97-1"><a href="#cb97-1" aria-hidden="true" tabindex="-1"></a>irt_df.head()</span></code></pre></div>
+<div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<center>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th>
+</th>
+<th>
+mean
+</th>
+<th>
+low
+</th>
+<th>
+high
+</th>
+<th>
+param
+</th>
+<th>
+player
+</th>
+<th>
+season
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>
+0
+</th>
+<td>
+-0.016516
+</td>
+<td>
+-0.323127
+</td>
+<td>
+0.272022
+</td>
+<td>
+θ
+</td>
+<td>
+0
+</td>
+<td>
+0
+</td>
+</tr>
+<tr>
+<th>
+1
+</th>
+<td>
+0.003845
+</td>
+<td>
+-0.289842
+</td>
+<td>
+0.290248
+</td>
+<td>
+θ
+</td>
+<td>
+0
+</td>
+<td>
+1
+</td>
+</tr>
+<tr>
+<th>
+2
+</th>
+<td>
+0.008519
+</td>
+<td>
+-0.289715
+</td>
+<td>
+0.304574
+</td>
+<td>
+θ
+</td>
+<td>
+1
+</td>
+<td>
+0
+</td>
+</tr>
+<tr>
+<th>
+3
+</th>
+<td>
+0.031367
+</td>
+<td>
+-0.240853
+</td>
+<td>
+0.339297
+</td>
+<td>
+θ
+</td>
+<td>
+1
+</td>
+<td>
+1
+</td>
+</tr>
+<tr>
+<th>
+4
+</th>
+<td>
+-0.037530
+</td>
+<td>
+-0.320010
+</td>
+<td>
+0.226110
+</td>
+<td>
+θ
+</td>
+<td>
+2
+</td>
+<td>
+0
+</td>
+</tr>
+</tbody>
+</table>
+</center>
+</div>
+<div class="sourceCode" id="cb98"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb98-1"><a href="#cb98-1" aria-hidden="true" tabindex="-1"></a>player_irt_df <span class="op">=</span> irt_df.pivot_table(</span>
+<span id="cb98-2"><a href="#cb98-2" aria-hidden="true" tabindex="-1"></a>    index<span class="op">=</span><span class="st">&#39;player&#39;</span>,</span>
+<span id="cb98-3"><a href="#cb98-3" aria-hidden="true" tabindex="-1"></a>    columns<span class="op">=</span>[<span class="st">&#39;param&#39;</span>, <span class="st">&#39;season&#39;</span>],</span>
+<span id="cb98-4"><a href="#cb98-4" aria-hidden="true" tabindex="-1"></a>    values<span class="op">=</span><span class="st">&#39;mean&#39;</span></span>
+<span id="cb98-5"><a href="#cb98-5" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
+<div class="sourceCode" id="cb99"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb99-1"><a href="#cb99-1" aria-hidden="true" tabindex="-1"></a>player_irt_df.head()</span></code></pre></div>
+<div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead tr th {
+        text-align: left;
+    }
+
+    .dataframe thead tr:last-of-type th {
+        text-align: right;
+    }
+</style>
+<center>
+<table border="1" class="dataframe">
+<thead>
+<tr>
+<th>
+param
+</th>
+<th colspan="2" halign="left">
+b
+</th>
+<th colspan="2" halign="left">
+θ
+</th>
+</tr>
+<tr>
+<th>
+season
+</th>
+<th>
+0
+</th>
+<th>
+1
+</th>
+<th>
+0
+</th>
+<th>
+1
+</th>
+</tr>
+<tr>
+<th>
+player
+</th>
+<th>
+</th>
+<th>
+</th>
+<th>
+</th>
+<th>
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>
+0
+</th>
+<td>
+-0.069235
+</td>
+<td>
+0.013339
+</td>
+<td>
+-0.016516
+</td>
+<td>
+0.003845
+</td>
+</tr>
+<tr>
+<th>
+1
+</th>
+<td>
+-0.003003
+</td>
+<td>
+0.001853
+</td>
+<td>
+0.008519
+</td>
+<td>
+0.031367
+</td>
+</tr>
+<tr>
+<th>
+2
+</th>
+<td>
+0.084515
+</td>
+<td>
+0.089058
+</td>
+<td>
+-0.037530
+</td>
+<td>
+-0.002373
+</td>
+</tr>
+<tr>
+<th>
+3
+</th>
+<td>
+-0.028946
+</td>
+<td>
+0.004360
+</td>
+<td>
+0.003514
+</td>
+<td>
+-0.000334
+</td>
+</tr>
+<tr>
+<th>
+4
+</th>
+<td>
+-0.001976
+</td>
+<td>
+0.280380
+</td>
+<td>
+0.072932
+</td>
+<td>
+0.005571
+</td>
+</tr>
+</tbody>
+</table>
+</center>
+</div>
+<p>The following plot shows that the committing skill appears to be somewhat larger than the disadvantaged skill. This difference seems reasonable because most fouls are committed by the player on defense; committing skill is quite likely to be correlated with defensive ability.</p>
+<div class="sourceCode" id="cb100"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb100-1"><a href="#cb100-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> plot_latent_params(df):</span>
+<span id="cb100-2"><a href="#cb100-2" aria-hidden="true" tabindex="-1"></a>    fig, ax <span class="op">=</span> plt.subplots()</span>
+<span id="cb100-3"><a href="#cb100-3" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb100-4"><a href="#cb100-4" aria-hidden="true" tabindex="-1"></a>    n, _ <span class="op">=</span> df.shape</span>
+<span id="cb100-5"><a href="#cb100-5" aria-hidden="true" tabindex="-1"></a>    y <span class="op">=</span> np.arange(n)</span>
+<span id="cb100-6"><a href="#cb100-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb100-7"><a href="#cb100-7" aria-hidden="true" tabindex="-1"></a>    ax.errorbar(</span>
+<span id="cb100-8"><a href="#cb100-8" aria-hidden="true" tabindex="-1"></a>        df[<span class="st">&#39;mean&#39;</span>], y,</span>
+<span id="cb100-9"><a href="#cb100-9" aria-hidden="true" tabindex="-1"></a>        xerr<span class="op">=</span>(df[[<span class="st">&#39;high&#39;</span>, <span class="st">&#39;low&#39;</span>]]</span>
+<span id="cb100-10"><a href="#cb100-10" aria-hidden="true" tabindex="-1"></a>                .sub(df[<span class="st">&#39;mean&#39;</span>], axis<span class="op">=</span><span class="dv">0</span>)</span>
+<span id="cb100-11"><a href="#cb100-11" aria-hidden="true" tabindex="-1"></a>                .<span class="bu">abs</span>()</span>
+<span id="cb100-12"><a href="#cb100-12" aria-hidden="true" tabindex="-1"></a>                .values.T),</span>
+<span id="cb100-13"><a href="#cb100-13" aria-hidden="true" tabindex="-1"></a>        fmt<span class="op">=</span><span class="st">&#39;o&#39;</span></span>
+<span id="cb100-14"><a href="#cb100-14" aria-hidden="true" tabindex="-1"></a>    )</span>
+<span id="cb100-15"><a href="#cb100-15" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb100-16"><a href="#cb100-16" aria-hidden="true" tabindex="-1"></a>    ax.set_yticks(y)</span>
+<span id="cb100-17"><a href="#cb100-17" aria-hidden="true" tabindex="-1"></a>    ax.set_yticklabels(</span>
+<span id="cb100-18"><a href="#cb100-18" aria-hidden="true" tabindex="-1"></a>        player_enc.inverse_transform(df.player)</span>
+<span id="cb100-19"><a href="#cb100-19" aria-hidden="true" tabindex="-1"></a>    )</span>
+<span id="cb100-20"><a href="#cb100-20" aria-hidden="true" tabindex="-1"></a>    ax.set_ylabel(<span class="st">&quot;Player&quot;</span>)</span>
+<span id="cb100-21"><a href="#cb100-21" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb100-22"><a href="#cb100-22" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> fig, ax</span>
+<span id="cb100-23"><a href="#cb100-23" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb100-24"><a href="#cb100-24" aria-hidden="true" tabindex="-1"></a>fig, axes <span class="op">=</span> plt.subplots(</span>
+<span id="cb100-25"><a href="#cb100-25" aria-hidden="true" tabindex="-1"></a>    ncols<span class="op">=</span><span class="dv">2</span>, nrows<span class="op">=</span><span class="dv">2</span>, sharex<span class="op">=</span><span class="va">True</span>,</span>
+<span id="cb100-26"><a href="#cb100-26" aria-hidden="true" tabindex="-1"></a>    figsize<span class="op">=</span>(<span class="dv">16</span>, <span class="dv">8</span>)</span>
+<span id="cb100-27"><a href="#cb100-27" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb100-28"><a href="#cb100-28" aria-hidden="true" tabindex="-1"></a>(θ<span class="dv">0</span><span class="er">_ax</span>, θ<span class="dv">1</span><span class="er">_ax</span>), (b0_ax, b1_ax) <span class="op">=</span> axes</span>
+<span id="cb100-29"><a href="#cb100-29" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb100-30"><a href="#cb100-30" aria-hidden="true" tabindex="-1"></a>bins <span class="op">=</span> np.linspace(</span>
+<span id="cb100-31"><a href="#cb100-31" aria-hidden="true" tabindex="-1"></a>    <span class="fl">0.9</span> <span class="op">*</span> irt_df[<span class="st">&#39;mean&#39;</span>].<span class="bu">min</span>(),</span>
+<span id="cb100-32"><a href="#cb100-32" aria-hidden="true" tabindex="-1"></a>    <span class="fl">1.1</span> <span class="op">*</span> irt_df[<span class="st">&#39;mean&#39;</span>].<span class="bu">max</span>(),</span>
+<span id="cb100-33"><a href="#cb100-33" aria-hidden="true" tabindex="-1"></a>    <span class="dv">75</span></span>
+<span id="cb100-34"><a href="#cb100-34" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb100-35"><a href="#cb100-35" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb100-36"><a href="#cb100-36" aria-hidden="true" tabindex="-1"></a>θ<span class="dv">0</span><span class="er">_ax</span>.hist(</span>
+<span id="cb100-37"><a href="#cb100-37" aria-hidden="true" tabindex="-1"></a>    player_irt_df[<span class="st">&#39;θ&#39;</span>, <span class="dv">0</span>],</span>
+<span id="cb100-38"><a href="#cb100-38" aria-hidden="true" tabindex="-1"></a>    bins<span class="op">=</span>bins, normed<span class="op">=</span><span class="va">True</span></span>
+<span id="cb100-39"><a href="#cb100-39" aria-hidden="true" tabindex="-1"></a>)<span class="op">;</span></span>
+<span id="cb100-40"><a href="#cb100-40" aria-hidden="true" tabindex="-1"></a>θ<span class="dv">1</span><span class="er">_ax</span>.hist(</span>
+<span id="cb100-41"><a href="#cb100-41" aria-hidden="true" tabindex="-1"></a>    player_irt_df[<span class="st">&#39;θ&#39;</span>, <span class="dv">1</span>],</span>
+<span id="cb100-42"><a href="#cb100-42" aria-hidden="true" tabindex="-1"></a>    bins<span class="op">=</span>bins, normed<span class="op">=</span><span class="va">True</span></span>
+<span id="cb100-43"><a href="#cb100-43" aria-hidden="true" tabindex="-1"></a>)<span class="op">;</span></span>
+<span id="cb100-44"><a href="#cb100-44" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb100-45"><a href="#cb100-45" aria-hidden="true" tabindex="-1"></a>θ<span class="dv">0</span><span class="er">_ax</span>.set_yticks([])<span class="op">;</span></span>
+<span id="cb100-46"><a href="#cb100-46" aria-hidden="true" tabindex="-1"></a>θ<span class="dv">0</span><span class="er">_ax</span>.set_title(</span>
+<span id="cb100-47"><a href="#cb100-47" aria-hidden="true" tabindex="-1"></a>    <span class="vs">r&quot;$\hat{\theta}$ (&quot;</span> <span class="op">+</span> season_enc.inverse_transform(<span class="dv">0</span>) <span class="op">+</span> <span class="st">&quot;)&quot;</span></span>
+<span id="cb100-48"><a href="#cb100-48" aria-hidden="true" tabindex="-1"></a>)<span class="op">;</span></span>
+<span id="cb100-49"><a href="#cb100-49" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb100-50"><a href="#cb100-50" aria-hidden="true" tabindex="-1"></a>θ<span class="dv">1</span><span class="er">_ax</span>.set_yticks([])<span class="op">;</span></span>
+<span id="cb100-51"><a href="#cb100-51" aria-hidden="true" tabindex="-1"></a>θ<span class="dv">1</span><span class="er">_ax</span>.set_title(</span>
+<span id="cb100-52"><a href="#cb100-52" aria-hidden="true" tabindex="-1"></a>    <span class="vs">r&quot;$\hat{\theta}$ (&quot;</span> <span class="op">+</span> season_enc.inverse_transform(<span class="dv">1</span>) <span class="op">+</span> <span class="st">&quot;)&quot;</span></span>
+<span id="cb100-53"><a href="#cb100-53" aria-hidden="true" tabindex="-1"></a>)<span class="op">;</span></span>
+<span id="cb100-54"><a href="#cb100-54" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb100-55"><a href="#cb100-55" aria-hidden="true" tabindex="-1"></a>b0_ax.hist(</span>
+<span id="cb100-56"><a href="#cb100-56" aria-hidden="true" tabindex="-1"></a>    player_irt_df[<span class="st">&#39;b&#39;</span>, <span class="dv">0</span>],</span>
+<span id="cb100-57"><a href="#cb100-57" aria-hidden="true" tabindex="-1"></a>    bins<span class="op">=</span>bins, normed<span class="op">=</span><span class="va">True</span>, color<span class="op">=</span>green</span>
+<span id="cb100-58"><a href="#cb100-58" aria-hidden="true" tabindex="-1"></a>)<span class="op">;</span></span>
+<span id="cb100-59"><a href="#cb100-59" aria-hidden="true" tabindex="-1"></a>b1_ax.hist(</span>
+<span id="cb100-60"><a href="#cb100-60" aria-hidden="true" tabindex="-1"></a>    player_irt_df[<span class="st">&#39;b&#39;</span>, <span class="dv">1</span>],</span>
+<span id="cb100-61"><a href="#cb100-61" aria-hidden="true" tabindex="-1"></a>    bins<span class="op">=</span>bins, normed<span class="op">=</span><span class="va">True</span>, color<span class="op">=</span>green</span>
+<span id="cb100-62"><a href="#cb100-62" aria-hidden="true" tabindex="-1"></a>)<span class="op">;</span></span>
+<span id="cb100-63"><a href="#cb100-63" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb100-64"><a href="#cb100-64" aria-hidden="true" tabindex="-1"></a>b0_ax.set_xlabel(</span>
+<span id="cb100-65"><a href="#cb100-65" aria-hidden="true" tabindex="-1"></a>    <span class="vs">r&quot;$\hat</span><span class="sc">{b}</span><span class="vs">$ (&quot;</span> <span class="op">+</span> season_enc.inverse_transform(<span class="dv">0</span>) <span class="op">+</span> <span class="st">&quot;)&quot;</span></span>
+<span id="cb100-66"><a href="#cb100-66" aria-hidden="true" tabindex="-1"></a>)<span class="op">;</span></span>
+<span id="cb100-67"><a href="#cb100-67" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb100-68"><a href="#cb100-68" aria-hidden="true" tabindex="-1"></a>b0_ax.invert_yaxis()<span class="op">;</span></span>
+<span id="cb100-69"><a href="#cb100-69" aria-hidden="true" tabindex="-1"></a>b0_ax.xaxis.tick_top()<span class="op">;</span></span>
+<span id="cb100-70"><a href="#cb100-70" aria-hidden="true" tabindex="-1"></a>b0_ax.set_yticks([])<span class="op">;</span></span>
+<span id="cb100-71"><a href="#cb100-71" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb100-72"><a href="#cb100-72" aria-hidden="true" tabindex="-1"></a>b1_ax.set_xlabel(</span>
+<span id="cb100-73"><a href="#cb100-73" aria-hidden="true" tabindex="-1"></a>    <span class="vs">r&quot;$\hat</span><span class="sc">{b}</span><span class="vs">$ (&quot;</span> <span class="op">+</span> season_enc.inverse_transform(<span class="dv">1</span>) <span class="op">+</span> <span class="st">&quot;)&quot;</span></span>
+<span id="cb100-74"><a href="#cb100-74" aria-hidden="true" tabindex="-1"></a>)<span class="op">;</span></span>
+<span id="cb100-75"><a href="#cb100-75" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb100-76"><a href="#cb100-76" aria-hidden="true" tabindex="-1"></a>b1_ax.invert_yaxis()<span class="op">;</span></span>
+<span id="cb100-77"><a href="#cb100-77" aria-hidden="true" tabindex="-1"></a>b1_ax.xaxis.tick_top()<span class="op">;</span></span>
+<span id="cb100-78"><a href="#cb100-78" aria-hidden="true" tabindex="-1"></a>b1_ax.set_yticks([])<span class="op">;</span></span>
+<span id="cb100-79"><a href="#cb100-79" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb100-80"><a href="#cb100-80" aria-hidden="true" tabindex="-1"></a>fig.suptitle(<span class="st">&quot;Disadvantaged skill&quot;</span>, size<span class="op">=</span><span class="dv">18</span>)<span class="op">;</span></span>
+<span id="cb100-81"><a href="#cb100-81" aria-hidden="true" tabindex="-1"></a>fig.text(<span class="fl">0.45</span>, <span class="fl">0.02</span>, <span class="st">&quot;Committing skill&quot;</span>, size<span class="op">=</span><span class="dv">18</span>)</span>
+<span id="cb100-82"><a href="#cb100-82" aria-hidden="true" tabindex="-1"></a>fig.tight_layout()<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/nba_irt2/An%20Improved%20Analysis%20of%20NBA%20Foul%20Calls%20with%20Python_157_0.png" title="fig:" alt="png" />
+</center>
+<p>We now examine the top and bottom ten players in each ability, across both seasons.</p>
+<p>The top players in terms of disadvantaged ability tend to be good scorers (Jimmy Butler, Ricky Rubio, John Wall, Andre Iguodala). The presence of DeAndre Jordan in the top ten may to be due to the hack-a-Shaq phenomenon. In future work, it would be interesting to control for the disavantage player’s free throw percentage in order to mitigate the influence of the hack-a-Shaq effect on the measurement of latent skill.</p>
+<p>Interestingly, the bottom players (in terms of disadvantaged ability) include many stars (Pau Gasol, Carmelo Anthony, Kevin Durant, Kawhi Leonard). The presence of these stars in the bottom may somewhat counteract the pervasive narrative that referees favor stars in their foul calls.</p>
+<div class="sourceCode" id="cb101"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb101-1"><a href="#cb101-1" aria-hidden="true" tabindex="-1"></a>top_bot_irt_df <span class="op">=</span> (irt_df.groupby(<span class="st">&#39;param&#39;</span>)</span>
+<span id="cb101-2"><a href="#cb101-2" aria-hidden="true" tabindex="-1"></a>                    .<span class="bu">apply</span>(</span>
+<span id="cb101-3"><a href="#cb101-3" aria-hidden="true" tabindex="-1"></a>                        <span class="kw">lambda</span> df: pd.concat((</span>
+<span id="cb101-4"><a href="#cb101-4" aria-hidden="true" tabindex="-1"></a>                                df.nlargest(<span class="dv">10</span>, <span class="st">&#39;mean&#39;</span>),</span>
+<span id="cb101-5"><a href="#cb101-5" aria-hidden="true" tabindex="-1"></a>                                df.nsmallest(<span class="dv">10</span>, <span class="st">&#39;mean&#39;</span>)</span>
+<span id="cb101-6"><a href="#cb101-6" aria-hidden="true" tabindex="-1"></a>                            ),</span>
+<span id="cb101-7"><a href="#cb101-7" aria-hidden="true" tabindex="-1"></a>                            axis<span class="op">=</span><span class="dv">0</span>, ignore_index<span class="op">=</span><span class="va">True</span></span>
+<span id="cb101-8"><a href="#cb101-8" aria-hidden="true" tabindex="-1"></a>                        )</span>
+<span id="cb101-9"><a href="#cb101-9" aria-hidden="true" tabindex="-1"></a>                    )</span>
+<span id="cb101-10"><a href="#cb101-10" aria-hidden="true" tabindex="-1"></a>                    .reset_index(drop<span class="op">=</span><span class="va">True</span>))</span></code></pre></div>
+<div class="sourceCode" id="cb102"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb102-1"><a href="#cb102-1" aria-hidden="true" tabindex="-1"></a>top_bot_irt_df.head()</span></code></pre></div>
+<div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<center>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th>
+</th>
+<th>
+mean
+</th>
+<th>
+low
+</th>
+<th>
+high
+</th>
+<th>
+param
+</th>
+<th>
+player
+</th>
+<th>
+season
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>
+0
+</th>
+<td>
+0.351946
+</td>
+<td>
+-0.026786
+</td>
+<td>
+0.762273
+</td>
+<td>
+b
+</td>
+<td>
+86
+</td>
+<td>
+0
+</td>
+</tr>
+<tr>
+<th>
+1
+</th>
+<td>
+0.320737
+</td>
+<td>
+-0.027064
+</td>
+<td>
+0.713128
+</td>
+<td>
+b
+</td>
+<td>
+23
+</td>
+<td>
+0
+</td>
+</tr>
+<tr>
+<th>
+2
+</th>
+<td>
+0.280380
+</td>
+<td>
+-0.071020
+</td>
+<td>
+0.695970
+</td>
+<td>
+b
+</td>
+<td>
+4
+</td>
+<td>
+1
+</td>
+</tr>
+<tr>
+<th>
+3
+</th>
+<td>
+0.279678
+</td>
+<td>
+-0.057249
+</td>
+<td>
+0.647667
+</td>
+<td>
+b
+</td>
+<td>
+462
+</td>
+<td>
+1
+</td>
+</tr>
+<tr>
+<th>
+4
+</th>
+<td>
+0.271735
+</td>
+<td>
+-0.106795
+</td>
+<td>
+0.676231
+</td>
+<td>
+b
+</td>
+<td>
+78
+</td>
+<td>
+0
+</td>
+</tr>
+</tbody>
+</table>
+</center>
+</div>
+<div class="sourceCode" id="cb103"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb103-1"><a href="#cb103-1" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plot_latent_params(</span>
+<span id="cb103-2"><a href="#cb103-2" aria-hidden="true" tabindex="-1"></a>    top_bot_irt_df[top_bot_irt_df[<span class="st">&#39;param&#39;</span>] <span class="op">==</span> <span class="st">&#39;θ&#39;</span>]</span>
+<span id="cb103-3"><a href="#cb103-3" aria-hidden="true" tabindex="-1"></a>                  .sort_values(<span class="st">&#39;mean&#39;</span>)</span>
+<span id="cb103-4"><a href="#cb103-4" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb103-5"><a href="#cb103-5" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="vs">r&quot;$\hat{\theta}$&quot;</span>)<span class="op">;</span></span>
+<span id="cb103-6"><a href="#cb103-6" aria-hidden="true" tabindex="-1"></a>ax.set_title(<span class="st">&quot;Top and bottom ten&quot;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/nba_irt2/An%20Improved%20Analysis%20of%20NBA%20Foul%20Calls%20with%20Python_161_0.png" title="fig:" alt="png" />
+</center>
+<p>The top ten players in terms of committing skill include many defensive standouts (Danny Green — twice, Gordon Hayward, Paul George).</p>
+<p>The bottom ten players include many that are known to be defensively challenged (Ricky Rubio and James Harden). Dwight Howard was, at one point, a fierce defender of the rim, but was well past his prime in 2015, when our data set begins. Chris Paul’s presence in the bottom is somewhat surprising.</p>
+<div class="sourceCode" id="cb104"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb104-1"><a href="#cb104-1" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plot_latent_params(</span>
+<span id="cb104-2"><a href="#cb104-2" aria-hidden="true" tabindex="-1"></a>    top_bot_irt_df[top_bot_irt_df[<span class="st">&#39;param&#39;</span>] <span class="op">==</span> <span class="st">&#39;b&#39;</span>]</span>
+<span id="cb104-3"><a href="#cb104-3" aria-hidden="true" tabindex="-1"></a>                  .sort_values(<span class="st">&#39;mean&#39;</span>)</span>
+<span id="cb104-4"><a href="#cb104-4" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb104-5"><a href="#cb104-5" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="vs">r&quot;$\hat</span><span class="sc">{b}</span><span class="vs">$&quot;</span>)<span class="op">;</span></span>
+<span id="cb104-6"><a href="#cb104-6" aria-hidden="true" tabindex="-1"></a>ax.set_title(<span class="st">&quot;Top and bottom ten&quot;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/nba_irt2/An%20Improved%20Analysis%20of%20NBA%20Foul%20Calls%20with%20Python_163_0.png" title="fig:" alt="png" />
+</center>
+<p>In the sports analytics community, year-over-year correlation of latent parameters is the test of whether or not a latent quantity truly measures a skill. The following plots show a slight year-over-year correlation in the committing skill, but not much correlation in the disadvantaged skill.</p>
+<div class="sourceCode" id="cb105"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb105-1"><a href="#cb105-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> p_val_to_asterisks(p_val):</span>
+<span id="cb105-2"><a href="#cb105-2" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> p_val <span class="op">&lt;</span> <span class="fl">0.0001</span>:</span>
+<span id="cb105-3"><a href="#cb105-3" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> <span class="st">&quot;****&quot;</span></span>
+<span id="cb105-4"><a href="#cb105-4" aria-hidden="true" tabindex="-1"></a>    <span class="cf">elif</span> p_val <span class="op">&lt;</span> <span class="fl">0.001</span>:</span>
+<span id="cb105-5"><a href="#cb105-5" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> <span class="st">&quot;***&quot;</span></span>
+<span id="cb105-6"><a href="#cb105-6" aria-hidden="true" tabindex="-1"></a>    <span class="cf">elif</span> p_val <span class="op">&lt;</span> <span class="fl">0.01</span>:</span>
+<span id="cb105-7"><a href="#cb105-7" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> <span class="st">&quot;**&quot;</span></span>
+<span id="cb105-8"><a href="#cb105-8" aria-hidden="true" tabindex="-1"></a>    <span class="cf">elif</span> p_val <span class="op">&lt;</span> <span class="fl">0.05</span>:</span>
+<span id="cb105-9"><a href="#cb105-9" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> <span class="st">&quot;*&quot;</span></span>
+<span id="cb105-10"><a href="#cb105-10" aria-hidden="true" tabindex="-1"></a>    <span class="cf">else</span>:</span>
+<span id="cb105-11"><a href="#cb105-11" aria-hidden="true" tabindex="-1"></a>        <span class="cf">return</span> <span class="st">&quot;&quot;</span></span>
+<span id="cb105-12"><a href="#cb105-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb105-13"><a href="#cb105-13" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> plot_corr(x, y, <span class="op">**</span>kwargs):</span>
+<span id="cb105-14"><a href="#cb105-14" aria-hidden="true" tabindex="-1"></a>    corrcoeff, p_val <span class="op">=</span> sp.stats.pearsonr(x, y)</span>
+<span id="cb105-15"><a href="#cb105-15" aria-hidden="true" tabindex="-1"></a>    asterisks <span class="op">=</span> p_val_to_asterisks(p_val)</span>
+<span id="cb105-16"><a href="#cb105-16" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb105-17"><a href="#cb105-17" aria-hidden="true" tabindex="-1"></a>    artist <span class="op">=</span> AnchoredText(</span>
+<span id="cb105-18"><a href="#cb105-18" aria-hidden="true" tabindex="-1"></a>        <span class="ss">f&#39;</span><span class="sc">{</span>corrcoeff<span class="sc">:.2f}{</span>asterisks<span class="sc">}</span><span class="ss">&#39;</span>,</span>
+<span id="cb105-19"><a href="#cb105-19" aria-hidden="true" tabindex="-1"></a>        loc<span class="op">=</span><span class="dv">10</span>, frameon<span class="op">=</span><span class="va">False</span>,</span>
+<span id="cb105-20"><a href="#cb105-20" aria-hidden="true" tabindex="-1"></a>        prop<span class="op">=</span><span class="bu">dict</span>(size<span class="op">=</span>LABELSIZE)</span>
+<span id="cb105-21"><a href="#cb105-21" aria-hidden="true" tabindex="-1"></a>    )</span>
+<span id="cb105-22"><a href="#cb105-22" aria-hidden="true" tabindex="-1"></a>    plt.gca().add_artist(artist)</span>
+<span id="cb105-23"><a href="#cb105-23" aria-hidden="true" tabindex="-1"></a>    plt.grid(b<span class="op">=</span><span class="va">False</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb106"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb106-1"><a href="#cb106-1" aria-hidden="true" tabindex="-1"></a>PARAM_MAP <span class="op">=</span> {</span>
+<span id="cb106-2"><a href="#cb106-2" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;θ&#39;</span>: <span class="vs">r&quot;$\hat{\theta}$&quot;</span>,</span>
+<span id="cb106-3"><a href="#cb106-3" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;b&#39;</span>: <span class="vs">r&quot;$\hat</span><span class="sc">{b}</span><span class="vs">$&quot;</span></span>
+<span id="cb106-4"><a href="#cb106-4" aria-hidden="true" tabindex="-1"></a>}</span>
+<span id="cb106-5"><a href="#cb106-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb106-6"><a href="#cb106-6" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> replace_label(label):</span>
+<span id="cb106-7"><a href="#cb106-7" aria-hidden="true" tabindex="-1"></a>    param, season <span class="op">=</span> <span class="bu">eval</span>(label)</span>
+<span id="cb106-8"><a href="#cb106-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb106-9"><a href="#cb106-9" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="st">&quot;</span><span class="sc">{param}</span><span class="ch">\n</span><span class="st">(</span><span class="sc">{season}</span><span class="st">)&quot;</span>.<span class="bu">format</span>(</span>
+<span id="cb106-10"><a href="#cb106-10" aria-hidden="true" tabindex="-1"></a>        param<span class="op">=</span>PARAM_MAP[param],</span>
+<span id="cb106-11"><a href="#cb106-11" aria-hidden="true" tabindex="-1"></a>        season<span class="op">=</span>season_enc.inverse_transform(season)</span>
+<span id="cb106-12"><a href="#cb106-12" aria-hidden="true" tabindex="-1"></a>    )</span>
+<span id="cb106-13"><a href="#cb106-13" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb106-14"><a href="#cb106-14" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> style_grid(grid):</span>
+<span id="cb106-15"><a href="#cb106-15" aria-hidden="true" tabindex="-1"></a>    <span class="cf">for</span> ax <span class="kw">in</span> grid.axes.flat:</span>
+<span id="cb106-16"><a href="#cb106-16" aria-hidden="true" tabindex="-1"></a>        ax.grid(<span class="va">False</span>)</span>
+<span id="cb106-17"><a href="#cb106-17" aria-hidden="true" tabindex="-1"></a>        ax.set_xticklabels([])<span class="op">;</span></span>
+<span id="cb106-18"><a href="#cb106-18" aria-hidden="true" tabindex="-1"></a>        ax.set_yticklabels([])<span class="op">;</span></span>
+<span id="cb106-19"><a href="#cb106-19" aria-hidden="true" tabindex="-1"></a>        </span>
+<span id="cb106-20"><a href="#cb106-20" aria-hidden="true" tabindex="-1"></a>        <span class="cf">if</span> ax.get_xlabel():</span>
+<span id="cb106-21"><a href="#cb106-21" aria-hidden="true" tabindex="-1"></a>            ax.set_xlabel(replace_label(ax.get_xlabel()))</span>
+<span id="cb106-22"><a href="#cb106-22" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb106-23"><a href="#cb106-23" aria-hidden="true" tabindex="-1"></a>        <span class="cf">if</span> ax.get_ylabel():</span>
+<span id="cb106-24"><a href="#cb106-24" aria-hidden="true" tabindex="-1"></a>            ax.set_ylabel(replace_label(ax.get_ylabel()))</span>
+<span id="cb106-25"><a href="#cb106-25" aria-hidden="true" tabindex="-1"></a>            </span>
+<span id="cb106-26"><a href="#cb106-26" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> grid</span></code></pre></div>
+<div class="sourceCode" id="cb107"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb107-1"><a href="#cb107-1" aria-hidden="true" tabindex="-1"></a>player_all_season <span class="op">=</span> <span class="bu">set</span>(df.groupby(<span class="st">&#39;player_disadvantaged&#39;</span>)</span>
+<span id="cb107-2"><a href="#cb107-2" aria-hidden="true" tabindex="-1"></a>                          .<span class="bu">filter</span>(<span class="kw">lambda</span> df: df[<span class="st">&#39;season&#39;</span>].nunique() <span class="op">==</span> n_season)</span>
+<span id="cb107-3"><a href="#cb107-3" aria-hidden="true" tabindex="-1"></a>                          [<span class="st">&#39;player_committing&#39;</span>]) <span class="op">\</span></span>
+<span id="cb107-4"><a href="#cb107-4" aria-hidden="true" tabindex="-1"></a>                        <span class="op">&amp;</span> <span class="bu">set</span>(df.groupby(<span class="st">&#39;player_committing&#39;</span>)</span>
+<span id="cb107-5"><a href="#cb107-5" aria-hidden="true" tabindex="-1"></a>                                .<span class="bu">filter</span>(<span class="kw">lambda</span> df: df[<span class="st">&#39;season&#39;</span>].nunique() <span class="op">==</span> n_season)</span>
+<span id="cb107-6"><a href="#cb107-6" aria-hidden="true" tabindex="-1"></a>                                [<span class="st">&#39;player_committing&#39;</span>])</span></code></pre></div>
+<div class="sourceCode" id="cb108"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb108-1"><a href="#cb108-1" aria-hidden="true" tabindex="-1"></a>style_grid(</span>
+<span id="cb108-2"><a href="#cb108-2" aria-hidden="true" tabindex="-1"></a>    sns.PairGrid(</span>
+<span id="cb108-3"><a href="#cb108-3" aria-hidden="true" tabindex="-1"></a>        player_irt_df.loc[player_all_season],</span>
+<span id="cb108-4"><a href="#cb108-4" aria-hidden="true" tabindex="-1"></a>        size<span class="op">=</span><span class="fl">1.75</span></span>
+<span id="cb108-5"><a href="#cb108-5" aria-hidden="true" tabindex="-1"></a>       )</span>
+<span id="cb108-6"><a href="#cb108-6" aria-hidden="true" tabindex="-1"></a>       .map_upper(plt.scatter, alpha<span class="op">=</span><span class="fl">0.5</span>)</span>
+<span id="cb108-7"><a href="#cb108-7" aria-hidden="true" tabindex="-1"></a>       .map_diag(plt.hist)</span>
+<span id="cb108-8"><a href="#cb108-8" aria-hidden="true" tabindex="-1"></a>       .map_lower(plot_corr)</span>
+<span id="cb108-9"><a href="#cb108-9" aria-hidden="true" tabindex="-1"></a>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/nba_irt2/An%20Improved%20Analysis%20of%20NBA%20Foul%20Calls%20with%20Python_168_0.png" title="fig:" alt="png" />
+</center>
+<p>Since we can only reasonably estimate the skills of players for which we have sufficient foul call data, we plot the correlations below for players that appeared in at least ten plays in each season.</p>
+<div class="sourceCode" id="cb109"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb109-1"><a href="#cb109-1" aria-hidden="true" tabindex="-1"></a>MIN <span class="op">=</span> <span class="dv">10</span></span>
+<span id="cb109-2"><a href="#cb109-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb109-3"><a href="#cb109-3" aria-hidden="true" tabindex="-1"></a>player_has_min <span class="op">=</span> <span class="bu">set</span>(df.groupby(<span class="st">&#39;player_disadvantaged&#39;</span>)</span>
+<span id="cb109-4"><a href="#cb109-4" aria-hidden="true" tabindex="-1"></a>                       .<span class="bu">filter</span>(<span class="kw">lambda</span> df: (df[<span class="st">&#39;season&#39;</span>]</span>
+<span id="cb109-5"><a href="#cb109-5" aria-hidden="true" tabindex="-1"></a>                                             .value_counts()</span>
+<span id="cb109-6"><a href="#cb109-6" aria-hidden="true" tabindex="-1"></a>                                             .gt(MIN)</span>
+<span id="cb109-7"><a href="#cb109-7" aria-hidden="true" tabindex="-1"></a>                                             .<span class="bu">all</span>()))</span>
+<span id="cb109-8"><a href="#cb109-8" aria-hidden="true" tabindex="-1"></a>                       [<span class="st">&#39;player_committing&#39;</span>]) <span class="op">\</span></span>
+<span id="cb109-9"><a href="#cb109-9" aria-hidden="true" tabindex="-1"></a>                    <span class="op">&amp;</span> <span class="bu">set</span>(df.groupby(<span class="st">&#39;player_committing&#39;</span>)</span>
+<span id="cb109-10"><a href="#cb109-10" aria-hidden="true" tabindex="-1"></a>                            .<span class="bu">filter</span>(<span class="kw">lambda</span> df: (df[<span class="st">&#39;season&#39;</span>]</span>
+<span id="cb109-11"><a href="#cb109-11" aria-hidden="true" tabindex="-1"></a>                                                  .value_counts()</span>
+<span id="cb109-12"><a href="#cb109-12" aria-hidden="true" tabindex="-1"></a>                                                  .gt(MIN)</span>
+<span id="cb109-13"><a href="#cb109-13" aria-hidden="true" tabindex="-1"></a>                                                  .<span class="bu">all</span>()))</span>
+<span id="cb109-14"><a href="#cb109-14" aria-hidden="true" tabindex="-1"></a>                            [<span class="st">&#39;player_committing&#39;</span>])</span></code></pre></div>
+<div class="sourceCode" id="cb110"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb110-1"><a href="#cb110-1" aria-hidden="true" tabindex="-1"></a>grid <span class="op">=</span> style_grid(</span>
+<span id="cb110-2"><a href="#cb110-2" aria-hidden="true" tabindex="-1"></a>    sns.PairGrid(</span>
+<span id="cb110-3"><a href="#cb110-3" aria-hidden="true" tabindex="-1"></a>        player_irt_df.loc[player_has_min],</span>
+<span id="cb110-4"><a href="#cb110-4" aria-hidden="true" tabindex="-1"></a>        size<span class="op">=</span><span class="fl">1.75</span></span>
+<span id="cb110-5"><a href="#cb110-5" aria-hidden="true" tabindex="-1"></a>       )</span>
+<span id="cb110-6"><a href="#cb110-6" aria-hidden="true" tabindex="-1"></a>       .map_upper(plt.scatter, alpha<span class="op">=</span><span class="fl">0.5</span>)</span>
+<span id="cb110-7"><a href="#cb110-7" aria-hidden="true" tabindex="-1"></a>       .map_diag(plt.hist)</span>
+<span id="cb110-8"><a href="#cb110-8" aria-hidden="true" tabindex="-1"></a>       .map_lower(plot_corr)</span>
+<span id="cb110-9"><a href="#cb110-9" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
+<center>
+<img src="/resources/nba_irt2/An%20Improved%20Analysis%20of%20NBA%20Foul%20Calls%20with%20Python_171_0.png" title="fig:" alt="png" />
+</center>
+<p>As expected, the season-over-season latent skill correlations are higher for this subset of players.</p>
+<p>From this figure, it seems that committing skill (<span class="math inline">\(\hat{b}\)</span>) exists and is measurable, but is fairly small. It also seems that disadvantaged skill (<span class="math inline">\(\hat{\theta}\)</span>), if it exists, is difficult to measure from this data set. Ideally, the NBA would release a foul report for the entirety of every game, but that seems quite unlikely.</p>
+<p>In the future it would be useful to include a correction for the probability that a given game appears in the data set. This correction would help with the sample bias introduced by the fact that only games that are close in the last two minutes are included in the NBA’s reports.</p>
+<p>This post is available as a Jupyter notebook <a href="http://nbviewer.jupyter.org/gist/AustinRochford/a9df849f6a78188dbf9886b2a8a3644b">here</a>.</p>

@@ -1,0 +1,105 @@
+<meta name="title" content="The Importance of Sequential Testing" />
+<meta name="tags" content="Hypothesis Testing, Sequential Methods" />
+<meta name="date" content="2014-01-01" />
+<meta name="has_math" content="true" /><p>As the world becomes ever more data-driven, the basic theory of hypothesis testing is being used by more people and in more contexts than ever before. This epansion has, however, come with a cost. The dominant Neyman-Pearson hypothesis testing framework is subtle and easy to unknowingly misuse. In this post, we’ll explore the common scenario where we would like to monitor the status of an ongoing experiment and stop the experiment early if an effect becomes apparent.</p>
+<p>There are many situations in which it is advantageous to monitor the status of an experiment and terminate it early if the conclusion seems apparent. In business, experiments cost money, both in terms of the actual cost of data collection and in terms of the opportunity cost of waiting for an experiment to reach a set number of samples before acting on its outcome, which may have been apparent much earlier. In medicine, it may be unethical to continue an experimental treatment which appears to have a detrimental effect, or to deny the obviously better experimental treatment to the control group until the predetermined sample size is reached.</p>
+<p>While these reasons for continuous monitoring and early termination of certain experiments are quite compelling, if this method is applied naively, it can lead to wildly incorrect analyses. Below, we illustrate the perils of the naive approach to sequential testing (as this sort of procedure is known) and show how to perform a correct analysis of a fairly simple, yet illustrative introductory sequential experiment.</p>
+<p>A brief historical digression may be informative. The frequentist approach to hypothesis testing was pioneered just after the turn of the 20th century in England in order to analyze agricultural experiments. According to Armitage, one of the pioneers of sequential experiment design:</p>
+<blockquote>
+<p>[t]he classical theory of experimental design deals predominantly with experiments of predetermined size, presumably because the pioneers of the subject, particularly R. A. Fisher, worked in agricultural research, where the outcome of a field trial is not available until long after the experiment has been designed and started. It is interesting to speculate how differently statistical theory might have evolved if Fisher had been employed in medical or industrial research.<a href="#fn1" class="footnote-ref" id="fnref1" role="doc-noteref"><sup>1</sup></a></p>
+</blockquote>
+<p>In this post, we will analyze the following hypothesis test. Assume the data are drawn from the normal distribution, <span class="math inline">\(N(\theta, 1)\)</span> with unknown mean <span class="math inline">\(\theta\)</span> and known variance <span class="math inline">\(\sigma^2 = 1\)</span>. We wish to test the simple null hypothesis that <span class="math inline">\(\theta = 0\)</span> versus the simple alternative hypothesis that <span class="math inline">\(\theta = 1\)</span> at the <span class="math inline">\(\alpha = 0.05\)</span> level. By the <a href="http://en.wikipedia.org/wiki/Neyman%E2%80%93Pearson_lemma">Neyman-Pearson lemma</a>, the most powerful test of this hypothesis rejects the null hypothesis when the <a href="http://en.wikipedia.org/wiki/Likelihood-ratio_test">likelihood ratio</a> exceeds some critical value. In our normal case, it is well-known that this criterion is equivalent to <span class="math inline">\(\sum_{i = 1}^n X_i &gt; \sqrt{n} z_{0.05}\)</span> where <span class="math inline">\(z_{0.05} \approx 1.64\)</span> is the <span class="math inline">\(1 - 0.05 = 0.95\)</span> quantile of the standard normal distribution.</p>
+<p>To model the ongoing monitoring of this experiment, we define a random variable <span class="math inline">\(N = \min \{n \geq 1 | \sum_{i = 1}^n X_i &gt; \sqrt{n} z_{0.05}\}\)</span>, called the <a href="http://en.wikipedia.org/wiki/Stopping_time">stopping time</a>. The random variable <span class="math inline">\(N\)</span> is the first time that the test statistic exceeds the critical value, and the naive approach to sequential testing would reject the null hypothesis after <span class="math inline">\(N\)</span> samples (when <span class="math inline">\(N &lt; \infty\)</span>, of course). At first, this procedure may seem reasonable, because when the alternative hypothesis that <span class="math inline">\(\theta = 1\)</span> is true, <span class="math inline">\(N &lt; \infty\)</span> <a href="http://en.wikipedia.org/wiki/Almost_surely">almost surely</a> by the <a href="http://en.wikipedia.org/wiki/Law_of_large_numbers#Strong_law">strong law of large numbers</a>. The first inkling that something is amiss with this procedure is the surprising fact that it is also true that <span class="math inline">\(N &lt; \infty\)</span> almost surely under the null hypothesis that <span class="math inline">\(\theta = 0\)</span>. (See Keener<a href="#fn2" class="footnote-ref" id="fnref2" role="doc-noteref"><sup>2</sup></a> for a proof.) More informally, if we sample long enough, this procedure will almost always reject the null hypothesis, even when it is true.</p>
+<p>To illustrate this problem more quantitatively, consider the following simulation. Suppose we decide ahead of time that we will stop the experiment when the critical value for the current sample size is exceeded, in which case we reject the null hypothesis, or we have collected one thousand samples without exceeding the critical value at any point, in which case we accept the null hypothesis.</p>
+<p>Here we use a <a href="http://en.wikipedia.org/wiki/Monte_Carlo_method">Monte Carlo method</a> to approximate the level of this naive sequential test. First we generate ten thousand simulations of such an experiment, assuming the null hypothesis that the data are <span class="math inline">\(N(0, 1)\)</span> is true.</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> __future__ <span class="im">import</span> division</span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> numpy <span class="im">as</span> np</span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> scipy <span class="im">import</span> stats</span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a>n <span class="op">=</span> <span class="dv">100</span></span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a>N <span class="op">=</span> <span class="dv">10000</span></span>
+<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a>samples <span class="op">=</span> stats.norm.rvs(size<span class="op">=</span>(N, n))</span></code></pre></div>
+<p>Here each row of <code>samples</code> corresponds to a simulation and each column to a sample.</p>
+<p>Now we calculate the proportion of these simulated experiments that would have been stopped before one thousand samples, incorrectly rejecting the null hypothesis.</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>alpha <span class="op">=</span> <span class="fl">0.05</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>z_alpha <span class="op">=</span> stats.norm.isf(alpha)</span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>cumsums <span class="op">=</span> samples.cumsum(axis<span class="op">=</span><span class="dv">1</span>)</span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a>ns <span class="op">=</span> np.arange(<span class="dv">1</span>, n <span class="op">+</span> <span class="dv">1</span>)</span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a>np.<span class="bu">any</span>(cumsums <span class="op">&gt;</span> np.sqrt(ns) <span class="op">*</span> z_alpha, axis<span class="op">=</span><span class="dv">1</span>).<span class="bu">sum</span>() <span class="op">/</span> N</span></code></pre></div>
+<pre><code>0.30909999999999999</code></pre>
+<p>Here, each row of <code>cumsums</code> corresponds to a simulation and each column to the value of the test statistic <span class="math inline">\(\sum_{i = 1}^k X_i\)</span> after <span class="math inline">\(k\)</span> observations.</p>
+<p>We see that the actual level of this test is an order of magnitude larger than the desired level of <span class="math inline">\(\alpha = 0.05\)</span>. To check that our method is reasonable, we see that if we always collect one thousand samples, we achieve a simulated level quite close to <span class="math inline">\(\alpha = 0.05\)</span>.</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>(cumsums[:, <span class="op">-</span><span class="dv">1</span>] <span class="op">&gt;</span> np.sqrt(n) <span class="op">*</span> z_alpha).<span class="bu">sum</span>() <span class="op">/</span> N</span></code></pre></div>
+<pre><code>0.051700000000000003</code></pre>
+<p>This simulation is compelling evidence that the naive approach to sequential testing is not correct.</p>
+<p>Fortunately, the basic framework for the correct analysis of sequential experiments was worked out during World War II to more efficiently test lots of ammunition (among other applications). In 1947, Wald introduced the <a href="http://en.wikipedia.org/wiki/Sequential_probability_ratio_test">sequential probability ratio test</a> (SPRT), which produces a correct analysis of the experiment we have been considering.</p>
+<p>Let</p>
+<p><span class="math display">\[
+\begin{align*}
+\Lambda (x_1, \ldots, x_n)
+    &amp; = \frac{L(1; x_1, \ldots, x_n)}{L(0; x_1, \ldots, x_n)}
+\end{align*}
+\]</span></p>
+<p>be the likelihood ratio corresponding to our two hypotheses. The SPRT uses two thresholds, <span class="math inline">\(0 &lt; a &lt; 1 &lt; b\)</span>, and continues sampling whenever <span class="math inline">\(a &lt; \Lambda (x_1, \ldots, x_n) &lt; b\)</span>. When <span class="math inline">\(\Lambda (x_1, \ldots, x_n) \leq a\)</span>, we accept the null hypothesis, and when <span class="math inline">\(b \leq \Lambda (x_1, \ldots, x_n)\)</span>, we reject the null hypothesis. We choose <span class="math inline">\(A\)</span> and <span class="math inline">\(B\)</span> by fixing the approximate level of the test, <span class="math inline">\(\alpha\)</span>, and the approximate power of the test, <span class="math inline">\(1 - \beta\)</span>. With these quantities chosen, we use</p>
+<p><span class="math display">\[
+\begin{align*}
+a
+    &amp; = \frac{\beta}{1 - \alpha}, \textrm{and} \\
+b
+    &amp; = \frac{1 - \beta}{\alpha}.
+\end{align*}
+\]</span></p>
+<p>For our hypothesis test <span class="math inline">\(\alpha = 0.05\)</span>. The power of the naive test after <span class="math inline">\(n\)</span> samples is</p>
+<div class="sourceCode" id="cb6"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>power <span class="op">=</span> <span class="dv">1</span> <span class="op">-</span> stats.norm.sf(z_alpha <span class="op">-</span> <span class="dv">1</span> <span class="op">/</span> np.sqrt(n))</span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>beta <span class="op">=</span> <span class="dv">1</span> <span class="op">-</span> power</span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a>power</span></code></pre></div>
+<pre><code>0.93880916378665569</code></pre>
+<p>Which gives the following values for <span class="math inline">\(a\)</span> and <span class="math inline">\(b\)</span>:</p>
+<div class="sourceCode" id="cb8"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>a <span class="op">=</span> beta <span class="op">/</span> (<span class="dv">1</span> <span class="op">-</span> alpha)</span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>b <span class="op">=</span> (<span class="dv">1</span> <span class="op">-</span> beta) <span class="op">/</span> alpha</span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a>a, b</span></code></pre></div>
+<pre><code>(0.06441140654036244, 18.776183275733114)</code></pre>
+<p>For our example, it will be benificial to rewrite the SPRT in terms of the log- likelihood ratio,</p>
+<p><span class="math display">\[
+\begin{align*}
+\log a
+    &amp; &lt; \log \Lambda (x_1, \ldots, x_n)
+      &lt; \log b.
+\end{align*}
+\]</span></p>
+<p>It is easy to show that <span class="math inline">\(\log \Lambda (x_1, \ldots, x_n) = \frac{n}{2} - \sum_{i = 1}^n X_i\)</span>, so the SPRT in this case reduces to</p>
+<p><span class="math display">\[
+\begin{align*}
+\frac{n}{2} - \log b
+    &amp; &lt; \sum_{i = 1}^n X_i
+      &lt; \frac{n}{2} - \log a.
+\end{align*}
+\]</span></p>
+<p>The logarithms of <span class="math inline">\(a\)</span> and <span class="math inline">\(b\)</span> are</p>
+<div class="sourceCode" id="cb10"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a>np.log((a, b))</span></code></pre></div>
+<pre><code>array([-2.74246454,  2.93258922])</code></pre>
+<p>We verify that this test is indeed of approximate level <span class="math inline">\(\alpha = 0.05\)</span> using the simulations from our previous Monte Carlo analysis.</p>
+<div class="sourceCode" id="cb12"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a>np.<span class="bu">any</span>(cumsums <span class="op">&gt;=</span> ns <span class="op">/</span> <span class="dv">2</span> <span class="op">-</span> np.log(a), axis<span class="op">=</span><span class="dv">1</span>).<span class="bu">sum</span>() <span class="op">/</span> N</span></code></pre></div>
+<pre><code>0.036299999999999999</code></pre>
+<p>The following plot shows the rejection boundaries for both the naive sequential test and the SPRT along with the density of our Monte Carlo samples.</p>
+<center>
+<img src="/resources/sequential-intro/simulations.png" title="fig:" alt="Simulations and Decision Boundaries" />
+</center>
+<p>From this diagram we can easily see that a significant number of samples fall above the rejection boundary for the naive test (the blue curve) but below the rejection boundary for the SPRT (the red line). These samples explain the large discrepancy between the desired level of the test (<span class="math inline">\(\alpha = 0.05\)</span>) and the simulated level of the naive test. We also see that very few samples exceed the rejection boundary for the SPRT, leading it to have level smaller than <span class="math inline">\(\alpha = 0.05\)</span>.</p>
+<p>It is important to note that we have barely scratched the surface of the vast field of sequential experiment design and analysis. We have not even attempted to give more than a cursory introduction to the SPRT, one of the most basic ideas in this field. One property of this test that bears mentioning is its optimality, in the following sense. Just as the Neyman-Pearson lemma shows that the likelihood ratio test is the most powerful test of a simple hypothesis at a fixed level, the Wald-Wolfowitz theorem shows that the SPRT is the sequential test that minimizes the expected stopping time under both the null and alternative hypotheses for a fixed level and power. For more details on this theorem, and the general theory of sequential experiments, consult Bartroff et al.<a href="#fn3" class="footnote-ref" id="fnref3" role="doc-noteref"><sup>3</sup></a>.</p>
+<p>This post is available as an <a href="http://ipython.org/">IPython</a> notebook <a href="/resources/sequential-intro/notebook.ipynb">here</a>.</p>
+<p>Discussion on <a href="https://news.ycombinator.com/item?id=6996554">Hacker News</a></p>
+<section class="footnotes" role="doc-endnotes">
+<hr />
+<ol>
+<li id="fn1" role="doc-endnote"><p>Armitage, P. (1993). Interim analyses in clinical trials. <em>In Multiple Comparisons, Selection, and Applications in Biometry</em>, (Ed., F.M. Hoppe), New York: Marcel Dekker, 391–402.<a href="#fnref1" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+<li id="fn2" role="doc-endnote"><p>Keener, Robert W., <em>Theoretical statistics, Topics for a core course.</em> Springer Texts in Statistics. Springer, New York, 2010.<a href="#fnref2" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+<li id="fn3" role="doc-endnote"><p>Bartroff, Jay; Lai, Tze Leung; Shih, Mei-Chiung, <em>Sequential experimentation in clinical trials. Design and analysis.</em> Springer Series in Statistics. Springer, New York, 2013<a href="#fnref3" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+</ol>
+</section>

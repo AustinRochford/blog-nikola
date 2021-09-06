@@ -1,0 +1,1856 @@
+<meta name="title" content="Bayesian Splines with Heteroskedastic Noise in Python with PyMC3" />
+<meta name="tags" content="Bayesian Statistics, Spines, Python, PyMC3" />
+<meta name="date" content="2021-08-11" />
+<meta name="has_math" content="true" /><p><a href="https://en.wikipedia.org/wiki/Spline_(mathematics)">Splines</a> are a powerful tool when modeling nonlinear relationships. This post shows how to include splines in a Bayesian model in Python using <a href="https://en.wikipedia.org/wiki/Spline_(mathematics)"><code>pymc3</code></a>. In addition, we will show how to use a second spline component to handle <a href="https://en.wikipedia.org/wiki/Heteroscedasticity">heteroskedastic</a> data, that is, data where the noise scale is not constant.</p>
+<center>
+<fig> <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/e/ee/Cardinal_cubic_B-spline2.svg/1280px-Cardinal_cubic_B-spline2.svg.png" width=600> <br>
+<caption>
+Image credit <a href="https://en.wikipedia.org/wiki/B-spline">Wikipedia</a>
+</caption>
+</fig>
+</center>
+<p><br></p>
+<p>To illustrate these concepts, we will use <a href="https://en.wikipedia.org/wiki/Lidar">Lidar</a> data from Larry Wasserman’s excellent book <a href="http://www.stat.cmu.edu/~larry/all-of-nonpar/"><em>All of Nonparametric Statistics</em></a>.</p>
+<h2 id="load-the-data">Load the Data</h2>
+<p>First we make the necessary Python imports and do some light housekeeping.</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="op">%</span>matplotlib inline</span></code></pre></div>
+<div class="sourceCode" id="cb2"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> warnings <span class="im">import</span> filterwarnings</span></code></pre></div>
+<div class="sourceCode" id="cb3"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> aesara <span class="im">import</span> shared, tensor <span class="im">as</span> at</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> arviz <span class="im">as</span> az</span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> matplotlib <span class="im">as</span> mpl</span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> matplotlib <span class="im">import</span> pyplot <span class="im">as</span> plt</span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> numpy <span class="im">as</span> np</span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> pandas <span class="im">as</span> pd</span>
+<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> pymc3 <span class="im">as</span> pm</span>
+<span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> scipy <span class="im">as</span> sp</span>
+<span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> seaborn <span class="im">as</span> sns</span></code></pre></div>
+<pre><code>You are running the v4 development version of PyMC3 which currently still lacks key features. You probably want to use the stable v3 instead which you can either install via conda or find on the v3 GitHub branch: https://github.com/pymc-devs/pymc3/tree/v3</code></pre>
+<div class="sourceCode" id="cb5"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>filterwarnings(<span class="st">&#39;ignore&#39;</span>, category<span class="op">=</span><span class="pp">UserWarning</span>, module<span class="op">=</span><span class="st">&#39;arviz&#39;</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb6"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>mpl.rcParams[<span class="st">&#39;figure.figsize&#39;</span>] <span class="op">=</span> (<span class="dv">8</span>, <span class="dv">6</span>)</span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>sns.<span class="bu">set</span>(color_codes<span class="op">=</span><span class="va">True</span>)</span></code></pre></div>
+<p>We are now ready to load the data.</p>
+<div class="sourceCode" id="cb7"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a>DATA_URL <span class="op">=</span> <span class="st">&#39;http://www.stat.cmu.edu/~larry/all-of-nonpar/=data/lidar.dat&#39;</span></span></code></pre></div>
+<div class="sourceCode" id="cb8"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>df <span class="op">=</span> pd.read_csv(DATA_URL, sep<span class="op">=</span><span class="st">&#39; +&#39;</span>, engine<span class="op">=</span><span class="st">&#39;python&#39;</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb9"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a>df.head()</span></code></pre></div>
+<center>
+<div>
+<style scoped>
+.dataframe tbody tr th:only-of-type {
+vertical-align: middle;
+}
+
+.dataframe tbody tr th {
+vertical-align: top;
+}
+
+.dataframe thead th {
+text-align: right;
+}
+</style>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th>
+</th>
+<th>
+range
+</th>
+<th>
+logratio
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>
+0
+</th>
+<td>
+390
+</td>
+<td>
+-0.050356
+</td>
+</tr>
+<tr>
+<th>
+1
+</th>
+<td>
+391
+</td>
+<td>
+-0.060097
+</td>
+</tr>
+<tr>
+<th>
+2
+</th>
+<td>
+393
+</td>
+<td>
+-0.041901
+</td>
+</tr>
+<tr>
+<th>
+3
+</th>
+<td>
+394
+</td>
+<td>
+-0.050985
+</td>
+</tr>
+<tr>
+<th>
+4
+</th>
+<td>
+396
+</td>
+<td>
+-0.059913
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center>
+<p><br></p>
+<div class="sourceCode" id="cb10"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a>df.describe()</span></code></pre></div>
+<center>
+<div>
+<style scoped>
+.dataframe tbody tr th:only-of-type {
+vertical-align: middle;
+}
+
+.dataframe tbody tr th {
+vertical-align: top;
+}
+
+.dataframe thead th {
+text-align: right;
+}
+</style>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th>
+</th>
+<th>
+range
+</th>
+<th>
+logratio
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>
+count
+</th>
+<td>
+221.000000
+</td>
+<td>
+221.000000
+</td>
+</tr>
+<tr>
+<th>
+mean
+</th>
+<td>
+554.751131
+</td>
+<td>
+-0.291156
+</td>
+</tr>
+<tr>
+<th>
+std
+</th>
+<td>
+95.912396
+</td>
+<td>
+0.282475
+</td>
+</tr>
+<tr>
+<th>
+min
+</th>
+<td>
+390.000000
+</td>
+<td>
+-0.949554
+</td>
+</tr>
+<tr>
+<th>
+25%
+</th>
+<td>
+472.000000
+</td>
+<td>
+-0.542305
+</td>
+</tr>
+<tr>
+<th>
+50%
+</th>
+<td>
+555.000000
+</td>
+<td>
+-0.108043
+</td>
+</tr>
+<tr>
+<th>
+75%
+</th>
+<td>
+637.000000
+</td>
+<td>
+-0.054825
+</td>
+</tr>
+<tr>
+<th>
+max
+</th>
+<td>
+720.000000
+</td>
+<td>
+0.026907
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center>
+<p><br></p>
+<p>We standardize both <code>range</code> and <code>logratio</code> to make it easier to specify priors once we begin building our spline models.</p>
+<div class="sourceCode" id="cb11"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a>std_df <span class="op">=</span> (df <span class="op">-</span> df.mean()) <span class="op">/</span> df.std()</span></code></pre></div>
+<div class="sourceCode" id="cb12"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a>std_df.head()</span></code></pre></div>
+<center>
+<div>
+<style scoped>
+.dataframe tbody tr th:only-of-type {
+vertical-align: middle;
+}
+
+.dataframe tbody tr th {
+vertical-align: top;
+}
+
+.dataframe thead th {
+text-align: right;
+}
+</style>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th>
+</th>
+<th>
+range
+</th>
+<th>
+logratio
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>
+0
+</th>
+<td>
+-1.717725
+</td>
+<td>
+0.852467
+</td>
+</tr>
+<tr>
+<th>
+1
+</th>
+<td>
+-1.707299
+</td>
+<td>
+0.817981
+</td>
+</tr>
+<tr>
+<th>
+2
+</th>
+<td>
+-1.686447
+</td>
+<td>
+0.882398
+</td>
+</tr>
+<tr>
+<th>
+3
+</th>
+<td>
+-1.676020
+</td>
+<td>
+0.850240
+</td>
+</tr>
+<tr>
+<th>
+4
+</th>
+<td>
+-1.655168
+</td>
+<td>
+0.818631
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center>
+<p><br></p>
+<h3 id="exploratory-data-analysis">Exploratory Data Analysis</h3>
+<p>The task at hand is to model (standardized) <code>logratio</code> as a function of (standardized) <code>range</code>.</p>
+<div class="sourceCode" id="cb13"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a>fig, (std_ax, joint_ax) <span class="op">=</span> plt.subplots(</span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a>    nrows<span class="op">=</span><span class="dv">2</span>, sharex<span class="op">=</span><span class="va">True</span>, sharey<span class="op">=</span><span class="va">False</span>,</span>
+<span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a>    gridspec_kw<span class="op">=</span>{<span class="st">&#39;height_ratios&#39;</span>: [<span class="dv">1</span>, <span class="dv">4</span>]}</span>
+<span id="cb13-4"><a href="#cb13-4" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb13-5"><a href="#cb13-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb13-6"><a href="#cb13-6" aria-hidden="true" tabindex="-1"></a>sns.scatterplot(x<span class="op">=</span><span class="st">&quot;range&quot;</span>, y<span class="op">=</span><span class="st">&quot;logratio&quot;</span>, data<span class="op">=</span>std_df,</span>
+<span id="cb13-7"><a href="#cb13-7" aria-hidden="true" tabindex="-1"></a>                alpha<span class="op">=</span><span class="fl">0.5</span>, ax<span class="op">=</span>joint_ax)<span class="op">;</span></span>
+<span id="cb13-8"><a href="#cb13-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb13-9"><a href="#cb13-9" aria-hidden="true" tabindex="-1"></a>(std_df.groupby(std_df[<span class="st">&quot;range&quot;</span>].<span class="bu">round</span>(<span class="dv">1</span>))</span>
+<span id="cb13-10"><a href="#cb13-10" aria-hidden="true" tabindex="-1"></a>       [<span class="st">&quot;logratio&quot;</span>]</span>
+<span id="cb13-11"><a href="#cb13-11" aria-hidden="true" tabindex="-1"></a>       .std()</span>
+<span id="cb13-12"><a href="#cb13-12" aria-hidden="true" tabindex="-1"></a>       .rolling(<span class="dv">5</span>)</span>
+<span id="cb13-13"><a href="#cb13-13" aria-hidden="true" tabindex="-1"></a>       .mean()</span>
+<span id="cb13-14"><a href="#cb13-14" aria-hidden="true" tabindex="-1"></a>       .plot(ax<span class="op">=</span>std_ax))<span class="op">;</span></span>
+<span id="cb13-15"><a href="#cb13-15" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb13-16"><a href="#cb13-16" aria-hidden="true" tabindex="-1"></a>std_ax.set_ylabel(<span class="st">&quot;Standard</span><span class="ch">\n</span><span class="st">deviation</span><span class="ch">\n</span><span class="st">(binned)&quot;</span>)<span class="op">;</span></span>
+<span id="cb13-17"><a href="#cb13-17" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb13-18"><a href="#cb13-18" aria-hidden="true" tabindex="-1"></a>fig.tight_layout()<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/splines_hetero_files/splines_hetero_18_0.png" title="fig:" alt="png" />
+</center>
+<p>The scatter plot shows that the relationship is definitely nonlinear, and there is no obvious (to me at least) transform of <code>logratio</code> that will make the relationship linear. The top plot shows how the (binned, smoothed) standard deviation of <code>logratio</code> varies with <code>range</code>. As is evident from both plots, as <code>range</code> increases, so does the scale of variation of <code>logratio</code>.</p>
+<h2 id="introduction-to-splines">Introduction to Splines</h2>
+<p>Regression splines are a type of of <a href="https://en.wikipedia.org/wiki/Generalized_additive_model">generalized additive model</a> (GAM) that use linear combinations of (generally low-degree) polynomials to introduce nonlinear relationships between covariates and responses.</p>
+<p>To begin constructing our spline model, we must choose a number of knots (also known as anchors or control points) in the domain of our co variate. In this post we will use twenty splines in the interval <span class="math inline">\([-1.75, 1.75]\)</span>, which comfortably contains the observed values of <code>range</code>.</p>
+<div class="sourceCode" id="cb14"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a>N_KNOT <span class="op">=</span> <span class="dv">20</span></span>
+<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a>knots <span class="op">=</span> np.linspace(<span class="op">-</span><span class="fl">1.75</span>, <span class="fl">1.75</span>, N_KNOT)</span></code></pre></div>
+<p>The following plot shows the location of the knots in the Lidar data.</p>
+<div class="sourceCode" id="cb15"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a>fig, (std_ax, joint_ax) <span class="op">=</span> plt.subplots(</span>
+<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a>    nrows<span class="op">=</span><span class="dv">2</span>, sharex<span class="op">=</span><span class="va">True</span>, sharey<span class="op">=</span><span class="va">False</span>,</span>
+<span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a>    gridspec_kw<span class="op">=</span>{<span class="st">&#39;height_ratios&#39;</span>: [<span class="dv">1</span>, <span class="dv">4</span>]}</span>
+<span id="cb15-4"><a href="#cb15-4" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb15-5"><a href="#cb15-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb15-6"><a href="#cb15-6" aria-hidden="true" tabindex="-1"></a>sns.scatterplot(x<span class="op">=</span><span class="st">&quot;range&quot;</span>, y<span class="op">=</span><span class="st">&quot;logratio&quot;</span>, data<span class="op">=</span>std_df,</span>
+<span id="cb15-7"><a href="#cb15-7" aria-hidden="true" tabindex="-1"></a>                alpha<span class="op">=</span><span class="fl">0.5</span>, ax<span class="op">=</span>joint_ax)<span class="op">;</span></span>
+<span id="cb15-8"><a href="#cb15-8" aria-hidden="true" tabindex="-1"></a>sns.rugplot(knots, height<span class="op">=</span><span class="fl">0.075</span>,</span>
+<span id="cb15-9"><a href="#cb15-9" aria-hidden="true" tabindex="-1"></a>            c<span class="op">=</span><span class="st">&#39;k&#39;</span>, label<span class="op">=</span><span class="st">&quot;Knots&quot;</span>,</span>
+<span id="cb15-10"><a href="#cb15-10" aria-hidden="true" tabindex="-1"></a>            ax<span class="op">=</span>joint_ax)<span class="op">;</span></span>
+<span id="cb15-11"><a href="#cb15-11" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb15-12"><a href="#cb15-12" aria-hidden="true" tabindex="-1"></a>(std_df.groupby(std_df[<span class="st">&quot;range&quot;</span>].<span class="bu">round</span>(<span class="dv">1</span>))</span>
+<span id="cb15-13"><a href="#cb15-13" aria-hidden="true" tabindex="-1"></a>       [<span class="st">&quot;logratio&quot;</span>]</span>
+<span id="cb15-14"><a href="#cb15-14" aria-hidden="true" tabindex="-1"></a>       .std()</span>
+<span id="cb15-15"><a href="#cb15-15" aria-hidden="true" tabindex="-1"></a>       .rolling(<span class="dv">5</span>)</span>
+<span id="cb15-16"><a href="#cb15-16" aria-hidden="true" tabindex="-1"></a>       .mean()</span>
+<span id="cb15-17"><a href="#cb15-17" aria-hidden="true" tabindex="-1"></a>       .plot(ax<span class="op">=</span>std_ax))<span class="op">;</span></span>
+<span id="cb15-18"><a href="#cb15-18" aria-hidden="true" tabindex="-1"></a>sns.rugplot(knots, height<span class="op">=</span><span class="fl">0.15</span>,</span>
+<span id="cb15-19"><a href="#cb15-19" aria-hidden="true" tabindex="-1"></a>            c<span class="op">=</span><span class="st">&#39;k&#39;</span>, label<span class="op">=</span><span class="st">&quot;Knots&quot;</span>,</span>
+<span id="cb15-20"><a href="#cb15-20" aria-hidden="true" tabindex="-1"></a>            ax<span class="op">=</span>std_ax)<span class="op">;</span></span>
+<span id="cb15-21"><a href="#cb15-21" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb15-22"><a href="#cb15-22" aria-hidden="true" tabindex="-1"></a>std_ax.set_ylabel(<span class="st">&quot;Standard</span><span class="ch">\n</span><span class="st">deviation</span><span class="ch">\n</span><span class="st">(binned)&quot;</span>)<span class="op">;</span></span>
+<span id="cb15-23"><a href="#cb15-23" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb15-24"><a href="#cb15-24" aria-hidden="true" tabindex="-1"></a>joint_ax.legend()<span class="op">;</span></span>
+<span id="cb15-25"><a href="#cb15-25" aria-hidden="true" tabindex="-1"></a>fig.tight_layout()<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/splines_hetero_files/splines_hetero_23_0.png" title="fig:" alt="png" />
+</center>
+<p>Let <span class="math inline">\(x^*_i\)</span>, <span class="math inline">\(i = 1, 2, \ldots, 20\)</span> be the location of the <span class="math inline">\(j\)</span>-th knot. The spline model we will use is given by</p>
+<p><span class="math display">\[E(Y\ |\ X) = \sum_{j = 1}^{20} \beta_j \cdot B_{j, k; \mathbf{x}^*}(X)\]</span>.</p>
+<p>(If one applies a link function to the conditional expectation of the left hand side, this becomes a <em>generalized</em> additive model.) For spline regression, <span class="math inline">\(B_{j, k; \mathbf{x}^*}(\cdot)\)</span> is a <span class="math inline">\(k\)</span>-th-degree polynomial in <span class="math inline">\(x\)</span> and <span class="math inline">\(x^*\)</span>. There are many possible choices for these functions. We will use <code>scipy</code>’s cubic <a href="https://en.wikipedia.org/wiki/B-spline">B-spline</a> <a href="https://docs.scipy.org/doc/scipy/reference/generated/scipy.interpolate.BSpline.html">implementation</a>. For more information splines, consult Simon Wood’s excellent book <a href="https://www.taylorfrancis.com/books/mono/10.1201/9781315370279/generalized-additive-models-simon-wood"><em>Generalized Additive Models</em></a>.</p>
+<div class="sourceCode" id="cb16"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a>basis <span class="op">=</span> sp.interpolate.BSpline(knots, np.eye(N_KNOT), <span class="dv">3</span>)</span></code></pre></div>
+<p>We see that <code>basis</code> is a callable function function that will give the design matrix for spline regression at a given set of points.</p>
+<div class="sourceCode" id="cb17"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="bu">hasattr</span>(basis, <span class="st">&#39;__call__&#39;</span>)</span></code></pre></div>
+<pre><code>True</code></pre>
+<p>We build this design matrix at the (standardized) value of <code>range</code>.</p>
+<div class="sourceCode" id="cb19"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a>dmat <span class="op">=</span> shared(basis(std_df[<span class="st">&quot;range&quot;</span>]))</span></code></pre></div>
+<p>With <code>dmat</code> in hand, we are ready to build our model with <code>pymc3</code>. We follow the model specified in <a href="http://www.miladkh.com/">Milad Kharratzadeh’s</a> excellent short paper <a href="https://github.com/milkha/Splines_in_Stan/blob/master/splines_in_stan.pdf"><em>Splines in Stan</em></a>.</p>
+<p>The model for the conditional mean is given above,</p>
+<p><span class="math display">\[\mu\ |\ X = \sum_{j = 1}^{20} \beta_j \cdot B_{j, k; \mathbf{x}^*}(X).\]</span></p>
+<p>We put a Gaussian random walk prior (GRW) on these coefficients <span class="math inline">\(\beta_j\)</span>, under the intuition that the coefficients for adjacent knots should be similar. We parameterize our GRW as follows:</p>
+<p><span class="math display">\[
+\begin{align*}
+    \mu_{\beta}
+        &amp; \sim N(0, 2.5^2) \\
+    \Delta_{\beta, j}
+        &amp; \sim N(0, 1) \\
+    \sigma_{\beta}
+        &amp; \sim \mathrm{Half}-N(2.5^2) \\
+    \beta_j
+        &amp; = \mu_{\beta} + \sigma_{\beta} \cdot \sum_{i = 1}^j \Delta_{\beta, i}.
+\end{align*}
+\]</span></p>
+<div class="sourceCode" id="cb20"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a><span class="co"># the scale necessary to make a halfnormal distribution</span></span>
+<span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a><span class="co"># have unit variance</span></span>
+<span id="cb20-3"><a href="#cb20-3" aria-hidden="true" tabindex="-1"></a>HALFNORMAL_SCALE <span class="op">=</span> <span class="fl">1.</span> <span class="op">/</span> np.sqrt(<span class="fl">1.</span> <span class="op">-</span> <span class="fl">2.</span> <span class="op">/</span> np.pi)</span></code></pre></div>
+<div class="sourceCode" id="cb21"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a>coords <span class="op">=</span> {<span class="st">&quot;knot&quot;</span>: np.arange(N_KNOT)}</span>
+<span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> pm.Model(coords<span class="op">=</span>coords) <span class="im">as</span> model:</span>
+<span id="cb21-4"><a href="#cb21-4" aria-hidden="true" tabindex="-1"></a>    μ_β <span class="op">=</span> pm.Normal(<span class="st">&quot;μ_β&quot;</span>, <span class="fl">0.</span>, <span class="fl">2.5</span>)</span>
+<span id="cb21-5"><a href="#cb21-5" aria-hidden="true" tabindex="-1"></a>    Δ_β <span class="op">=</span> pm.Normal(<span class="st">&quot;Δ_β&quot;</span>, <span class="fl">0.</span>, <span class="fl">1.</span>, dims<span class="op">=</span><span class="st">&quot;knot&quot;</span>)</span>
+<span id="cb21-6"><a href="#cb21-6" aria-hidden="true" tabindex="-1"></a>    σ_β <span class="op">=</span> pm.HalfNormal(<span class="st">&quot;σ_β&quot;</span>, <span class="fl">2.5</span> <span class="op">*</span> HALFNORMAL_SCALE)</span>
+<span id="cb21-7"><a href="#cb21-7" aria-hidden="true" tabindex="-1"></a>    β <span class="op">=</span> pm.Deterministic(<span class="st">&quot;β&quot;</span>, μ_β <span class="op">+</span> σ_β <span class="op">*</span> Δ_β.cumsum(),</span>
+<span id="cb21-8"><a href="#cb21-8" aria-hidden="true" tabindex="-1"></a>                         dims<span class="op">=</span><span class="st">&quot;knot&quot;</span>)</span>
+<span id="cb21-9"><a href="#cb21-9" aria-hidden="true" tabindex="-1"></a>    μ <span class="op">=</span> at.dot(dmat, β)</span></code></pre></div>
+<p>Our observational model here is normal, with unknown variance <span class="math inline">\(\sigma \sim \mathrm{Half-}N(2.5^2)\)</span>.</p>
+<div class="sourceCode" id="cb22"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb22-1"><a href="#cb22-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> model:</span>
+<span id="cb22-2"><a href="#cb22-2" aria-hidden="true" tabindex="-1"></a>    σ <span class="op">=</span> pm.HalfNormal(<span class="st">&quot;σ&quot;</span>, <span class="fl">2.5</span> <span class="op">*</span> HALFNORMAL_SCALE)</span>
+<span id="cb22-3"><a href="#cb22-3" aria-hidden="true" tabindex="-1"></a>    obs <span class="op">=</span> pm.Normal(<span class="st">&quot;obs&quot;</span>, μ, σ, observed<span class="op">=</span>std_df[<span class="st">&quot;logratio&quot;</span>])</span></code></pre></div>
+<p>We now sample from the posterior distribution of this model.</p>
+<div class="sourceCode" id="cb23"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb23-1"><a href="#cb23-1" aria-hidden="true" tabindex="-1"></a>SEED <span class="op">=</span> <span class="dv">123456789</span></span>
+<span id="cb23-2"><a href="#cb23-2" aria-hidden="true" tabindex="-1"></a>CORES <span class="op">=</span> <span class="dv">3</span></span>
+<span id="cb23-3"><a href="#cb23-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb23-4"><a href="#cb23-4" aria-hidden="true" tabindex="-1"></a>SAMPLE_KWARGS <span class="op">=</span> {</span>
+<span id="cb23-5"><a href="#cb23-5" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;cores&#39;</span>: CORES,</span>
+<span id="cb23-6"><a href="#cb23-6" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;random_seed&#39;</span>: [SEED <span class="op">+</span> i <span class="cf">for</span> i <span class="kw">in</span> <span class="bu">range</span>(CORES)],</span>
+<span id="cb23-7"><a href="#cb23-7" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;return_inferencedata&#39;</span>: <span class="va">True</span>,</span>
+<span id="cb23-8"><a href="#cb23-8" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;target_accept&#39;</span>: <span class="fl">0.95</span></span>
+<span id="cb23-9"><a href="#cb23-9" aria-hidden="true" tabindex="-1"></a>}</span></code></pre></div>
+<div class="sourceCode" id="cb24"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> model:</span>
+<span id="cb24-2"><a href="#cb24-2" aria-hidden="true" tabindex="-1"></a>    trace <span class="op">=</span> pm.sample(<span class="op">**</span>SAMPLE_KWARGS)</span></code></pre></div>
+<pre><code>Auto-assigning NUTS sampler...
+Initializing NUTS using jitter+adapt_diag...
+Multiprocess sampling (3 chains in 3 jobs)
+NUTS: [μ_β, Δ_β, σ_β, σ]</code></pre>
+<div>
+<style>
+/* Turns off some styling */
+progress {
+/* gets rid of default border in Firefox and Opera. */
+border: none;
+/* Needs to be in here for Safari polyfill so background images work as expected. */
+background-size: auto;
+}
+.progress-bar-interrupted, .progress-bar-interrupted::-webkit-progress-bar {
+background: #F44336;
+}
+</style>
+<progress value="6000" class max="6000" style="width:300px; height:20px; vertical-align: middle;">
+</progress>
+<p>100.00% [6000/6000 02:21&lt;00:00 Sampling 3 chains, 0 divergences]</p>
+</div>
+<pre><code>Sampling 3 chains for 1_000 tune and 1_000 draw iterations (3_000 + 3_000 draws total) took 142 seconds.</code></pre>
+<p>None of the standard sampling diagnostics show cause for concern.</p>
+<div class="sourceCode" id="cb27"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a>az.plot_energy(trace)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/splines_hetero_files/splines_hetero_40_0.png" title="fig:" alt="png" />
+</center>
+<div class="sourceCode" id="cb28"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a>az.rhat(trace).<span class="bu">max</span>()</span></code></pre></div>
+<div>
+<svg style="position: absolute; width: 0; height: 0; overflow: hidden">
+<defs> <symbol id="icon-database" viewBox="0 0 32 32"> <path d="M16 0c-8.837 0-16 2.239-16 5v4c0 2.761 7.163 5 16 5s16-2.239 16-5v-4c0-2.761-7.163-5-16-5z"></path> <path d="M16 17c-8.837 0-16-2.239-16-5v6c0 2.761 7.163 5 16 5s16-2.239 16-5v-6c0 2.761-7.163 5-16 5z"></path> <path d="M16 26c-8.837 0-16-2.239-16-5v6c0 2.761 7.163 5 16 5s16-2.239 16-5v-6c0 2.761-7.163 5-16 5z"></path> </symbol> <symbol id="icon-file-text2" viewBox="0 0 32 32"> <path d="M28.681 7.159c-0.694-0.947-1.662-2.053-2.724-3.116s-2.169-2.030-3.116-2.724c-1.612-1.182-2.393-1.319-2.841-1.319h-15.5c-1.378 0-2.5 1.121-2.5 2.5v27c0 1.378 1.122 2.5 2.5 2.5h23c1.378 0 2.5-1.122 2.5-2.5v-19.5c0-0.448-0.137-1.23-1.319-2.841zM24.543 5.457c0.959 0.959 1.712 1.825 2.268 2.543h-4.811v-4.811c0.718 0.556 1.584 1.309 2.543 2.268zM28 29.5c0 0.271-0.229 0.5-0.5 0.5h-23c-0.271 0-0.5-0.229-0.5-0.5v-27c0-0.271 0.229-0.5 0.5-0.5 0 0 15.499-0 15.5 0v7c0 0.552 0.448 1 1 1h7v19.5z"></path> <path d="M23 26h-14c-0.552 0-1-0.448-1-1s0.448-1 1-1h14c0.552 0 1 0.448 1 1s-0.448 1-1 1z"></path> <path d="M23 22h-14c-0.552 0-1-0.448-1-1s0.448-1 1-1h14c0.552 0 1 0.448 1 1s-0.448 1-1 1z"></path> <path d="M23 18h-14c-0.552 0-1-0.448-1-1s0.448-1 1-1h14c0.552 0 1 0.448 1 1s-0.448 1-1 1z"></path> </symbol> </defs>
+</svg>
+<style>/* CSS stylesheet for displaying xarray objects in jupyterlab.
+ *
+ */
+
+:root {
+  --xr-font-color0: var(--jp-content-font-color0, rgba(0, 0, 0, 1));
+  --xr-font-color2: var(--jp-content-font-color2, rgba(0, 0, 0, 0.54));
+  --xr-font-color3: var(--jp-content-font-color3, rgba(0, 0, 0, 0.38));
+  --xr-border-color: var(--jp-border-color2, #e0e0e0);
+  --xr-disabled-color: var(--jp-layout-color3, #bdbdbd);
+  --xr-background-color: var(--jp-layout-color0, white);
+  --xr-background-color-row-even: var(--jp-layout-color1, white);
+  --xr-background-color-row-odd: var(--jp-layout-color2, #eeeeee);
+}
+
+html[theme=dark],
+body.vscode-dark {
+  --xr-font-color0: rgba(255, 255, 255, 1);
+  --xr-font-color2: rgba(255, 255, 255, 0.54);
+  --xr-font-color3: rgba(255, 255, 255, 0.38);
+  --xr-border-color: #1F1F1F;
+  --xr-disabled-color: #515151;
+  --xr-background-color: #111111;
+  --xr-background-color-row-even: #111111;
+  --xr-background-color-row-odd: #313131;
+}
+
+.xr-wrap {
+  display: block;
+  min-width: 300px;
+  max-width: 700px;
+}
+
+.xr-text-repr-fallback {
+  /* fallback to plain text repr when CSS is not injected (untrusted notebook) */
+  display: none;
+}
+
+.xr-header {
+  padding-top: 6px;
+  padding-bottom: 6px;
+  margin-bottom: 4px;
+  border-bottom: solid 1px var(--xr-border-color);
+}
+
+.xr-header > div,
+.xr-header > ul {
+  display: inline;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.xr-obj-type,
+.xr-array-name {
+  margin-left: 2px;
+  margin-right: 10px;
+}
+
+.xr-obj-type {
+  color: var(--xr-font-color2);
+}
+
+.xr-sections {
+  padding-left: 0 !important;
+  display: grid;
+  grid-template-columns: 150px auto auto 1fr 20px 20px;
+}
+
+.xr-section-item {
+  display: contents;
+}
+
+.xr-section-item input {
+  display: none;
+}
+
+.xr-section-item input + label {
+  color: var(--xr-disabled-color);
+}
+
+.xr-section-item input:enabled + label {
+  cursor: pointer;
+  color: var(--xr-font-color2);
+}
+
+.xr-section-item input:enabled + label:hover {
+  color: var(--xr-font-color0);
+}
+
+.xr-section-summary {
+  grid-column: 1;
+  color: var(--xr-font-color2);
+  font-weight: 500;
+}
+
+.xr-section-summary > span {
+  display: inline-block;
+  padding-left: 0.5em;
+}
+
+.xr-section-summary-in:disabled + label {
+  color: var(--xr-font-color2);
+}
+
+.xr-section-summary-in + label:before {
+  display: inline-block;
+  content: '►';
+  font-size: 11px;
+  width: 15px;
+  text-align: center;
+}
+
+.xr-section-summary-in:disabled + label:before {
+  color: var(--xr-disabled-color);
+}
+
+.xr-section-summary-in:checked + label:before {
+  content: '▼';
+}
+
+.xr-section-summary-in:checked + label > span {
+  display: none;
+}
+
+.xr-section-summary,
+.xr-section-inline-details {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+.xr-section-inline-details {
+  grid-column: 2 / -1;
+}
+
+.xr-section-details {
+  display: none;
+  grid-column: 1 / -1;
+  margin-bottom: 5px;
+}
+
+.xr-section-summary-in:checked ~ .xr-section-details {
+  display: contents;
+}
+
+.xr-array-wrap {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 20px auto;
+}
+
+.xr-array-wrap > label {
+  grid-column: 1;
+  vertical-align: top;
+}
+
+.xr-preview {
+  color: var(--xr-font-color3);
+}
+
+.xr-array-preview,
+.xr-array-data {
+  padding: 0 5px !important;
+  grid-column: 2;
+}
+
+.xr-array-data,
+.xr-array-in:checked ~ .xr-array-preview {
+  display: none;
+}
+
+.xr-array-in:checked ~ .xr-array-data,
+.xr-array-preview {
+  display: inline-block;
+}
+
+.xr-dim-list {
+  display: inline-block !important;
+  list-style: none;
+  padding: 0 !important;
+  margin: 0;
+}
+
+.xr-dim-list li {
+  display: inline-block;
+  padding: 0;
+  margin: 0;
+}
+
+.xr-dim-list:before {
+  content: '(';
+}
+
+.xr-dim-list:after {
+  content: ')';
+}
+
+.xr-dim-list li:not(:last-child):after {
+  content: ',';
+  padding-right: 5px;
+}
+
+.xr-has-index {
+  font-weight: bold;
+}
+
+.xr-var-list,
+.xr-var-item {
+  display: contents;
+}
+
+.xr-var-item > div,
+.xr-var-item label,
+.xr-var-item > .xr-var-name span {
+  background-color: var(--xr-background-color-row-even);
+  margin-bottom: 0;
+}
+
+.xr-var-item > .xr-var-name:hover span {
+  padding-right: 5px;
+}
+
+.xr-var-list > li:nth-child(odd) > div,
+.xr-var-list > li:nth-child(odd) > label,
+.xr-var-list > li:nth-child(odd) > .xr-var-name span {
+  background-color: var(--xr-background-color-row-odd);
+}
+
+.xr-var-name {
+  grid-column: 1;
+}
+
+.xr-var-dims {
+  grid-column: 2;
+}
+
+.xr-var-dtype {
+  grid-column: 3;
+  text-align: right;
+  color: var(--xr-font-color2);
+}
+
+.xr-var-preview {
+  grid-column: 4;
+}
+
+.xr-var-name,
+.xr-var-dims,
+.xr-var-dtype,
+.xr-preview,
+.xr-attrs dt {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-right: 10px;
+}
+
+.xr-var-name:hover,
+.xr-var-dims:hover,
+.xr-var-dtype:hover,
+.xr-attrs dt:hover {
+  overflow: visible;
+  width: auto;
+  z-index: 1;
+}
+
+.xr-var-attrs,
+.xr-var-data {
+  display: none;
+  background-color: var(--xr-background-color) !important;
+  padding-bottom: 5px !important;
+}
+
+.xr-var-attrs-in:checked ~ .xr-var-attrs,
+.xr-var-data-in:checked ~ .xr-var-data {
+  display: block;
+}
+
+.xr-var-data > table {
+  float: right;
+}
+
+.xr-var-name span,
+.xr-var-data,
+.xr-attrs {
+  padding-left: 25px !important;
+}
+
+.xr-attrs,
+.xr-var-attrs,
+.xr-var-data {
+  grid-column: 1 / -1;
+}
+
+dl.xr-attrs {
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: 125px auto;
+}
+
+.xr-attrs dt,
+.xr-attrs dd {
+  padding: 0;
+  margin: 0;
+  float: left;
+  padding-right: 10px;
+  width: auto;
+}
+
+.xr-attrs dt {
+  font-weight: normal;
+  grid-column: 1;
+}
+
+.xr-attrs dt:hover span {
+  display: inline-block;
+  background: var(--xr-background-color);
+  padding-right: 10px;
+}
+
+.xr-attrs dd {
+  grid-column: 2;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.xr-icon-database,
+.xr-icon-file-text2 {
+  display: inline-block;
+  vertical-align: middle;
+  width: 1em;
+  height: 1.5em !important;
+  stroke-width: 0;
+  stroke: currentColor;
+  fill: currentColor;
+}
+</style>
+<pre class='xr-text-repr-fallback'>&lt;xarray.Dataset&gt;
+Dimensions:  ()
+Data variables:
+    μ_β      float64 1.002
+    Δ_β      float64 1.003
+    σ_β      float64 1.003
+    σ        float64 1.001
+    β        float64 1.002</pre>
+<div class="xr-wrap" hidden="">
+<div class="xr-header">
+<div class="xr-obj-type">
+xarray.Dataset
+</div>
+</div>
+<ul class="xr-sections">
+<li class="xr-section-item">
+<input id='section-6be9e327-8217-444b-82ac-8d72e31b9762' class='xr-section-summary-in' type='checkbox' disabled ><label for='section-6be9e327-8217-444b-82ac-8d72e31b9762' class='xr-section-summary'  title='Expand/collapse section'>Dimensions:</label>
+<div class="xr-section-inline-details">
+
+</div>
+<div class="xr-section-details">
+
+</div>
+</li>
+<li class="xr-section-item">
+<input id='section-262c20ca-f234-455e-a412-57ae50add49d' class='xr-section-summary-in' type='checkbox' disabled ><label for='section-262c20ca-f234-455e-a412-57ae50add49d' class='xr-section-summary'  title='Expand/collapse section'>Coordinates: <span>(0)</span></label>
+<div class="xr-section-inline-details">
+
+</div>
+<div class="xr-section-details">
+<ul class="xr-var-list">
+</ul>
+</div>
+</li>
+<li class="xr-section-item">
+<input id='section-4159528f-614b-4383-9914-6f8a2ee6919b' class='xr-section-summary-in' type='checkbox'  checked><label for='section-4159528f-614b-4383-9914-6f8a2ee6919b' class='xr-section-summary' >Data variables: <span>(5)</span></label>
+<div class="xr-section-inline-details">
+
+</div>
+<div class="xr-section-details">
+<ul class="xr-var-list">
+<li class="xr-var-item">
+<div class="xr-var-name">
+<span>μ_β</span>
+</div>
+<div class="xr-var-dims">
+()
+</div>
+<div class="xr-var-dtype">
+float64
+</div>
+<div class="xr-var-preview xr-preview">
+1.002
+</div>
+<input id='attrs-e3ef8664-98c0-491b-9e90-f9df14021341' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-e3ef8664-98c0-491b-9e90-f9df14021341' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-3cc66f89-032b-4da6-90dc-c9f43e377ae6' class='xr-var-data-in' type='checkbox'><label for='data-3cc66f89-032b-4da6-90dc-c9f43e377ae6' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label>
+<div class="xr-var-attrs">
+<dl class="xr-attrs">
+</dl>
+</div>
+<div class="xr-var-data">
+<pre>array(1.00177301)</pre>
+</div>
+</li>
+<li class="xr-var-item">
+<div class="xr-var-name">
+<span>Δ_β</span>
+</div>
+<div class="xr-var-dims">
+()
+</div>
+<div class="xr-var-dtype">
+float64
+</div>
+<div class="xr-var-preview xr-preview">
+1.003
+</div>
+<input id='attrs-f7d29b36-94b4-49ae-8a0a-604226555c27' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-f7d29b36-94b4-49ae-8a0a-604226555c27' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-788b1891-2d2f-470c-831c-6e0f03a8efb6' class='xr-var-data-in' type='checkbox'><label for='data-788b1891-2d2f-470c-831c-6e0f03a8efb6' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label>
+<div class="xr-var-attrs">
+<dl class="xr-attrs">
+</dl>
+</div>
+<div class="xr-var-data">
+<pre>array(1.00304857)</pre>
+</div>
+</li>
+<li class="xr-var-item">
+<div class="xr-var-name">
+<span>σ_β</span>
+</div>
+<div class="xr-var-dims">
+()
+</div>
+<div class="xr-var-dtype">
+float64
+</div>
+<div class="xr-var-preview xr-preview">
+1.003
+</div>
+<input id='attrs-44f8d525-edee-4f7b-911c-81dfb07460b6' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-44f8d525-edee-4f7b-911c-81dfb07460b6' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-f79ac85a-eba8-4c81-a547-6d99db461896' class='xr-var-data-in' type='checkbox'><label for='data-f79ac85a-eba8-4c81-a547-6d99db461896' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label>
+<div class="xr-var-attrs">
+<dl class="xr-attrs">
+</dl>
+</div>
+<div class="xr-var-data">
+<pre>array(1.00278469)</pre>
+</div>
+</li>
+<li class="xr-var-item">
+<div class="xr-var-name">
+<span>σ</span>
+</div>
+<div class="xr-var-dims">
+()
+</div>
+<div class="xr-var-dtype">
+float64
+</div>
+<div class="xr-var-preview xr-preview">
+1.001
+</div>
+<input id='attrs-e981d8e5-65ab-4f10-b947-5976f10b9c2e' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-e981d8e5-65ab-4f10-b947-5976f10b9c2e' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-902e30d3-d247-469e-99db-87992ac032a3' class='xr-var-data-in' type='checkbox'><label for='data-902e30d3-d247-469e-99db-87992ac032a3' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label>
+<div class="xr-var-attrs">
+<dl class="xr-attrs">
+</dl>
+</div>
+<div class="xr-var-data">
+<pre>array(1.00087722)</pre>
+</div>
+</li>
+<li class="xr-var-item">
+<div class="xr-var-name">
+<span>β</span>
+</div>
+<div class="xr-var-dims">
+()
+</div>
+<div class="xr-var-dtype">
+float64
+</div>
+<div class="xr-var-preview xr-preview">
+1.002
+</div>
+<input id='attrs-e31c6ee9-83ae-44b9-a2a2-ae7915a5da0e' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-e31c6ee9-83ae-44b9-a2a2-ae7915a5da0e' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-6b553585-f795-42a2-9667-242dc6c723e9' class='xr-var-data-in' type='checkbox'><label for='data-6b553585-f795-42a2-9667-242dc6c723e9' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label>
+<div class="xr-var-attrs">
+<dl class="xr-attrs">
+</dl>
+</div>
+<div class="xr-var-data">
+<pre>array(1.00209198)</pre>
+</div>
+</li>
+</ul>
+</div>
+</li>
+<li class="xr-section-item">
+<input id='section-879965fa-b95c-4639-8d79-138f8d4b19dd' class='xr-section-summary-in' type='checkbox' disabled ><label for='section-879965fa-b95c-4639-8d79-138f8d4b19dd' class='xr-section-summary'  title='Expand/collapse section'>Attributes: <span>(0)</span></label>
+<div class="xr-section-inline-details">
+
+</div>
+<div class="xr-section-details">
+<dl class="xr-attrs">
+</dl>
+</div>
+</li>
+</ul>
+</div>
+</div>
+<p>To visualize our predictions, we sample from the posterior predictive distribution along a grid of reasonable values for <code>range</code>.</p>
+<div class="sourceCode" id="cb29"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb29-1"><a href="#cb29-1" aria-hidden="true" tabindex="-1"></a>pp_range <span class="op">=</span> np.linspace(<span class="op">-</span><span class="fl">1.75</span>, <span class="fl">1.75</span>, <span class="dv">100</span>)</span>
+<span id="cb29-2"><a href="#cb29-2" aria-hidden="true" tabindex="-1"></a>dmat.set_value(basis(pp_range))</span></code></pre></div>
+<div class="sourceCode" id="cb30"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb30-1"><a href="#cb30-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> model:</span>
+<span id="cb30-2"><a href="#cb30-2" aria-hidden="true" tabindex="-1"></a>    pp_trace <span class="op">=</span> pm.sample_posterior_predictive(trace)</span></code></pre></div>
+<div>
+<style>
+/* Turns off some styling */
+progress {
+/* gets rid of default border in Firefox and Opera. */
+border: none;
+/* Needs to be in here for Safari polyfill so background images work as expected. */
+background-size: auto;
+}
+.progress-bar-interrupted, .progress-bar-interrupted::-webkit-progress-bar {
+background: #F44336;
+}
+</style>
+<progress value="3000" class max="3000" style="width:300px; height:20px; vertical-align: middle;">
+</progress>
+<p>100.00% [3000/3000 00:00&lt;00:00]</p>
+</div>
+<p>We now plot the posterior predictions.</p>
+<div class="sourceCode" id="cb31"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb31-1"><a href="#cb31-1" aria-hidden="true" tabindex="-1"></a>fig, (std_ax, joint_ax) <span class="op">=</span> plt.subplots(</span>
+<span id="cb31-2"><a href="#cb31-2" aria-hidden="true" tabindex="-1"></a>    nrows<span class="op">=</span><span class="dv">2</span>, sharex<span class="op">=</span><span class="va">True</span>, sharey<span class="op">=</span><span class="va">False</span>,</span>
+<span id="cb31-3"><a href="#cb31-3" aria-hidden="true" tabindex="-1"></a>    gridspec_kw<span class="op">=</span>{<span class="st">&#39;height_ratios&#39;</span>: [<span class="dv">1</span>, <span class="dv">4</span>]}</span>
+<span id="cb31-4"><a href="#cb31-4" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb31-5"><a href="#cb31-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb31-6"><a href="#cb31-6" aria-hidden="true" tabindex="-1"></a>low, high <span class="op">=</span> np.percentile(pp_trace[<span class="st">&quot;obs&quot;</span>], [<span class="fl">2.5</span>, <span class="fl">97.5</span>], axis<span class="op">=</span><span class="dv">0</span>)</span>
+<span id="cb31-7"><a href="#cb31-7" aria-hidden="true" tabindex="-1"></a>joint_ax.fill_between(pp_range, low, high,</span>
+<span id="cb31-8"><a href="#cb31-8" aria-hidden="true" tabindex="-1"></a>                      color<span class="op">=</span><span class="st">&#39;k&#39;</span>, alpha<span class="op">=</span><span class="fl">0.25</span>,</span>
+<span id="cb31-9"><a href="#cb31-9" aria-hidden="true" tabindex="-1"></a>                      label<span class="op">=</span><span class="st">&quot;95</span><span class="sc">% c</span><span class="st">redible interval&quot;</span>)<span class="op">;</span></span>
+<span id="cb31-10"><a href="#cb31-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb31-11"><a href="#cb31-11" aria-hidden="true" tabindex="-1"></a>sns.scatterplot(x<span class="op">=</span><span class="st">&quot;range&quot;</span>, y<span class="op">=</span><span class="st">&quot;logratio&quot;</span>, data<span class="op">=</span>std_df,</span>
+<span id="cb31-12"><a href="#cb31-12" aria-hidden="true" tabindex="-1"></a>                alpha<span class="op">=</span><span class="fl">0.5</span>, ax<span class="op">=</span>joint_ax)<span class="op">;</span></span>
+<span id="cb31-13"><a href="#cb31-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb31-14"><a href="#cb31-14" aria-hidden="true" tabindex="-1"></a>(std_df.groupby(std_df[<span class="st">&quot;range&quot;</span>].<span class="bu">round</span>(<span class="dv">1</span>))</span>
+<span id="cb31-15"><a href="#cb31-15" aria-hidden="true" tabindex="-1"></a>       [<span class="st">&quot;logratio&quot;</span>]</span>
+<span id="cb31-16"><a href="#cb31-16" aria-hidden="true" tabindex="-1"></a>       .std()</span>
+<span id="cb31-17"><a href="#cb31-17" aria-hidden="true" tabindex="-1"></a>       .rolling(<span class="dv">5</span>)</span>
+<span id="cb31-18"><a href="#cb31-18" aria-hidden="true" tabindex="-1"></a>       .mean()</span>
+<span id="cb31-19"><a href="#cb31-19" aria-hidden="true" tabindex="-1"></a>       .plot(ax<span class="op">=</span>std_ax, label<span class="op">=</span><span class="st">&quot;Actual&quot;</span>))<span class="op">;</span></span>
+<span id="cb31-20"><a href="#cb31-20" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb31-21"><a href="#cb31-21" aria-hidden="true" tabindex="-1"></a>std_ax.plot(pp_range, pp_trace[<span class="st">&quot;obs&quot;</span>].std(axis<span class="op">=</span><span class="dv">0</span>),</span>
+<span id="cb31-22"><a href="#cb31-22" aria-hidden="true" tabindex="-1"></a>            c<span class="op">=</span><span class="st">&#39;k&#39;</span>, label<span class="op">=</span><span class="st">&quot;Posterior predictive&quot;</span>)<span class="op">;</span></span>
+<span id="cb31-23"><a href="#cb31-23" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb31-24"><a href="#cb31-24" aria-hidden="true" tabindex="-1"></a>joint_ax.plot(pp_range, pp_trace[<span class="st">&quot;obs&quot;</span>].mean(axis<span class="op">=</span><span class="dv">0</span>),</span>
+<span id="cb31-25"><a href="#cb31-25" aria-hidden="true" tabindex="-1"></a>              c<span class="op">=</span><span class="st">&#39;k&#39;</span>, label<span class="op">=</span><span class="st">&quot;Posterior expected value&quot;</span>)<span class="op">;</span></span>
+<span id="cb31-26"><a href="#cb31-26" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb31-27"><a href="#cb31-27" aria-hidden="true" tabindex="-1"></a>std_ax.set_ylabel(<span class="st">&quot;Standard</span><span class="ch">\n</span><span class="st">deviation</span><span class="ch">\n</span><span class="st">(binned)&quot;</span>)<span class="op">;</span></span>
+<span id="cb31-28"><a href="#cb31-28" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb31-29"><a href="#cb31-29" aria-hidden="true" tabindex="-1"></a>std_ax.legend(loc<span class="op">=</span><span class="st">&#39;upper left&#39;</span>, bbox_to_anchor<span class="op">=</span>(<span class="fl">0.</span>, <span class="fl">1.65</span>))<span class="op">;</span></span>
+<span id="cb31-30"><a href="#cb31-30" aria-hidden="true" tabindex="-1"></a>joint_ax.legend(loc<span class="op">=</span><span class="st">&#39;lower left&#39;</span>)<span class="op">;</span></span>
+<span id="cb31-31"><a href="#cb31-31" aria-hidden="true" tabindex="-1"></a>fig.tight_layout()<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/splines_hetero_files/splines_hetero_46_0.png" title="fig:" alt="png" />
+</center>
+<p>Visually, we appear to have captured the relationship between <code>range</code> and the expected value of <code>logratio</code> reasonably well. The credible interval and the standard deviation above are a bit odd though. We have built a homoskedastic (same-variance) observational model, so the credible interval has roughly the same width, even though the data show a small variance for small values of range, and variance increases as <code>range</code> does.</p>
+<h3 id="accounting-for-heteroskedasticity">Accounting for heteroskedasticity</h3>
+<p>In order to remedy this issue, we will build a heteroskedastic model that allows the variance of <code>logratio</code> to vary with <code>ratio</code>. In fact, we will use a spline to model the changing variance as well.</p>
+<p>Let <span class="math inline">\(\gamma_j\)</span> come from a GRW similar to <span class="math inline">\(\beta_j\)</span>. We define</p>
+<p><span class="math display">\[
+\begin{align*}
+    \eta_{\sigma}\ |\ X
+        &amp; = \sum_{j = 1}^{20} \gamma_j \cdot B_{j, k; \mathbf{x}^*}(X) \\
+    \sigma\ |\ X
+        &amp; = 0.05 + \exp(\eta_{\sigma}).
+\end{align*}
+\]</span></p>
+<p>Note that the <span class="math inline">\(0.05\)</span> factor in the definition of <span class="math inline">\(\sigma\ |\ X\)</span> sets a lower bound on the variance, which is necessary for computational stability.</p>
+<p>The model is a straightforward adaptation of the homoskedastic one.</p>
+<div class="sourceCode" id="cb32"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb32-1"><a href="#cb32-1" aria-hidden="true" tabindex="-1"></a>dmat.set_value(basis(std_df[<span class="st">&quot;range&quot;</span>]))</span></code></pre></div>
+<div class="sourceCode" id="cb33"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb33-1"><a href="#cb33-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> pm.Model(coords<span class="op">=</span>coords) <span class="im">as</span> var_model:</span>
+<span id="cb33-2"><a href="#cb33-2" aria-hidden="true" tabindex="-1"></a>    β<span class="dv">0</span> <span class="op">=</span> pm.Normal(<span class="st">&quot;β0&quot;</span>, <span class="fl">0.</span>, <span class="fl">2.5</span>)</span>
+<span id="cb33-3"><a href="#cb33-3" aria-hidden="true" tabindex="-1"></a>    Δ_β <span class="op">=</span> pm.Normal(<span class="st">&quot;Δ_β&quot;</span>, <span class="fl">0.</span>, <span class="fl">1.</span>, dims<span class="op">=</span><span class="st">&quot;knot&quot;</span>)</span>
+<span id="cb33-4"><a href="#cb33-4" aria-hidden="true" tabindex="-1"></a>    σ_β <span class="op">=</span> pm.HalfNormal(<span class="st">&quot;σ_β&quot;</span>, <span class="fl">2.5</span> <span class="op">*</span> HALFNORMAL_SCALE)</span>
+<span id="cb33-5"><a href="#cb33-5" aria-hidden="true" tabindex="-1"></a>    β <span class="op">=</span> pm.Deterministic(<span class="st">&quot;β&quot;</span>, β<span class="dv">0</span> <span class="op">+</span> Δ_β.cumsum() <span class="op">*</span> σ_β,</span>
+<span id="cb33-6"><a href="#cb33-6" aria-hidden="true" tabindex="-1"></a>                         dims<span class="op">=</span><span class="st">&quot;knot&quot;</span>)</span>
+<span id="cb33-7"><a href="#cb33-7" aria-hidden="true" tabindex="-1"></a>    μ <span class="op">=</span> at.dot(dmat, β)</span>
+<span id="cb33-8"><a href="#cb33-8" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb33-9"><a href="#cb33-9" aria-hidden="true" tabindex="-1"></a>    γ<span class="dv">0</span> <span class="op">=</span> pm.Normal(<span class="st">&quot;γ0&quot;</span>, <span class="fl">0.</span>, <span class="fl">2.5</span>)</span>
+<span id="cb33-10"><a href="#cb33-10" aria-hidden="true" tabindex="-1"></a>    Δ_γ <span class="op">=</span> pm.Normal(<span class="st">&quot;Δ_γ&quot;</span>, <span class="fl">0.</span>, <span class="fl">1.</span>, dims<span class="op">=</span><span class="st">&quot;knot&quot;</span>)</span>
+<span id="cb33-11"><a href="#cb33-11" aria-hidden="true" tabindex="-1"></a>    σ_γ <span class="op">=</span> pm.HalfNormal(<span class="st">&quot;σ_γ&quot;</span>, <span class="fl">2.5</span> <span class="op">*</span> HALFNORMAL_SCALE)</span>
+<span id="cb33-12"><a href="#cb33-12" aria-hidden="true" tabindex="-1"></a>    γ <span class="op">=</span> pm.Deterministic(<span class="st">&quot;γ&quot;</span>, γ<span class="dv">0</span> <span class="op">+</span> Δ_γ.cumsum() <span class="op">*</span> σ_γ,</span>
+<span id="cb33-13"><a href="#cb33-13" aria-hidden="true" tabindex="-1"></a>                         dims<span class="op">=</span><span class="st">&quot;knot&quot;</span>)</span>
+<span id="cb33-14"><a href="#cb33-14" aria-hidden="true" tabindex="-1"></a>    η_σ <span class="op">=</span> at.dot(dmat, γ)</span>
+<span id="cb33-15"><a href="#cb33-15" aria-hidden="true" tabindex="-1"></a>    σ <span class="op">=</span> <span class="fl">0.05</span> <span class="op">+</span> at.exp(η_σ)</span>
+<span id="cb33-16"><a href="#cb33-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb33-17"><a href="#cb33-17" aria-hidden="true" tabindex="-1"></a>    obs <span class="op">=</span> pm.Normal(<span class="st">&quot;obs&quot;</span>, μ, σ, observed<span class="op">=</span>std_df[<span class="st">&quot;logratio&quot;</span>])</span></code></pre></div>
+<p>We now sample from this model.</p>
+<div class="sourceCode" id="cb34"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb34-1"><a href="#cb34-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> var_model:</span>
+<span id="cb34-2"><a href="#cb34-2" aria-hidden="true" tabindex="-1"></a>    var_trace <span class="op">=</span> pm.sample(<span class="op">**</span>SAMPLE_KWARGS)</span></code></pre></div>
+<pre><code>Auto-assigning NUTS sampler...
+Initializing NUTS using jitter+adapt_diag...
+Multiprocess sampling (3 chains in 3 jobs)
+NUTS: [β0, Δ_β, σ_β, γ0, Δ_γ, σ_γ]</code></pre>
+<div>
+<style>
+/* Turns off some styling */
+progress {
+/* gets rid of default border in Firefox and Opera. */
+border: none;
+/* Needs to be in here for Safari polyfill so background images work as expected. */
+background-size: auto;
+}
+.progress-bar-interrupted, .progress-bar-interrupted::-webkit-progress-bar {
+background: #F44336;
+}
+</style>
+<progress value="6000" class max="6000" style="width:300px; height:20px; vertical-align: middle;">
+</progress>
+<p>100.00% [6000/6000 04:42&lt;00:00 Sampling 3 chains, 0 divergences]</p>
+</div>
+<pre><code>Sampling 3 chains for 1_000 tune and 1_000 draw iterations (3_000 + 3_000 draws total) took 282 seconds.</code></pre>
+<p>Again the sampling diagnostics show no cause for concern.</p>
+<div class="sourceCode" id="cb37"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb37-1"><a href="#cb37-1" aria-hidden="true" tabindex="-1"></a>az.plot_energy(var_trace)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/splines_hetero_files/splines_hetero_54_0.png" title="fig:" alt="png" />
+</center>
+<div class="sourceCode" id="cb38"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb38-1"><a href="#cb38-1" aria-hidden="true" tabindex="-1"></a>az.rhat(var_trace).<span class="bu">max</span>()</span></code></pre></div>
+<div>
+<svg style="position: absolute; width: 0; height: 0; overflow: hidden">
+<defs> <symbol id="icon-database" viewBox="0 0 32 32"> <path d="M16 0c-8.837 0-16 2.239-16 5v4c0 2.761 7.163 5 16 5s16-2.239 16-5v-4c0-2.761-7.163-5-16-5z"></path> <path d="M16 17c-8.837 0-16-2.239-16-5v6c0 2.761 7.163 5 16 5s16-2.239 16-5v-6c0 2.761-7.163 5-16 5z"></path> <path d="M16 26c-8.837 0-16-2.239-16-5v6c0 2.761 7.163 5 16 5s16-2.239 16-5v-6c0 2.761-7.163 5-16 5z"></path> </symbol> <symbol id="icon-file-text2" viewBox="0 0 32 32"> <path d="M28.681 7.159c-0.694-0.947-1.662-2.053-2.724-3.116s-2.169-2.030-3.116-2.724c-1.612-1.182-2.393-1.319-2.841-1.319h-15.5c-1.378 0-2.5 1.121-2.5 2.5v27c0 1.378 1.122 2.5 2.5 2.5h23c1.378 0 2.5-1.122 2.5-2.5v-19.5c0-0.448-0.137-1.23-1.319-2.841zM24.543 5.457c0.959 0.959 1.712 1.825 2.268 2.543h-4.811v-4.811c0.718 0.556 1.584 1.309 2.543 2.268zM28 29.5c0 0.271-0.229 0.5-0.5 0.5h-23c-0.271 0-0.5-0.229-0.5-0.5v-27c0-0.271 0.229-0.5 0.5-0.5 0 0 15.499-0 15.5 0v7c0 0.552 0.448 1 1 1h7v19.5z"></path> <path d="M23 26h-14c-0.552 0-1-0.448-1-1s0.448-1 1-1h14c0.552 0 1 0.448 1 1s-0.448 1-1 1z"></path> <path d="M23 22h-14c-0.552 0-1-0.448-1-1s0.448-1 1-1h14c0.552 0 1 0.448 1 1s-0.448 1-1 1z"></path> <path d="M23 18h-14c-0.552 0-1-0.448-1-1s0.448-1 1-1h14c0.552 0 1 0.448 1 1s-0.448 1-1 1z"></path> </symbol> </defs>
+</svg>
+<style>/* CSS stylesheet for displaying xarray objects in jupyterlab.
+ *
+ */
+
+:root {
+  --xr-font-color0: var(--jp-content-font-color0, rgba(0, 0, 0, 1));
+  --xr-font-color2: var(--jp-content-font-color2, rgba(0, 0, 0, 0.54));
+  --xr-font-color3: var(--jp-content-font-color3, rgba(0, 0, 0, 0.38));
+  --xr-border-color: var(--jp-border-color2, #e0e0e0);
+  --xr-disabled-color: var(--jp-layout-color3, #bdbdbd);
+  --xr-background-color: var(--jp-layout-color0, white);
+  --xr-background-color-row-even: var(--jp-layout-color1, white);
+  --xr-background-color-row-odd: var(--jp-layout-color2, #eeeeee);
+}
+
+html[theme=dark],
+body.vscode-dark {
+  --xr-font-color0: rgba(255, 255, 255, 1);
+  --xr-font-color2: rgba(255, 255, 255, 0.54);
+  --xr-font-color3: rgba(255, 255, 255, 0.38);
+  --xr-border-color: #1F1F1F;
+  --xr-disabled-color: #515151;
+  --xr-background-color: #111111;
+  --xr-background-color-row-even: #111111;
+  --xr-background-color-row-odd: #313131;
+}
+
+.xr-wrap {
+  display: block;
+  min-width: 300px;
+  max-width: 700px;
+}
+
+.xr-text-repr-fallback {
+  /* fallback to plain text repr when CSS is not injected (untrusted notebook) */
+  display: none;
+}
+
+.xr-header {
+  padding-top: 6px;
+  padding-bottom: 6px;
+  margin-bottom: 4px;
+  border-bottom: solid 1px var(--xr-border-color);
+}
+
+.xr-header > div,
+.xr-header > ul {
+  display: inline;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.xr-obj-type,
+.xr-array-name {
+  margin-left: 2px;
+  margin-right: 10px;
+}
+
+.xr-obj-type {
+  color: var(--xr-font-color2);
+}
+
+.xr-sections {
+  padding-left: 0 !important;
+  display: grid;
+  grid-template-columns: 150px auto auto 1fr 20px 20px;
+}
+
+.xr-section-item {
+  display: contents;
+}
+
+.xr-section-item input {
+  display: none;
+}
+
+.xr-section-item input + label {
+  color: var(--xr-disabled-color);
+}
+
+.xr-section-item input:enabled + label {
+  cursor: pointer;
+  color: var(--xr-font-color2);
+}
+
+.xr-section-item input:enabled + label:hover {
+  color: var(--xr-font-color0);
+}
+
+.xr-section-summary {
+  grid-column: 1;
+  color: var(--xr-font-color2);
+  font-weight: 500;
+}
+
+.xr-section-summary > span {
+  display: inline-block;
+  padding-left: 0.5em;
+}
+
+.xr-section-summary-in:disabled + label {
+  color: var(--xr-font-color2);
+}
+
+.xr-section-summary-in + label:before {
+  display: inline-block;
+  content: '►';
+  font-size: 11px;
+  width: 15px;
+  text-align: center;
+}
+
+.xr-section-summary-in:disabled + label:before {
+  color: var(--xr-disabled-color);
+}
+
+.xr-section-summary-in:checked + label:before {
+  content: '▼';
+}
+
+.xr-section-summary-in:checked + label > span {
+  display: none;
+}
+
+.xr-section-summary,
+.xr-section-inline-details {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+.xr-section-inline-details {
+  grid-column: 2 / -1;
+}
+
+.xr-section-details {
+  display: none;
+  grid-column: 1 / -1;
+  margin-bottom: 5px;
+}
+
+.xr-section-summary-in:checked ~ .xr-section-details {
+  display: contents;
+}
+
+.xr-array-wrap {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 20px auto;
+}
+
+.xr-array-wrap > label {
+  grid-column: 1;
+  vertical-align: top;
+}
+
+.xr-preview {
+  color: var(--xr-font-color3);
+}
+
+.xr-array-preview,
+.xr-array-data {
+  padding: 0 5px !important;
+  grid-column: 2;
+}
+
+.xr-array-data,
+.xr-array-in:checked ~ .xr-array-preview {
+  display: none;
+}
+
+.xr-array-in:checked ~ .xr-array-data,
+.xr-array-preview {
+  display: inline-block;
+}
+
+.xr-dim-list {
+  display: inline-block !important;
+  list-style: none;
+  padding: 0 !important;
+  margin: 0;
+}
+
+.xr-dim-list li {
+  display: inline-block;
+  padding: 0;
+  margin: 0;
+}
+
+.xr-dim-list:before {
+  content: '(';
+}
+
+.xr-dim-list:after {
+  content: ')';
+}
+
+.xr-dim-list li:not(:last-child):after {
+  content: ',';
+  padding-right: 5px;
+}
+
+.xr-has-index {
+  font-weight: bold;
+}
+
+.xr-var-list,
+.xr-var-item {
+  display: contents;
+}
+
+.xr-var-item > div,
+.xr-var-item label,
+.xr-var-item > .xr-var-name span {
+  background-color: var(--xr-background-color-row-even);
+  margin-bottom: 0;
+}
+
+.xr-var-item > .xr-var-name:hover span {
+  padding-right: 5px;
+}
+
+.xr-var-list > li:nth-child(odd) > div,
+.xr-var-list > li:nth-child(odd) > label,
+.xr-var-list > li:nth-child(odd) > .xr-var-name span {
+  background-color: var(--xr-background-color-row-odd);
+}
+
+.xr-var-name {
+  grid-column: 1;
+}
+
+.xr-var-dims {
+  grid-column: 2;
+}
+
+.xr-var-dtype {
+  grid-column: 3;
+  text-align: right;
+  color: var(--xr-font-color2);
+}
+
+.xr-var-preview {
+  grid-column: 4;
+}
+
+.xr-var-name,
+.xr-var-dims,
+.xr-var-dtype,
+.xr-preview,
+.xr-attrs dt {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-right: 10px;
+}
+
+.xr-var-name:hover,
+.xr-var-dims:hover,
+.xr-var-dtype:hover,
+.xr-attrs dt:hover {
+  overflow: visible;
+  width: auto;
+  z-index: 1;
+}
+
+.xr-var-attrs,
+.xr-var-data {
+  display: none;
+  background-color: var(--xr-background-color) !important;
+  padding-bottom: 5px !important;
+}
+
+.xr-var-attrs-in:checked ~ .xr-var-attrs,
+.xr-var-data-in:checked ~ .xr-var-data {
+  display: block;
+}
+
+.xr-var-data > table {
+  float: right;
+}
+
+.xr-var-name span,
+.xr-var-data,
+.xr-attrs {
+  padding-left: 25px !important;
+}
+
+.xr-attrs,
+.xr-var-attrs,
+.xr-var-data {
+  grid-column: 1 / -1;
+}
+
+dl.xr-attrs {
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: 125px auto;
+}
+
+.xr-attrs dt,
+.xr-attrs dd {
+  padding: 0;
+  margin: 0;
+  float: left;
+  padding-right: 10px;
+  width: auto;
+}
+
+.xr-attrs dt {
+  font-weight: normal;
+  grid-column: 1;
+}
+
+.xr-attrs dt:hover span {
+  display: inline-block;
+  background: var(--xr-background-color);
+  padding-right: 10px;
+}
+
+.xr-attrs dd {
+  grid-column: 2;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.xr-icon-database,
+.xr-icon-file-text2 {
+  display: inline-block;
+  vertical-align: middle;
+  width: 1em;
+  height: 1.5em !important;
+  stroke-width: 0;
+  stroke: currentColor;
+  fill: currentColor;
+}
+</style>
+<pre class='xr-text-repr-fallback'>&lt;xarray.Dataset&gt;
+Dimensions:  ()
+Data variables:
+    β0       float64 0.9998
+    Δ_β      float64 1.006
+    σ_β      float64 1.0
+    γ0       float64 1.001
+    Δ_γ      float64 1.005
+    σ_γ      float64 1.0
+    β        float64 1.002
+    γ        float64 1.002</pre>
+<div class="xr-wrap" hidden="">
+<div class="xr-header">
+<div class="xr-obj-type">
+xarray.Dataset
+</div>
+</div>
+<ul class="xr-sections">
+<li class="xr-section-item">
+<input id='section-7362aa37-9f8a-4802-b82c-c036e0ce48e8' class='xr-section-summary-in' type='checkbox' disabled ><label for='section-7362aa37-9f8a-4802-b82c-c036e0ce48e8' class='xr-section-summary'  title='Expand/collapse section'>Dimensions:</label>
+<div class="xr-section-inline-details">
+
+</div>
+<div class="xr-section-details">
+
+</div>
+</li>
+<li class="xr-section-item">
+<input id='section-0c5a2fdc-6a32-4688-af4c-eb27e082d3d5' class='xr-section-summary-in' type='checkbox' disabled ><label for='section-0c5a2fdc-6a32-4688-af4c-eb27e082d3d5' class='xr-section-summary'  title='Expand/collapse section'>Coordinates: <span>(0)</span></label>
+<div class="xr-section-inline-details">
+
+</div>
+<div class="xr-section-details">
+<ul class="xr-var-list">
+</ul>
+</div>
+</li>
+<li class="xr-section-item">
+<input id='section-b29bc7b8-3e4e-4279-aac8-20d38dd7d09c' class='xr-section-summary-in' type='checkbox'  checked><label for='section-b29bc7b8-3e4e-4279-aac8-20d38dd7d09c' class='xr-section-summary' >Data variables: <span>(8)</span></label>
+<div class="xr-section-inline-details">
+
+</div>
+<div class="xr-section-details">
+<ul class="xr-var-list">
+<li class="xr-var-item">
+<div class="xr-var-name">
+<span>β0</span>
+</div>
+<div class="xr-var-dims">
+()
+</div>
+<div class="xr-var-dtype">
+float64
+</div>
+<div class="xr-var-preview xr-preview">
+0.9998
+</div>
+<input id='attrs-1f5170ce-ccfc-4311-8246-d9e627ab323e' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-1f5170ce-ccfc-4311-8246-d9e627ab323e' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-cd3e8eda-7d32-4aad-83e5-9d277c2f3e56' class='xr-var-data-in' type='checkbox'><label for='data-cd3e8eda-7d32-4aad-83e5-9d277c2f3e56' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label>
+<div class="xr-var-attrs">
+<dl class="xr-attrs">
+</dl>
+</div>
+<div class="xr-var-data">
+<pre>array(0.99984598)</pre>
+</div>
+</li>
+<li class="xr-var-item">
+<div class="xr-var-name">
+<span>Δ_β</span>
+</div>
+<div class="xr-var-dims">
+()
+</div>
+<div class="xr-var-dtype">
+float64
+</div>
+<div class="xr-var-preview xr-preview">
+1.006
+</div>
+<input id='attrs-089a661f-4ba0-464e-97a8-dc623d98dca7' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-089a661f-4ba0-464e-97a8-dc623d98dca7' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-9e4f120d-d01c-4a49-b8fb-3ae5672f9b45' class='xr-var-data-in' type='checkbox'><label for='data-9e4f120d-d01c-4a49-b8fb-3ae5672f9b45' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label>
+<div class="xr-var-attrs">
+<dl class="xr-attrs">
+</dl>
+</div>
+<div class="xr-var-data">
+<pre>array(1.00613202)</pre>
+</div>
+</li>
+<li class="xr-var-item">
+<div class="xr-var-name">
+<span>σ_β</span>
+</div>
+<div class="xr-var-dims">
+()
+</div>
+<div class="xr-var-dtype">
+float64
+</div>
+<div class="xr-var-preview xr-preview">
+1.0
+</div>
+<input id='attrs-551b992b-dfb9-4dc0-9da0-480350993952' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-551b992b-dfb9-4dc0-9da0-480350993952' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-4149d6bf-ce6e-4073-bcdd-806b4ccd5069' class='xr-var-data-in' type='checkbox'><label for='data-4149d6bf-ce6e-4073-bcdd-806b4ccd5069' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label>
+<div class="xr-var-attrs">
+<dl class="xr-attrs">
+</dl>
+</div>
+<div class="xr-var-data">
+<pre>array(1.00047073)</pre>
+</div>
+</li>
+<li class="xr-var-item">
+<div class="xr-var-name">
+<span>γ0</span>
+</div>
+<div class="xr-var-dims">
+()
+</div>
+<div class="xr-var-dtype">
+float64
+</div>
+<div class="xr-var-preview xr-preview">
+1.001
+</div>
+<input id='attrs-12f3c607-8ac1-4f55-ac6e-407119acf580' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-12f3c607-8ac1-4f55-ac6e-407119acf580' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-38f8b3df-a0d6-45cf-ba57-2bca9b92d994' class='xr-var-data-in' type='checkbox'><label for='data-38f8b3df-a0d6-45cf-ba57-2bca9b92d994' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label>
+<div class="xr-var-attrs">
+<dl class="xr-attrs">
+</dl>
+</div>
+<div class="xr-var-data">
+<pre>array(1.0010354)</pre>
+</div>
+</li>
+<li class="xr-var-item">
+<div class="xr-var-name">
+<span>Δ_γ</span>
+</div>
+<div class="xr-var-dims">
+()
+</div>
+<div class="xr-var-dtype">
+float64
+</div>
+<div class="xr-var-preview xr-preview">
+1.005
+</div>
+<input id='attrs-790917a7-b6d6-4286-9eb9-f0e8100d6d30' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-790917a7-b6d6-4286-9eb9-f0e8100d6d30' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-f01e1c18-b63b-40ad-825c-bfcf0e39f3a3' class='xr-var-data-in' type='checkbox'><label for='data-f01e1c18-b63b-40ad-825c-bfcf0e39f3a3' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label>
+<div class="xr-var-attrs">
+<dl class="xr-attrs">
+</dl>
+</div>
+<div class="xr-var-data">
+<pre>array(1.00481044)</pre>
+</div>
+</li>
+<li class="xr-var-item">
+<div class="xr-var-name">
+<span>σ_γ</span>
+</div>
+<div class="xr-var-dims">
+()
+</div>
+<div class="xr-var-dtype">
+float64
+</div>
+<div class="xr-var-preview xr-preview">
+1.0
+</div>
+<input id='attrs-d4e97dad-29e0-4a7a-baf7-9f4eeb46dc58' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-d4e97dad-29e0-4a7a-baf7-9f4eeb46dc58' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-1afcb5f6-1ba2-481e-b828-aae93a973229' class='xr-var-data-in' type='checkbox'><label for='data-1afcb5f6-1ba2-481e-b828-aae93a973229' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label>
+<div class="xr-var-attrs">
+<dl class="xr-attrs">
+</dl>
+</div>
+<div class="xr-var-data">
+<pre>array(1.00035778)</pre>
+</div>
+</li>
+<li class="xr-var-item">
+<div class="xr-var-name">
+<span>β</span>
+</div>
+<div class="xr-var-dims">
+()
+</div>
+<div class="xr-var-dtype">
+float64
+</div>
+<div class="xr-var-preview xr-preview">
+1.002
+</div>
+<input id='attrs-4c219615-905a-408d-9278-74f6bcce7310' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-4c219615-905a-408d-9278-74f6bcce7310' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-21ad6f14-44b1-40af-9a70-a205599bf077' class='xr-var-data-in' type='checkbox'><label for='data-21ad6f14-44b1-40af-9a70-a205599bf077' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label>
+<div class="xr-var-attrs">
+<dl class="xr-attrs">
+</dl>
+</div>
+<div class="xr-var-data">
+<pre>array(1.00226144)</pre>
+</div>
+</li>
+<li class="xr-var-item">
+<div class="xr-var-name">
+<span>γ</span>
+</div>
+<div class="xr-var-dims">
+()
+</div>
+<div class="xr-var-dtype">
+float64
+</div>
+<div class="xr-var-preview xr-preview">
+1.002
+</div>
+<input id='attrs-8c961902-eca0-4928-8bd5-1f83664db8a4' class='xr-var-attrs-in' type='checkbox' disabled><label for='attrs-8c961902-eca0-4928-8bd5-1f83664db8a4' title='Show/Hide attributes'><svg class='icon xr-icon-file-text2'><use xlink:href='#icon-file-text2'></use></svg></label><input id='data-26417bc1-f4bb-47f5-b133-2661c4174d78' class='xr-var-data-in' type='checkbox'><label for='data-26417bc1-f4bb-47f5-b133-2661c4174d78' title='Show/Hide data repr'><svg class='icon xr-icon-database'><use xlink:href='#icon-database'></use></svg></label>
+<div class="xr-var-attrs">
+<dl class="xr-attrs">
+</dl>
+</div>
+<div class="xr-var-data">
+<pre>array(1.00190525)</pre>
+</div>
+</li>
+</ul>
+</div>
+</li>
+<li class="xr-section-item">
+<input id='section-ec411289-4373-47ec-93b8-5f529dd60452' class='xr-section-summary-in' type='checkbox' disabled ><label for='section-ec411289-4373-47ec-93b8-5f529dd60452' class='xr-section-summary'  title='Expand/collapse section'>Attributes: <span>(0)</span></label>
+<div class="xr-section-inline-details">
+
+</div>
+<div class="xr-section-details">
+<dl class="xr-attrs">
+</dl>
+</div>
+</li>
+</ul>
+</div>
+</div>
+<p>We do see that the values of <span class="math inline">\(\gamma_j\)</span> that correspond to small values of <code>range</code> have small coefficients, and the coefficients grow as <code>range</code> gets larger.</p>
+<div class="sourceCode" id="cb39"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb39-1"><a href="#cb39-1" aria-hidden="true" tabindex="-1"></a>ax, <span class="op">=</span> az.plot_forest(var_trace, var_names<span class="op">=</span>[<span class="st">&quot;γ&quot;</span>])</span>
+<span id="cb39-2"><a href="#cb39-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb39-3"><a href="#cb39-3" aria-hidden="true" tabindex="-1"></a>ax.set_xlabel(<span class="vs">r&quot;$\gamma_j$&quot;</span>)<span class="op">;</span></span>
+<span id="cb39-4"><a href="#cb39-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb39-5"><a href="#cb39-5" aria-hidden="true" tabindex="-1"></a>ax.set_yticklabels(np.arange(N_KNOT)[::<span class="op">-</span><span class="dv">1</span>])<span class="op">;</span></span>
+<span id="cb39-6"><a href="#cb39-6" aria-hidden="true" tabindex="-1"></a>ax.set_ylabel(<span class="st">&quot;$j$&quot;</span>)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/splines_hetero_files/splines_hetero_57_0.png" title="fig:" alt="png" />
+</center>
+<p>Again we sample from the posterior predictive distribution of this model.</p>
+<div class="sourceCode" id="cb40"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb40-1"><a href="#cb40-1" aria-hidden="true" tabindex="-1"></a>dmat.set_value(basis(pp_range))</span></code></pre></div>
+<div class="sourceCode" id="cb41"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb41-1"><a href="#cb41-1" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> var_model:</span>
+<span id="cb41-2"><a href="#cb41-2" aria-hidden="true" tabindex="-1"></a>    pp_var_trace <span class="op">=</span> pm.sample_posterior_predictive(var_trace)</span></code></pre></div>
+<div>
+<style>
+/* Turns off some styling */
+progress {
+/* gets rid of default border in Firefox and Opera. */
+border: none;
+/* Needs to be in here for Safari polyfill so background images work as expected. */
+background-size: auto;
+}
+.progress-bar-interrupted, .progress-bar-interrupted::-webkit-progress-bar {
+background: #F44336;
+}
+</style>
+<progress value="3000" class max="3000" style="width:300px; height:20px; vertical-align: middle;">
+</progress>
+<p>100.00% [3000/3000 00:00&lt;00:00]</p>
+</div>
+<p>We plot these predictions in order to compare them to those of the homoskedastic model.</p>
+<div class="sourceCode" id="cb42"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb42-1"><a href="#cb42-1" aria-hidden="true" tabindex="-1"></a>fig, (std_ax, joint_ax) <span class="op">=</span> plt.subplots(</span>
+<span id="cb42-2"><a href="#cb42-2" aria-hidden="true" tabindex="-1"></a>    nrows<span class="op">=</span><span class="dv">2</span>, sharex<span class="op">=</span><span class="va">True</span>, sharey<span class="op">=</span><span class="va">False</span>,</span>
+<span id="cb42-3"><a href="#cb42-3" aria-hidden="true" tabindex="-1"></a>    gridspec_kw<span class="op">=</span>{<span class="st">&#39;height_ratios&#39;</span>: [<span class="dv">1</span>, <span class="dv">4</span>]}</span>
+<span id="cb42-4"><a href="#cb42-4" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb42-5"><a href="#cb42-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb42-6"><a href="#cb42-6" aria-hidden="true" tabindex="-1"></a>low, high <span class="op">=</span> np.percentile(pp_var_trace[<span class="st">&quot;obs&quot;</span>], [<span class="fl">2.5</span>, <span class="fl">97.5</span>], axis<span class="op">=</span><span class="dv">0</span>)</span>
+<span id="cb42-7"><a href="#cb42-7" aria-hidden="true" tabindex="-1"></a>joint_ax.fill_between(pp_range, low, high,</span>
+<span id="cb42-8"><a href="#cb42-8" aria-hidden="true" tabindex="-1"></a>                      color<span class="op">=</span><span class="st">&#39;k&#39;</span>, alpha<span class="op">=</span><span class="fl">0.25</span>,</span>
+<span id="cb42-9"><a href="#cb42-9" aria-hidden="true" tabindex="-1"></a>                      label<span class="op">=</span><span class="st">&quot;95</span><span class="sc">% c</span><span class="st">redible interval&quot;</span>)<span class="op">;</span></span>
+<span id="cb42-10"><a href="#cb42-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb42-11"><a href="#cb42-11" aria-hidden="true" tabindex="-1"></a>sns.scatterplot(x<span class="op">=</span><span class="st">&quot;range&quot;</span>, y<span class="op">=</span><span class="st">&quot;logratio&quot;</span>, data<span class="op">=</span>std_df,</span>
+<span id="cb42-12"><a href="#cb42-12" aria-hidden="true" tabindex="-1"></a>                alpha<span class="op">=</span><span class="fl">0.5</span>, ax<span class="op">=</span>joint_ax)<span class="op">;</span></span>
+<span id="cb42-13"><a href="#cb42-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb42-14"><a href="#cb42-14" aria-hidden="true" tabindex="-1"></a>(std_df.groupby(std_df[<span class="st">&quot;range&quot;</span>].<span class="bu">round</span>(<span class="dv">1</span>))</span>
+<span id="cb42-15"><a href="#cb42-15" aria-hidden="true" tabindex="-1"></a>       [<span class="st">&quot;logratio&quot;</span>]</span>
+<span id="cb42-16"><a href="#cb42-16" aria-hidden="true" tabindex="-1"></a>       .std()</span>
+<span id="cb42-17"><a href="#cb42-17" aria-hidden="true" tabindex="-1"></a>       .rolling(<span class="dv">5</span>)</span>
+<span id="cb42-18"><a href="#cb42-18" aria-hidden="true" tabindex="-1"></a>       .mean()</span>
+<span id="cb42-19"><a href="#cb42-19" aria-hidden="true" tabindex="-1"></a>       .plot(ax<span class="op">=</span>std_ax, label<span class="op">=</span><span class="st">&quot;Actual&quot;</span>))<span class="op">;</span></span>
+<span id="cb42-20"><a href="#cb42-20" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb42-21"><a href="#cb42-21" aria-hidden="true" tabindex="-1"></a>std_ax.plot(pp_range, pp_trace[<span class="st">&quot;obs&quot;</span>].std(axis<span class="op">=</span><span class="dv">0</span>),</span>
+<span id="cb42-22"><a href="#cb42-22" aria-hidden="true" tabindex="-1"></a>            c<span class="op">=</span><span class="st">&#39;k&#39;</span>, label<span class="op">=</span><span class="st">&quot;Posterior predictive</span><span class="ch">\n</span><span class="st">(homoskedastic)&quot;</span>)<span class="op">;</span></span>
+<span id="cb42-23"><a href="#cb42-23" aria-hidden="true" tabindex="-1"></a>std_ax.plot(pp_range, pp_var_trace[<span class="st">&quot;obs&quot;</span>].std(axis<span class="op">=</span><span class="dv">0</span>),</span>
+<span id="cb42-24"><a href="#cb42-24" aria-hidden="true" tabindex="-1"></a>            c<span class="op">=</span><span class="st">&#39;r&#39;</span>, ls<span class="op">=</span><span class="st">&#39;--&#39;</span>,</span>
+<span id="cb42-25"><a href="#cb42-25" aria-hidden="true" tabindex="-1"></a>            label<span class="op">=</span><span class="st">&quot;Posterior predictive</span><span class="ch">\n</span><span class="st">(heteroskedastic)&quot;</span>)<span class="op">;</span></span>
+<span id="cb42-26"><a href="#cb42-26" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb42-27"><a href="#cb42-27" aria-hidden="true" tabindex="-1"></a>joint_ax.plot(pp_range, pp_trace[<span class="st">&quot;obs&quot;</span>].mean(axis<span class="op">=</span><span class="dv">0</span>),</span>
+<span id="cb42-28"><a href="#cb42-28" aria-hidden="true" tabindex="-1"></a>              c<span class="op">=</span><span class="st">&#39;k&#39;</span>, label<span class="op">=</span><span class="st">&quot;Posterior predictive</span><span class="ch">\n</span><span class="st">(homoskedastic)&quot;</span>)<span class="op">;</span></span>
+<span id="cb42-29"><a href="#cb42-29" aria-hidden="true" tabindex="-1"></a>joint_ax.plot(pp_range, pp_var_trace[<span class="st">&quot;obs&quot;</span>].mean(axis<span class="op">=</span><span class="dv">0</span>),</span>
+<span id="cb42-30"><a href="#cb42-30" aria-hidden="true" tabindex="-1"></a>              c<span class="op">=</span><span class="st">&#39;r&#39;</span>, ls<span class="op">=</span><span class="st">&#39;--&#39;</span>,</span>
+<span id="cb42-31"><a href="#cb42-31" aria-hidden="true" tabindex="-1"></a>              label<span class="op">=</span><span class="st">&quot;Posterior predictive</span><span class="ch">\n</span><span class="st">(heteroskedastic)&quot;</span>)<span class="op">;</span></span>
+<span id="cb42-32"><a href="#cb42-32" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb42-33"><a href="#cb42-33" aria-hidden="true" tabindex="-1"></a>std_ax.set_ylabel(<span class="st">&quot;Standard</span><span class="ch">\n</span><span class="st">deviation</span><span class="ch">\n</span><span class="st">(binned)&quot;</span>)<span class="op">;</span></span>
+<span id="cb42-34"><a href="#cb42-34" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb42-35"><a href="#cb42-35" aria-hidden="true" tabindex="-1"></a>std_ax.legend(loc<span class="op">=</span><span class="st">&#39;upper left&#39;</span>, ncol<span class="op">=</span><span class="dv">3</span>,</span>
+<span id="cb42-36"><a href="#cb42-36" aria-hidden="true" tabindex="-1"></a>              bbox_to_anchor<span class="op">=</span>(<span class="fl">0.</span>, <span class="fl">1.6</span>))<span class="op">;</span></span>
+<span id="cb42-37"><a href="#cb42-37" aria-hidden="true" tabindex="-1"></a>joint_ax.legend(loc<span class="op">=</span><span class="st">&#39;lower left&#39;</span>)<span class="op">;</span></span>
+<span id="cb42-38"><a href="#cb42-38" aria-hidden="true" tabindex="-1"></a>fig.tight_layout()<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/splines_hetero_files/splines_hetero_62_0.png" title="fig:" alt="png" />
+</center>
+<p>We see that the homo- and heteroskedastic models produce essentially the same estimate of the expected value of <code>logratio</code>, but that the heteroskedastic model comes closer to capturing the true change in the variance.</p>
+<p>We now compare these two models using <a href="https://arxiv.org/abs/1507.04544">Pareto-smoothed importance sampling leave-one-out cross-validation</a> (PSIS-LOO).</p>
+<div class="sourceCode" id="cb43"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb43-1"><a href="#cb43-1" aria-hidden="true" tabindex="-1"></a>traces <span class="op">=</span> {</span>
+<span id="cb43-2"><a href="#cb43-2" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;Homoskedastic&#39;</span>: trace,</span>
+<span id="cb43-3"><a href="#cb43-3" aria-hidden="true" tabindex="-1"></a>    <span class="st">&#39;Heteroskedastic&#39;</span>: var_trace</span>
+<span id="cb43-4"><a href="#cb43-4" aria-hidden="true" tabindex="-1"></a>}</span></code></pre></div>
+<div class="sourceCode" id="cb44"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb44-1"><a href="#cb44-1" aria-hidden="true" tabindex="-1"></a>comp_df <span class="op">=</span> az.compare(traces)</span></code></pre></div>
+<div class="sourceCode" id="cb45"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb45-1"><a href="#cb45-1" aria-hidden="true" tabindex="-1"></a>comp_df.loc[:, :<span class="st">&quot;weight&quot;</span>]</span></code></pre></div>
+<center>
+<div>
+<style scoped>
+.dataframe tbody tr th:only-of-type {
+vertical-align: middle;
+}
+
+.dataframe tbody tr th {
+vertical-align: top;
+}
+
+.dataframe thead th {
+text-align: right;
+}
+</style>
+<table border="1" class="dataframe">
+<thead>
+<tr style="text-align: right;">
+<th>
+</th>
+<th>
+rank
+</th>
+<th>
+loo
+</th>
+<th>
+p_loo
+</th>
+<th>
+d_loo
+</th>
+<th>
+weight
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<th>
+Heteroskedastic
+</th>
+<td>
+0
+</td>
+<td>
+41.369658
+</td>
+<td>
+17.759399
+</td>
+<td>
+0.000000
+</td>
+<td>
+1.000000e+00
+</td>
+</tr>
+<tr>
+<th>
+Homoskedastic
+</th>
+<td>
+1
+</td>
+<td>
+-41.703944
+</td>
+<td>
+14.188435
+</td>
+<td>
+83.073602
+</td>
+<td>
+8.058976e-11
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</center>
+<p><br></p>
+<div class="sourceCode" id="cb46"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb46-1"><a href="#cb46-1" aria-hidden="true" tabindex="-1"></a>fig, ax <span class="op">=</span> plt.subplots()</span>
+<span id="cb46-2"><a href="#cb46-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb46-3"><a href="#cb46-3" aria-hidden="true" tabindex="-1"></a>az.plot_compare(comp_df, plot_ic_diff<span class="op">=</span><span class="va">False</span>, ax<span class="op">=</span>ax)<span class="op">;</span></span></code></pre></div>
+<center>
+<img src="/resources/splines_hetero_files/splines_hetero_67_0.png" title="fig:" alt="png" />
+</center>
+<p>Interestingly, the PSIS-LOO score for the heteroskedastic model is significantly higher than that of the homoskedastic model, even though these two models predict essentially the same conditional mean.</p>
+<p>This post is available as a Jupyter notebook <a href="https://nbviewer.jupyter.org/gist/AustinRochford/2b7a0f79457dc6b593309db433ecbedd">here</a>.</p>
