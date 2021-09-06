@@ -141,7 +141,7 @@ TRANSLATIONS_PATTERN = '{path}.{lang}.{ext}'
 NAVIGATION_LINKS = {
     DEFAULT_LANG: (
         ("/posts.html", "Posts"),
-        ("/categories/", "Tags"),
+        ("/tags.html", "Tags"),
         ("/about.html", "About"),
         ("/talks.html", "Talks"),
         ("/reading-log.html", "Reading Log"),
@@ -389,7 +389,7 @@ METADATA_FORMAT = "YAML"
 # output / TRANSLATION[lang] / TAG_PATH / tag.html (list of posts for a tag)
 # output / TRANSLATION[lang] / TAG_PATH / tag RSS_EXTENSION (RSS feed for a tag)
 # (translatable)
-# TAG_PATH = "categories"
+TAG_PATH = "tags"
 
 # By default, the list of tags is stored in
 #     output / TRANSLATION[lang] / TAG_PATH / index.html
@@ -397,7 +397,7 @@ METADATA_FORMAT = "YAML"
 #     output / TRANSLATION[lang] / TAGS_INDEX_PATH
 # with an arbitrary relative path TAGS_INDEX_PATH.
 # (translatable)
-# TAGS_INDEX_PATH = "tags.html"
+TAGS_INDEX_PATH = "tags.html"
 
 # If TAG_PAGES_ARE_INDEXES is set to True, each tag's page will contain
 # the posts themselves. If set to False, it will be just a list of links.
