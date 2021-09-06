@@ -144,3 +144,4 @@ cython_debug/
 .doit.db
 cache/
 output/
+state_data.json
