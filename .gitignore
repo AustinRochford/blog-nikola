@@ -142,6 +142,7 @@ cython_debug/
 
 # nikola files
 .doit.db
+.doit.db.db
 cache/
 output/
 state_data.json
