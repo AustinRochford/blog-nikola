@@ -7,6 +7,22 @@ title: Talks
 </style>
 
 <div class="card mb-3">
+  <h3 class="card-header">Introduction to Probabilistic Programming with PyMC</h3>
+    <br>
+    <center>
+        <iframe width="560" height="315" src="https://www.youtube.com/embed/Qu6-_AnRCs8" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+    </center>
+  <div class="card-body">
+    <p class="card-text">In the last ten years, there have been a number of advancements in the study of Hamiltonian Monte Carlo and variational inference algorithms that have enabled effective Bayesian statistical computation for much more complicated models than were previously feasible. These algorithmic advancements have been accompanied by a number of open source probabilistic programming packages that make them accessible to the general engineering, statistics, and data science communities. PyMC is one such package written in Python and supported by NumFOCUS. This talk will give an introduction to probabilistic programming with PyMC, with a particular emphasis on the how open source probabilistic programming makes Bayesian inference algorithms near the frontier of academic research accessible to a wide audience.</p>
+  </div>
+  <ul class="list-group list-group-flush">
+    <li class="list-group-item">
+        <a href="https://pymc-data-umbrella.xyz/en/latest/">Data Umbrella PyMC Sprint</a> &#8226; January 11, 2022 &#8226; <a href="https://nbviewer.org/github/pymc-devs/pymc-data-umbrella/blob/main/webinars/probabilistic_programming_with_pymc/notebook.ipynb">Jupyter Notebook</a>
+    </li>
+  </ul>
+</div>
+
+<div class="card mb-3">
   <h3 class="card-header">The Hamiltonian Monte Carlo Revolution is Open Source: Probabilistic Programming with PyMC3</h3>
     <center>
         <video width="640" height="480" controls>
