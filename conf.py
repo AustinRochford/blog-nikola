@@ -141,12 +141,10 @@ TRANSLATIONS_PATTERN = '{path}.{lang}.{ext}'
 NAVIGATION_LINKS = {
     DEFAULT_LANG: (
         ("/posts.html", "Posts"),
-        ("/tags.html", "Tags"),
         ("/about.html", "About"),
         ("/talks.html", "Talks"),
         ("/reading-log.html", "Reading Log"),
         ("//github.com/AustinRochford", '<i class="fa fa-github fa-lg fa-fw"></i>'),
-        ("//twitter.com/AustinRochford", '<i class="fa fa-twitter fa-lg fa-fw"></i>'),
         ("/rss.xml", '<i class="fa fa-rss fa-lg fa-fw"></i>'),
     ),
 }
