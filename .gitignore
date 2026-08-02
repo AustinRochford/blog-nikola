@@ -141,8 +141,7 @@ cython_debug/
 *.swp
 
 # nikola files
-.doit.db
-.doit.db.db
+.doit.*
 cache/
 output/
 state_data.json
