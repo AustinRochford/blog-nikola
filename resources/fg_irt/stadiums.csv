@@ -1,0 +1,100 @@
+game_stadium,building,canonical_venue,lat,lon,elevation_m,elevation_ft
+Azteca Stadium,Azteca Stadium,Azteca Stadium,19.3029794,-99.15047,2287.0,7503.3
+Empower Field at Mile High,Invesco Field at Mile High,Mile High site (Denver),39.743952,-105.0192228,1596.0,5236.2
+Invesco Field at Mile High,Invesco Field at Mile High,Mile High site (Denver),39.743952,-105.0192228,1596.0,5236.2
+Mile High Stadium,Mile High Stadium,Mile High site (Denver),39.743952,-105.0192228,1596.0,5236.2
+Sports Authority Field at Mile High,Invesco Field at Mile High,Mile High site (Denver),39.743952,-105.0192228,1596.0,5236.2
+Arena Corinthians,Arena Corinthians,Arena Corinthians,-23.5453327,-46.4743055,785.0,2575.5
+Allegiant Stadium,Allegiant Stadium,Allegiant Stadium,36.0907359,-115.1833303,667.0,2188.3
+Allianz Arena,Allianz Arena,Allianz Arena,48.2187901,11.6236227,490.0,1607.6
+Sun Devil Stadium,Sun Devil Stadium,Sun Devil Stadium,33.4263095,-111.932659,372.0,1220.5
+State Farm Stadium,University of Phoenix Stadium,"State Farm Stadium (Glendale, AZ)",33.5277957,-112.2626719,323.0,1059.7
+University of Phoenix Stadium,University of Phoenix Stadium,"State Farm Stadium (Glendale, AZ)",33.5277957,-112.2626719,323.0,1059.7
+Mercedes-Benz Stadium,Mercedes-Benz Stadium,Atlanta dome site,33.7554123,-84.4008493,313.0,1026.9
+Georgia Dome,Georgia Dome,Atlanta dome site,33.7554123,-84.4008493,313.0,1026.9
+Arrowhead Stadium,Arrowhead Stadium,Arrowhead Stadium (Kansas City),39.0489358,-94.4839993,273.0,895.7
+GEHA Field at Arrowhead Stadium,Arrowhead Stadium,Arrowhead Stadium (Kansas City),39.0489358,-94.4839993,273.0,895.7
+Pontiac Silverdome,Pontiac Silverdome,Pontiac Silverdome,42.6379672,-83.257684,270.0,885.8
+U.S. Bank Stadium,U.S. Bank Stadium,U.S. Bank Stadium (Minneapolis),44.9751097,-93.2593387,257.0,843.2
+Mall of America Field,Hubert H. Humphrey Metrodome,U.S. Bank Stadium (Minneapolis),44.9751097,-93.2593387,257.0,843.2
+Hubert H. Humphrey Metrodome,Hubert H. Humphrey Metrodome,U.S. Bank Stadium (Minneapolis),44.9751097,-93.2593387,257.0,843.2
+TCF Bank Stadium,TCF Bank Stadium,TCF Bank Stadium,44.9765397,-93.2240767,256.0,839.9
+Memorial Stadium (Champaign),Memorial Stadium (Champaign),Memorial Stadium (Champaign),40.0992862,-88.2359605,235.0,771.0
+New Era Field,Ralph Wilson Stadium,Buffalo stadium,42.7730293,-78.7921925,232.0,761.2
+Ralph Wilson Stadium,Ralph Wilson Stadium,Buffalo stadium,42.7730293,-78.7921925,232.0,761.2
+Bank of America Stadium,Ericsson Stadium,Bank of America Stadium (Charlotte),35.225774,-80.8528276,228.0,748.0
+Ericsson Stadium,Ericsson Stadium,Bank of America Stadium (Charlotte),35.225774,-80.8528276,228.0,748.0
+Alamo Dome,Alamo Dome,Alamo Dome (San Antonio),29.4168923,-98.4788949,225.0,738.2
+Acrisure Stadium,Heinz Field,Acrisure Stadium (Pittsburgh),40.4467166,-80.0157199,219.0,718.5
+Heinz Field,Heinz Field,Acrisure Stadium (Pittsburgh),40.4467166,-80.0157199,219.0,718.5
+Three Rivers Stadium,Three Rivers Stadium,Acrisure Stadium (Pittsburgh),40.4467166,-80.0157199,219.0,718.5
+Lucas Oil Stadium,Lucas Oil Stadium,Lucas Oil Stadium (Indianapolis),39.7590621,-86.1638376,216.0,708.7
+RCA Dome,RCA Dome,Lucas Oil Stadium (Indianapolis),39.7590621,-86.1638376,216.0,708.7
+Lambeau Field,Lambeau Field,Lambeau Field,44.5009705,-88.0619681,200.0,656.2
+Cleveland Browns Stadium,Cleveland Browns Stadium,Cleveland stadium,41.5060559,-81.6997118,195.0,639.8
+FirstEnergy Stadium,Cleveland Browns Stadium,Cleveland stadium,41.5060559,-81.6997118,195.0,639.8
+Soldier Field,Soldier Field,Soldier Field,41.8623356,-87.6176477,190.0,623.4
+Ford Field,Ford Field,Ford Field,42.3399568,-83.0456166,186.0,610.2
+AT&T Stadium,Cowboys Stadium,"AT&T Stadium (Arlington, TX)",32.7478503,-97.0928337,177.0,580.7
+Cowboys Stadium,Cowboys Stadium,"AT&T Stadium (Arlington, TX)",32.7478503,-97.0928337,177.0,580.7
+Dome at America's Center,TWA Dome,Dome at America's Center (St. Louis),38.6327852,-90.188551,164.0,538.1
+Edward Jones Dome,TWA Dome,Dome at America's Center (St. Louis),38.6327852,-90.188551,164.0,538.1
+TWA Dome,TWA Dome,Dome at America's Center (St. Louis),38.6327852,-90.188551,164.0,538.1
+Cinergy Field,Cinergy Field,Cinergy Field (Cincinnati),39.0972484,-84.5066233,161.0,528.2
+Texas Stadium,Texas Stadium,"Texas Stadium (Irving, TX)",32.8295183,-96.9442177,160.0,524.9
+Paycor Stadium,Paul Brown Stadium,Paycor Stadium (Cincinnati),39.0954645,-84.5160488,154.0,505.2
+Paul Brown Stadium,Paul Brown Stadium,Paycor Stadium (Cincinnati),39.0954645,-84.5160488,154.0,505.2
+LP Field,Adelphia Coliseum,Nissan Stadium (Nashville),36.1665236,-86.7713148,144.0,472.4
+Adelphia Coliseum,Adelphia Coliseum,Nissan Stadium (Nashville),36.1665236,-86.7713148,144.0,472.4
+Nissan Stadium,Adelphia Coliseum,Nissan Stadium (Nashville),36.1665236,-86.7713148,144.0,472.4
+Deutsche Bank Park,Deutsche Bank Park,Deutsche Bank Park,50.0686103,8.6454154,116.0,380.6
+Rogers Centre,Rogers Centre,Rogers Centre,43.6416598,-79.3891976,91.0,298.6
+Gillette Stadium,Gillette Stadium,Gillette Stadium (Foxborough),42.0908879,-71.2641731,83.0,272.3
+Foxboro Stadium,Foxboro Stadium,Gillette Stadium (Foxborough),42.0908879,-71.2641731,83.0,272.3
+FedExField,Jack Kent Cooke Stadium,"FedExField (Landover, MD)",38.9076694,-76.864533,76.0,249.3
+Jack Kent Cooke Stadium,Jack Kent Cooke Stadium,"FedExField (Landover, MD)",38.9076694,-76.864533,76.0,249.3
+Wembley Stadium,Wembley Stadium,Wembley Stadium,51.5560695,-0.2796034,60.0,196.9
+Los Angeles Memorial Coliseum,Los Angeles Memorial Coliseum,Los Angeles Memorial Coliseum,34.0139159,-118.2877996,54.0,177.2
+SoFi Stadium,SoFi Stadium,SoFi Stadium,33.9534074,-118.3390098,45.0,147.6
+Qualcomm Stadium,Qualcomm Stadium,Qualcomm Stadium (San Diego),32.7819433,-117.0844477,36.0,118.1
+Louisiana Superdome,Louisiana Superdome,Louisiana Superdome (New Orleans),29.9510489,-90.0823076,30.0,98.4
+Mercedes-Benz Superdome,Louisiana Superdome,Louisiana Superdome (New Orleans),29.9510489,-90.0823076,30.0,98.4
+Husky Stadium,Husky Stadium,Husky Stadium,47.6503736,-122.301976,30.0,98.4
+StubHub Center,StubHub Center,StubHub Center,33.8642391,-118.2610795,26.0,85.3
+Raymond James Stadium,Raymond James Stadium,Raymond James Stadium,27.9759793,-82.5033545,22.0,72.2
+Candlestick Park,Candlestick Park,Candlestick Park (SF),37.711543,-122.3883011,21.0,68.9
+3Com Park,Candlestick Park,Candlestick Park (SF),37.711543,-122.3883011,21.0,68.9
+Monster Park,Candlestick Park,Candlestick Park (SF),37.711543,-122.3883011,21.0,68.9
+M&T Bank Stadium,Ravens Stadium,M&T Bank Stadium (Baltimore),39.2779734,-76.6226651,21.0,68.9
+Ravens Stadium,Ravens Stadium,M&T Bank Stadium (Baltimore),39.2779734,-76.6226651,21.0,68.9
+PSINet Stadium,Ravens Stadium,M&T Bank Stadium (Baltimore),39.2779734,-76.6226651,21.0,68.9
+Tottenham Stadium,Tottenham Stadium,Tottenham Stadium,51.604157,-0.0662604,21.0,68.9
+Twickenham Stadium,Twickenham Stadium,Twickenham Stadium,51.4560051,-0.3415047,20.0,65.6
+Tiger Stadium (LSU),Tiger Stadium (LSU),Tiger Stadium (LSU),30.4119773,-91.1838303,17.0,55.8
+NRG Stadium,Reliant Stadium,NRG Stadium (Houston),29.6848581,-95.4108015,15.0,49.2
+Reliant Stadium,Reliant Stadium,NRG Stadium (Houston),29.6848581,-95.4108015,15.0,49.2
+Lumen Field,Seahawks Stadium,Lumen Field (Seattle),47.5953459,-122.3316443,14.0,45.9
+CenturyLink Field,Seahawks Stadium,Lumen Field (Seattle),47.5953459,-122.3316443,14.0,45.9
+Qwest Field,Seahawks Stadium,Lumen Field (Seattle),47.5953459,-122.3316443,14.0,45.9
+Seahawks Stadium,Seahawks Stadium,Lumen Field (Seattle),47.5953459,-122.3316443,14.0,45.9
+Seattle Kingdome,Seattle Kingdome,Lumen Field (Seattle),47.5953459,-122.3316443,14.0,45.9
+Hard Rock Stadium,Pro Player Stadium,Hard Rock Stadium (Miami Gardens),25.9579032,-80.2388497,13.0,42.7
+Pro Player Stadium,Pro Player Stadium,Hard Rock Stadium (Miami Gardens),25.9579032,-80.2388497,13.0,42.7
+Dolphin Stadium,Pro Player Stadium,Hard Rock Stadium (Miami Gardens),25.9579032,-80.2388497,13.0,42.7
+Sun Life Stadium,Pro Player Stadium,Hard Rock Stadium (Miami Gardens),25.9579032,-80.2388497,13.0,42.7
+Lincoln Financial Field,Lincoln Financial Field,Lincoln Financial Field (Philadelphia),39.9009099,-75.1674892,13.0,42.7
+Veterans Stadium,Veterans Stadium,Lincoln Financial Field (Philadelphia),39.9009099,-75.1674892,13.0,42.7
+MetLife Stadium,New Meadowlands Stadium,"MetLife Stadium site (East Rutherford, NJ)",40.8135071,-74.0743442,9.0,29.5
+Giants Stadium,Giants Stadium,"MetLife Stadium site (East Rutherford, NJ)",40.8135071,-74.0743442,9.0,29.5
+New Meadowlands Stadium,New Meadowlands Stadium,"MetLife Stadium site (East Rutherford, NJ)",40.8135071,-74.0743442,9.0,29.5
+Jacksonville Municipal Stadium,Jacksonville Municipal Stadium,Jacksonville stadium,30.3239811,-81.6373046,6.0,19.7
+Alltel Stadium,Jacksonville Municipal Stadium,Jacksonville stadium,30.3239811,-81.6373046,6.0,19.7
+EverBank Field,Jacksonville Municipal Stadium,Jacksonville stadium,30.3239811,-81.6373046,6.0,19.7
+TIAA Bank Stadium,Jacksonville Municipal Stadium,Jacksonville stadium,30.3239811,-81.6373046,6.0,19.7
+Oakland-Alameda County Coliseum,Oakland-Alameda County Coliseum,Oakland Coliseum,37.7516333,-122.2004749,5.0,16.4
+The Coliseum,Oakland-Alameda County Coliseum,Oakland Coliseum,37.7516333,-122.2004749,5.0,16.4
+McAfee Coliseum,Oakland-Alameda County Coliseum,Oakland Coliseum,37.7516333,-122.2004749,5.0,16.4
+Network Associates Coliseum,Oakland-Alameda County Coliseum,Oakland Coliseum,37.7516333,-122.2004749,5.0,16.4
+O.co Coliseum,Oakland-Alameda County Coliseum,Oakland Coliseum,37.7516333,-122.2004749,5.0,16.4
+Ring Central Coliseum,Oakland-Alameda County Coliseum,Oakland Coliseum,37.7516333,-122.2004749,5.0,16.4
+Levi's Stadium,Levi's Stadium,Levi's Stadium,37.4029867,-121.9696489,1.0,3.3
